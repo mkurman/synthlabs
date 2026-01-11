@@ -131,6 +131,10 @@ const loadSettingsFromDB = async (): Promise<AppSettings> => {
 };
 
 // Save settings to IndexedDB
+// WARNING: API keys are stored in IndexedDB which is accessible via JavaScript.
+// While this is the standard approach for client-side storage, sensitive API keys
+// could be exfiltrated by XSS attacks or malicious browser extensions. Users should
+// only use API keys with appropriate restrictions/quotas.
 const saveSettingsToDB = async (settings: AppSettings): Promise<void> => {
     try {
         const db = await initDB();
@@ -163,11 +167,22 @@ const startInit = (): Promise<AppSettings> => {
     return initPromise;
 };
 
-// Start loading immediately when module loads
-startInit();
+// Detect whether IndexedDB is available (e.g., not in SSR/test environments)
+const hasIndexedDBSupport = typeof indexedDB !== 'undefined';
+
+// Start loading immediately when module loads, but only if IndexedDB is available
+if (hasIndexedDBSupport) {
+    startInit().catch((e) => {
+        console.error('[SettingsDB] Initial settings load failed:', e);
+    });
+}
 
 // Export a function to wait for initialization
 export const waitForSettingsInit = (): Promise<AppSettings> => {
+    if (!hasIndexedDBSupport) {
+        // In environments without IndexedDB, immediately resolve with current cache/defaults
+        return Promise.resolve(settingsCache);
+    }
     return startInit();
 };
 
@@ -186,6 +201,8 @@ export const SettingsService = {
     },
 
     // Save settings (updates cache and persists to IndexedDB)
+    // Note: This is a "fire and forget" operation. Use saveSettingsAsync if you need
+    // to ensure the data is persisted before continuing.
     saveSettings: (settings: AppSettings): void => {
         settingsCache = { ...settings };
         saveSettingsToDB(settings);
@@ -197,9 +214,19 @@ export const SettingsService = {
         await saveSettingsToDB(settings);
     },
 
+    // Update settings synchronously (uses saveSettings internally)
+    // Note: Returns updated settings immediately, but persistence is async.
+    // Use updateSettingsAsync if you need to ensure data is persisted.
     updateSettings: (partial: Partial<AppSettings>): AppSettings => {
         const updated = { ...settingsCache, ...partial };
         SettingsService.saveSettings(updated);
+        return updated;
+    },
+
+    // Async version of updateSettings
+    updateSettingsAsync: async (partial: Partial<AppSettings>): Promise<AppSettings> => {
+        const updated = { ...settingsCache, ...partial };
+        await SettingsService.saveSettingsAsync(updated);
         return updated;
     },
 
@@ -275,6 +302,9 @@ export const SettingsService = {
     },
 
     // Clear all app data (settings + IndexedDB + any remaining localStorage)
+    // Note: indexedDB.databases() is not supported in Firefox and Safari.
+    // We fall back to deleting known databases, but any databases created in the
+    // future or by other parts of the app won't be automatically cleaned up.
     clearAllData: async (): Promise<void> => {
         // Clear settings cache
         settingsCache = { ...DEFAULT_SETTINGS };
@@ -297,7 +327,7 @@ export const SettingsService = {
                 }
             }
         } catch (e) {
-            // indexedDB.databases() not supported in all browsers
+            // indexedDB.databases() not supported in Firefox and Safari
             // Try deleting known databases
             indexedDB.deleteDatabase('SynthLabsDB');
             indexedDB.deleteDatabase(DB_NAME);
@@ -310,6 +340,8 @@ export const SettingsService = {
     },
 
     // Force reload from IndexedDB (useful after external changes)
+    // Note: Resets initialization state. Should only be called when no save
+    // operations are in progress to avoid race conditions.
     reloadSettings: async (): Promise<AppSettings> => {
         initPromise = null;
         isInitialized = false;

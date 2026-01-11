@@ -44,8 +44,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
         }
     }, [isOpen]);
 
-    const handleSave = () => {
-        SettingsService.saveSettings(settings);
+    const handleSave = async () => {
+        await SettingsService.saveSettingsAsync(settings);
         setSaved(true);
         onSettingsChanged?.();
         setTimeout(() => setSaved(false), 2000);
@@ -60,6 +60,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
         setSettings({ providerKeys: {} });
         setConfirmClear(false);
         onSettingsChanged?.();
+        // Small delay to ensure clearAllData completes before reload
+        await new Promise(resolve => setTimeout(resolve, 100));
         window.location.reload();
     };
 
@@ -177,6 +179,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             'groq': import.meta.env.VITE_GROQ_API_KEY,
                                             'cerebras': import.meta.env.VITE_CEREBRAS_API_KEY,
                                             'featherless': import.meta.env.VITE_FEATHERLESS_API_KEY,
+                                            // Both 'qwen' and 'qwen-deepinfra' intentionally share the same API key
                                             'qwen': import.meta.env.VITE_QWEN_API_KEY,
                                             'qwen-deepinfra': import.meta.env.VITE_QWEN_API_KEY,
                                             'kimi': import.meta.env.VITE_KIMI_API_KEY,

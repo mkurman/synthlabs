@@ -112,11 +112,11 @@ export const LogStorageService = {
         }
     },
 
-    // Synchronous version for backwards compatibility (returns cached/empty)
+    // Synchronous version for backwards compatibility (deprecated - throws error)
     getLogsSync: (sessionUid: string, page: number, pageSize: number): SynthLogItem[] => {
-        // This is a fallback - actual data comes from async version
-        console.warn('getLogsSync called - use getLogs async version for accurate data');
-        return [];
+        // This method is deprecated and no longer returns data.
+        // Callers must use the async getLogs API instead.
+        throw new Error('getLogsSync is deprecated. Use the async getLogs(sessionUid, page, pageSize) method for log retrieval.');
     },
 
     // Update a specific log item (e.g. after retry)
@@ -172,9 +172,11 @@ export const LogStorageService = {
             const index = logsStore.index('sessionUid');
             const logs = await wrapRequest(index.getAllKeys(sessionUid));
 
-            for (const key of logs) {
-                await wrapRequest(logsStore.delete(key));
-            }
+            // Delete all logs in parallel for better performance
+            const deletePromises = logs.map((key) =>
+                wrapRequest(logsStore.delete(key))
+            );
+            await Promise.all(deletePromises);
 
             // Delete session index
             const indexStore = tx.objectStore(INDEX_STORE);
@@ -222,6 +224,8 @@ export const LogStorageService = {
     // Migrate data from LocalStorage to IndexedDB (one-time migration)
     migrateFromLocalStorage: async (): Promise<void> => {
         const LOG_STORAGE_PREFIX = 'synth_logs_';
+        // CHUNK_SIZE must match the historical value from the LocalStorage implementation
+        const CHUNK_SIZE = 50;
 
         // Find all LocalStorage sessions
         const localStorageSessions = Object.keys(localStorage)
@@ -250,7 +254,7 @@ export const LogStorageService = {
                 if (!indexStr) continue;
 
                 const indexData = JSON.parse(indexStr);
-                let lastChunkId = indexData.lastChunkId ?? Math.floor((indexData.totalCount - 1) / 50);
+                let lastChunkId = indexData.lastChunkId ?? Math.floor((indexData.totalCount - 1) / CHUNK_SIZE);
 
                 let allLogs: SynthLogItem[] = [];
                 for (let i = 0; i <= lastChunkId; i++) {
@@ -264,12 +268,12 @@ export const LogStorageService = {
                     }
                 }
 
-                // Save to IndexedDB
-                for (const log of allLogs) {
-                    await LogStorageService.saveLog(sessionUid, log);
-                }
+                // Save to IndexedDB in parallel for better performance
+                await Promise.all(
+                    allLogs.map((log) => LogStorageService.saveLog(sessionUid, log))
+                );
 
-                // Clear from LocalStorage after successful migration
+                // Clear from LocalStorage only after successful migration
                 for (let i = 0; i <= lastChunkId; i++) {
                     localStorage.removeItem(`${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${i}`);
                 }
@@ -278,6 +282,8 @@ export const LogStorageService = {
                 console.log(`[Migration] Migrated ${allLogs.length} logs for session ${sessionUid}`);
             } catch (e) {
                 console.error(`[Migration] Failed to migrate session ${sessionUid}:`, e);
+                // Migration failed for this session, but we don't delete LocalStorage data
+                // to avoid data loss. The migration will be retried on next load.
             }
         }
 
@@ -285,5 +291,23 @@ export const LogStorageService = {
     }
 };
 
-// Auto-migrate on module load
-LogStorageService.migrateFromLocalStorage().catch(console.error);
+// Track migration status for UI feedback
+let migrationStatus: { completed: boolean; failed: boolean; error?: Error } = {
+    completed: false,
+    failed: false
+};
+
+// Auto-migrate on module load and track status
+LogStorageService.migrateFromLocalStorage()
+    .then(() => {
+        migrationStatus.completed = true;
+        console.log('[Migration] Auto-migration completed successfully');
+    })
+    .catch((e) => {
+        migrationStatus.failed = true;
+        migrationStatus.error = e;
+        console.error('[Migration] Auto-migration failed:', e);
+    });
+
+// Export migration status check
+export const getMigrationStatus = () => migrationStatus;

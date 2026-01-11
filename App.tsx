@@ -985,14 +985,14 @@ export default function App() {
         // Check for API key - use inline, settings, or require it
         const resolvedApiKey = externalApiKey || SettingsService.getApiKey(externalProvider);
         if (engineMode === 'regular' && provider === 'external' && !resolvedApiKey && externalProvider !== 'ollama') {
-            setError("API Key is required for external providers (except Ollama). Configure in Settings or enter inline.");
+            setError("API Key is required for external providers (except Ollama). Click the Settings icon (⚙) in the header or enter a key here.");
             return;
         }
         if (engineMode === 'deep') {
             const writer = deepConfig.phases.writer;
             const writerApiKey = writer.apiKey || (writer.externalProvider ? SettingsService.getApiKey(writer.externalProvider) : '');
             if (writer.provider !== 'gemini' && !writerApiKey && writer.externalProvider !== 'ollama') {
-                setError("Writer Agent requires an API Key. Configure in Settings or enter inline.");
+                setError("Writer Agent requires an API Key. Click the Settings icon (⚙) in the header to configure, or enter a key inline in the Writer phase.");
                 return;
             }
         }
@@ -1618,7 +1618,7 @@ export default function App() {
                                         <div className="space-y-3">
                                             <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label><select value={externalProvider} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setExternalProvider(e.target.value as ExternalProvider)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none">{EXTERNAL_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}</select></div>
                                             {externalProvider === 'other' && <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label><input type="text" value={customBaseUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>}
-                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label><input type="password" value={externalApiKey} placeholder="Leave empty if using main key" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
+                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label><input type="password" value={externalApiKey} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
                                             <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label><input type="text" value={externalModel} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalModel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
                                         </div>
                                     )}
@@ -1933,9 +1933,9 @@ export default function App() {
             <SettingsPanel
                 isOpen={showSettings}
                 onClose={() => setShowSettings(false)}
-                onSettingsChanged={() => {
+                onSettingsChanged={async () => {
                     // Refresh logs to pick up any storage changes
-                    refreshLogs();
+                    await refreshLogs();
                 }}
             />
         </div>
