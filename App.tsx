@@ -21,6 +21,7 @@ import * as FirebaseService from './services/firebaseService';
 import * as ExternalApiService from './services/externalApiService';
 import * as DeepReasoningService from './services/deepReasoningService';
 import { LogStorageService } from './services/logStorageService';
+import { SettingsService } from './services/settingsService';
 import { fetchHuggingFaceRows, searchDatasets, getDatasetStructure, getDatasetInfo } from './services/huggingFaceService';
 import LogFeed from './components/LogFeed';
 import ReasoningHighlighter from './components/ReasoningHighlighter';
@@ -28,6 +29,7 @@ import MiniDbPanel from './components/MiniDbPanel';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import VerifierPanel from './components/VerifierPanel';
 import DataPreviewTable from './components/DataPreviewTable';
+import SettingsPanel from './components/SettingsPanel';
 
 export default function App() {
     // --- State: Modes ---
@@ -180,6 +182,7 @@ export default function App() {
     const [progress, setProgress] = useState<ProgressStats>({ current: 0, total: 0, activeWorkers: 0 });
     const [error, setError] = useState<string | null>(null);
     const [showOverwriteModal, setShowOverwriteModal] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
 
     // Retry State
     const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
@@ -214,12 +217,12 @@ export default function App() {
     }, []);
 
     // Load logs from local storage when session changes or pagination upgrades
-    const refreshLogs = useCallback(() => {
+    const refreshLogs = useCallback(async () => {
         // Use ref to ensure we read from the same session the worker is writing to
         const currentSessionId = sessionUidRef.current;
-        const storedLogs = LogStorageService.getLogs(currentSessionId, currentPage, feedPageSize);
+        const storedLogs = await LogStorageService.getLogs(currentSessionId, currentPage, feedPageSize);
         setVisibleLogs(storedLogs);
-        const total = LogStorageService.getTotalCount(currentSessionId);
+        const total = await LogStorageService.getTotalCount(currentSessionId);
         setTotalLogCount(total);
     }, [currentPage, feedPageSize, logsTrigger]);
 
@@ -752,9 +755,9 @@ export default function App() {
                     }
                     result = await ExternalApiService.callExternalApi({
                         provider: externalProvider,
-                        apiKey: externalApiKey,
+                        apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
                         model: externalModel,
-                        customBaseUrl: customBaseUrl,
+                        customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
                         systemPrompt: activePrompt,
                         userPrompt: promptInput,
                         signal: abortControllerRef.current?.signal || undefined,
@@ -891,7 +894,7 @@ export default function App() {
                 }
 
                 // Update Local Storage
-                LogStorageService.updateLog(sessionUid, result);
+                await LogStorageService.updateLog(sessionUid, result);
 
                 // Refresh View
                 refreshLogs();
@@ -914,13 +917,13 @@ export default function App() {
         try {
             await FirebaseService.saveLogToFirebase(logItem);
             const updated = { ...logItem, storageError: undefined };
-            LogStorageService.updateLog(sessionUid, updated);
+            await LogStorageService.updateLog(sessionUid, updated);
             refreshLogs();
             updateDbStats();
         } catch (e: any) {
             console.error("Retry Save Failed", e);
             const updated = { ...logItem, storageError: e.message || "Retry save failed" };
-            LogStorageService.updateLog(sessionUid, updated);
+            await LogStorageService.updateLog(sessionUid, updated);
             refreshLogs();
         } finally {
             setRetryingIds(prev => {
@@ -979,14 +982,17 @@ export default function App() {
                 setSessionName(null);
             }
         }
-        if (engineMode === 'regular' && provider === 'external' && !externalApiKey && externalProvider !== 'ollama') {
-            setError("API Key is required for external providers (except Ollama).");
+        // Check for API key - use inline, settings, or require it
+        const resolvedApiKey = externalApiKey || SettingsService.getApiKey(externalProvider);
+        if (engineMode === 'regular' && provider === 'external' && !resolvedApiKey && externalProvider !== 'ollama') {
+            setError("API Key is required for external providers (except Ollama). Configure in Settings or enter inline.");
             return;
         }
         if (engineMode === 'deep') {
             const writer = deepConfig.phases.writer;
-            if (writer.provider !== 'gemini' && !writer.apiKey && writer.externalProvider !== 'ollama') {
-                setError("Writer Agent requires an API Key.");
+            const writerApiKey = writer.apiKey || (writer.externalProvider ? SettingsService.getApiKey(writer.externalProvider) : '');
+            if (writer.provider !== 'gemini' && !writerApiKey && writer.externalProvider !== 'ollama') {
+                setError("Writer Agent requires an API Key. Configure in Settings or enter inline.");
                 return;
             }
         }
@@ -1039,9 +1045,9 @@ export default function App() {
                     } else {
                         batchSeeds = await ExternalApiService.generateSyntheticSeeds({
                             provider: externalProvider,
-                            apiKey: externalApiKey,
+                            apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
                             model: externalModel,
-                            customBaseUrl: customBaseUrl,
+                            customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
                             signal: abortControllerRef.current?.signal || undefined
                         }, geminiTopic, countForBatch);
                     }
@@ -1143,7 +1149,7 @@ export default function App() {
                         }
 
                         // Save to Local Storage
-                        LogStorageService.saveLog(sessionUidRef.current, result);
+                        await LogStorageService.saveLog(sessionUidRef.current, result);
                         setLogsTrigger(prev => prev + 1);
                         // setTotalLogCount(prev => prev + 1); // Removed optimistic update to avoid drift
 
@@ -1154,7 +1160,7 @@ export default function App() {
                             } catch (saveErr: any) {
                                 console.error("Firebase Sync Error", saveErr);
                                 const updated = { ...result, storageError: saveErr.message || "Save failed" };
-                                LogStorageService.updateLog(sessionUidRef.current, updated);
+                                await LogStorageService.updateLog(sessionUidRef.current, updated);
                             }
                         }
 
@@ -1198,7 +1204,7 @@ export default function App() {
         console.log('[Export] Session UID:', sessionUid);
         console.log('[Export] Total Log Count:', totalLogCount);
 
-        const allLogs = LogStorageService.getAllLogs(sessionUid);
+        const allLogs = await LogStorageService.getAllLogs(sessionUid);
         console.log('[Export] Retrieved logs:', allLogs.length);
 
         if (allLogs.length === 0) {
@@ -1435,6 +1441,13 @@ export default function App() {
                                 </button>
                             </>
                         )}
+                        <button
+                            onClick={() => setShowSettings(true)}
+                            className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white p-2 rounded-lg transition-colors"
+                            title="Settings"
+                        >
+                            <Settings className="w-5 h-5" />
+                        </button>
                     </div>
                 </div>
             </header>
@@ -1486,43 +1499,6 @@ export default function App() {
                                     </button>
                                 </div>
                             )}
-                        </div>
-
-                        {/* Firebase Config (Collapsible) (Same as before) */}
-                        <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-3 px-4 hover:border-pink-500/30 transition-colors">
-                            <details className="group/fb">
-                                <summary className="flex items-center justify-between cursor-pointer list-none">
-                                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 group-open/fb:text-pink-400 transition-colors">
-                                        <Database className="w-3.5 h-3.5" /> Firebase Config
-                                    </span>
-                                    <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-open/fb:rotate-90 transition-transform" />
-                                </summary>
-
-                                <div className="mt-3 space-y-2 animate-in fade-in slide-in-from-top-1">
-                                    <div className="space-y-1">
-                                        <input type="password" value={firebaseConfigInput.apiKey} onChange={e => setFirebaseConfigInput({ ...firebaseConfigInput, apiKey: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-pink-500 outline-none placeholder:text-slate-700" placeholder="API Key" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <input type="text" value={firebaseConfigInput.authDomain} onChange={e => setFirebaseConfigInput({ ...firebaseConfigInput, authDomain: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-pink-500 outline-none placeholder:text-slate-700" placeholder="Auth Domain" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <input type="text" value={firebaseConfigInput.projectId} onChange={e => setFirebaseConfigInput({ ...firebaseConfigInput, projectId: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-pink-500 outline-none placeholder:text-slate-700" placeholder="Project ID" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <input type="text" value={firebaseConfigInput.storageBucket} onChange={e => setFirebaseConfigInput({ ...firebaseConfigInput, storageBucket: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-pink-500 outline-none placeholder:text-slate-700" placeholder="Storage Bucket" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <input type="text" value={firebaseConfigInput.messagingSenderId} onChange={e => setFirebaseConfigInput({ ...firebaseConfigInput, messagingSenderId: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-pink-500 outline-none placeholder:text-slate-700" placeholder="Messaging Sender ID" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <input type="text" value={firebaseConfigInput.appId} onChange={e => setFirebaseConfigInput({ ...firebaseConfigInput, appId: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-pink-500 outline-none placeholder:text-slate-700" placeholder="App ID" />
-                                    </div>
-
-                                    <button onClick={handleSaveFirebaseConfig} className="w-full mt-1 bg-pink-600/10 hover:bg-pink-600/20 text-pink-400 border border-pink-600/20 py-1.5 rounded text-[10px] font-bold transition-all flex items-center justify-center gap-1.5">
-                                        <RefreshCcw className="w-3 h-3" /> Connect
-                                    </button>
-                                </div>
-                            </details>
                         </div>
 
                         {/* Control Panel */}
@@ -1642,7 +1618,7 @@ export default function App() {
                                         <div className="space-y-3">
                                             <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label><select value={externalProvider} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setExternalProvider(e.target.value as ExternalProvider)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none">{EXTERNAL_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}</select></div>
                                             {externalProvider === 'other' && <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label><input type="text" value={customBaseUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>}
-                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label><input type="password" value={externalApiKey} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
+                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label><input type="password" value={externalApiKey} placeholder="Leave empty if using main key" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
                                             <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label><input type="text" value={externalModel} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalModel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
                                         </div>
                                     )}
@@ -1952,6 +1928,16 @@ export default function App() {
                     </div>
                 </main>
             )}
+
+            {/* Settings Panel */}
+            <SettingsPanel
+                isOpen={showSettings}
+                onClose={() => setShowSettings(false)}
+                onSettingsChanged={() => {
+                    // Refresh logs to pick up any storage changes
+                    refreshLogs();
+                }}
+            />
         </div>
     );
 }

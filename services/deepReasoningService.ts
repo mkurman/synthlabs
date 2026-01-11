@@ -2,6 +2,7 @@
 import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig } from '../types';
 import * as GeminiService from './geminiService';
 import * as ExternalApiService from './externalApiService';
+import { SettingsService } from './settingsService';
 import { logger } from '../utils/logger';
 import { DEEP_PHASE_PROMPTS } from '../constants';
 
@@ -38,11 +39,15 @@ const executePhase = async (
     if (provider === 'gemini') {
       result = await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams });
     } else {
+      // Resolve API key from phaseConfig first, then fall back to SettingsService
+      const resolvedApiKey = apiKey || (externalProvider ? SettingsService.getApiKey(externalProvider) : '');
+      const resolvedBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
+
       result = await ExternalApiService.callExternalApi({
         provider: externalProvider,
-        apiKey: apiKey,
+        apiKey: resolvedApiKey,
         model: model,
-        customBaseUrl: customBaseUrl,
+        customBaseUrl: resolvedBaseUrl,
         systemPrompt: systemPrompt,
         userPrompt: userContent,
         signal: signal,

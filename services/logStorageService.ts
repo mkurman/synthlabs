@@ -1,209 +1,289 @@
 import { SynthLogItem } from '../types';
 
-const LOG_STORAGE_PREFIX = 'synth_logs_';
-const CHUNK_SIZE = 50; // Store 50 logs per localStorage key
+const DB_NAME = 'SynthLabsDB';
+const DB_VERSION = 1;
+const LOGS_STORE = 'logs';
+const INDEX_STORE = 'indices';
 
-interface LogChunk {
-    id: number;
-    logs: SynthLogItem[];
+interface LogIndex {
+    sessionUid: string;
+    totalCount: number;
 }
+
+// IndexedDB wrapper with lazy initialization
+let dbInstance: IDBDatabase | null = null;
+let dbPromise: Promise<IDBDatabase> | null = null;
+
+const getDB = (): Promise<IDBDatabase> => {
+    if (dbInstance) return Promise.resolve(dbInstance);
+    if (dbPromise) return dbPromise;
+
+    dbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+        request.onerror = () => {
+            console.error('IndexedDB open failed:', request.error);
+            reject(request.error);
+        };
+
+        request.onsuccess = () => {
+            dbInstance = request.result;
+            resolve(dbInstance);
+        };
+
+        request.onupgradeneeded = (event) => {
+            const db = (event.target as IDBOpenDBRequest).result;
+
+            // Create logs store with compound index for session+id
+            if (!db.objectStoreNames.contains(LOGS_STORE)) {
+                const logsStore = db.createObjectStore(LOGS_STORE, { keyPath: ['sessionUid', 'id'] });
+                logsStore.createIndex('sessionUid', 'sessionUid', { unique: false });
+                logsStore.createIndex('sessionTimestamp', ['sessionUid', 'timestamp'], { unique: false });
+            }
+
+            // Create index store for session metadata
+            if (!db.objectStoreNames.contains(INDEX_STORE)) {
+                db.createObjectStore(INDEX_STORE, { keyPath: 'sessionUid' });
+            }
+        };
+    });
+
+    return dbPromise;
+};
+
+// Helper to wrap IDB requests in promises
+const wrapRequest = <T>(request: IDBRequest<T>): Promise<T> => {
+    return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+};
 
 export const LogStorageService = {
     // Save a single log (append to end)
-    saveLog: (sessionUid: string, log: SynthLogItem) => {
-        console.log(`[Storage Debug] Saving log for session ${sessionUid}, Log ID: ${log.id}`);
-        const indexKey = `${LOG_STORAGE_PREFIX}${sessionUid}_index`;
-        const indexStr = localStorage.getItem(indexKey);
-        let totalCount = 0;
-        let lastChunkId = 0;
-
-        if (indexStr) {
-            const index = JSON.parse(indexStr);
-            totalCount = index.totalCount;
-            lastChunkId = index.lastChunkId;
-        }
-
-        // Try to load last chunk
-        const chunkKey = `${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${lastChunkId}`;
-        const chunkStr = localStorage.getItem(chunkKey);
-        let currentChunk: SynthLogItem[] = [];
-
-        if (chunkStr) {
-            currentChunk = JSON.parse(chunkStr);
-        }
-
-        if (currentChunk.length >= CHUNK_SIZE) {
-            // Start new chunk
-            lastChunkId++;
-            currentChunk = [log];
-        } else {
-            // Append to current
-            currentChunk.push(log);
-        }
-
-        // Save chunk
+    saveLog: async (sessionUid: string, log: SynthLogItem): Promise<boolean> => {
         try {
-            console.log(`[Storage Debug] Writing chunk ${lastChunkId}, Items: ${currentChunk.length}`);
-            localStorage.setItem(`${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${lastChunkId}`, JSON.stringify(currentChunk));
+            const db = await getDB();
+            const tx = db.transaction([LOGS_STORE, INDEX_STORE], 'readwrite');
 
-            // Update index
-            const newIndex = {
-                totalCount: totalCount + 1,
-                lastChunkId: lastChunkId
+            // Store the log with session reference
+            const logsStore = tx.objectStore(LOGS_STORE);
+            const logWithSession = { ...log, sessionUid, timestamp: Date.now() };
+            await wrapRequest(logsStore.put(logWithSession));
+
+            // Update session index
+            const indexStore = tx.objectStore(INDEX_STORE);
+            const existingIndex = await wrapRequest(indexStore.get(sessionUid)) as LogIndex | undefined;
+            const newIndex: LogIndex = {
+                sessionUid,
+                totalCount: (existingIndex?.totalCount || 0) + 1
             };
-            localStorage.setItem(indexKey, JSON.stringify(newIndex));
-            console.log(`[Storage Debug] Index updated:`, newIndex);
+            await wrapRequest(indexStore.put(newIndex));
 
             return true;
         } catch (e) {
-            console.error("LocalStorage persistence failed (quota exceeded?)", e);
+            console.error('IndexedDB persistence failed:', e);
             return false;
         }
     },
 
     // Get a page of logs (reverse order - newest first)
-    getLogs: (sessionUid: string, page: number, pageSize: number): SynthLogItem[] => {
-        const indexKey = `${LOG_STORAGE_PREFIX}${sessionUid}_index`;
-        const indexStr = localStorage.getItem(indexKey);
-        if (!indexStr) return [];
+    getLogs: async (sessionUid: string, page: number, pageSize: number): Promise<SynthLogItem[]> => {
+        try {
+            const db = await getDB();
+            const tx = db.transaction(LOGS_STORE, 'readonly');
+            const store = tx.objectStore(LOGS_STORE);
+            const index = store.index('sessionUid');
 
-        const { totalCount } = JSON.parse(indexStr);
+            // Get all logs for this session
+            const logs = await wrapRequest(index.getAll(sessionUid)) as (SynthLogItem & { sessionUid: string; timestamp: number })[];
 
-        // Calculate which logs we need
-        // Logs are stored 0..N (oldest to newest)
-        // We want newest to oldest: (total - 1) down to 0
+            // Sort by timestamp descending (newest first)
+            logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-        const end = totalCount - ((page - 1) * pageSize);     // Exclusive upper bound index in theoretical array
-        const start = Math.max(0, end - pageSize);            // Inclusive lower bound
+            // Paginate
+            const start = (page - 1) * pageSize;
+            const end = start + pageSize;
 
-        if (end <= 0) return [];
-
-        const results: SynthLogItem[] = [];
-
-        // We need logs from index 'start' up to 'end' (exclusive)
-        // They are distributed across chunks of size CHUNK_SIZE
-
-        let currentIdx = end - 1;
-        while (currentIdx >= start) {
-            const chunkId = Math.floor(currentIdx / CHUNK_SIZE);
-            const offset = currentIdx % CHUNK_SIZE;
-
-            const chunkKey = `${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${chunkId}`;
-            const chunkStr = localStorage.getItem(chunkKey);
-
-            if (chunkStr) {
-                const chunk = JSON.parse(chunkStr);
-                if (chunk[offset]) {
-                    results.push(chunk[offset]);
-                }
-            }
-            currentIdx--;
+            return logs.slice(start, end).map(({ sessionUid: _s, timestamp: _t, ...log }) => log as SynthLogItem);
+        } catch (e) {
+            console.error('IndexedDB read failed:', e);
+            return [];
         }
+    },
 
-        // Check if page 1 needs new logs that haven't been saved yet if any (though we save synchronously)
-        return results;
+    // Synchronous version for backwards compatibility (returns cached/empty)
+    getLogsSync: (sessionUid: string, page: number, pageSize: number): SynthLogItem[] => {
+        // This is a fallback - actual data comes from async version
+        console.warn('getLogsSync called - use getLogs async version for accurate data');
+        return [];
     },
 
     // Update a specific log item (e.g. after retry)
-    updateLog: (sessionUid: string, updatedLog: SynthLogItem): boolean => {
-        const indexKey = `${LOG_STORAGE_PREFIX}${sessionUid}_index`;
-        const indexStr = localStorage.getItem(indexKey);
-        if (!indexStr) return false;
+    updateLog: async (sessionUid: string, updatedLog: SynthLogItem): Promise<boolean> => {
+        try {
+            const db = await getDB();
+            const tx = db.transaction(LOGS_STORE, 'readwrite');
+            const store = tx.objectStore(LOGS_STORE);
 
-        const { lastChunkId } = JSON.parse(indexStr);
+            // Get existing log to preserve timestamp
+            const existing = await wrapRequest(store.get([sessionUid, updatedLog.id])) as (SynthLogItem & { timestamp: number }) | undefined;
 
-        // Search from newest chunk backwards
-        for (let chunkId = lastChunkId; chunkId >= 0; chunkId--) {
-            const chunkKey = `${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${chunkId}`;
-            const chunkStr = localStorage.getItem(chunkKey);
-            if (chunkStr) {
-                const chunk: SynthLogItem[] = JSON.parse(chunkStr);
-                const logIdx = chunk.findIndex(l => l.id === updatedLog.id);
-                if (logIdx !== -1) {
-                    chunk[logIdx] = updatedLog;
-                    localStorage.setItem(chunkKey, JSON.stringify(chunk));
-                    return true;
-                }
+            const logWithSession = {
+                ...updatedLog,
+                sessionUid,
+                timestamp: existing?.timestamp || Date.now()
+            };
+            await wrapRequest(store.put(logWithSession));
+
+            return true;
+        } catch (e) {
+            console.error('IndexedDB update failed:', e);
+            return false;
+        }
+    },
+
+    getTotalCount: async (sessionUid: string): Promise<number> => {
+        try {
+            const db = await getDB();
+            const tx = db.transaction(INDEX_STORE, 'readonly');
+            const store = tx.objectStore(INDEX_STORE);
+            const index = await wrapRequest(store.get(sessionUid)) as LogIndex | undefined;
+            return index?.totalCount || 0;
+        } catch (e) {
+            console.error('IndexedDB count failed:', e);
+            return 0;
+        }
+    },
+
+    // Synchronous version for backwards compatibility
+    getTotalCountSync: (sessionUid: string): number => {
+        console.warn('getTotalCountSync called - use getTotalCount async version for accurate data');
+        return 0;
+    },
+
+    clearSession: async (sessionUid: string): Promise<void> => {
+        try {
+            const db = await getDB();
+            const tx = db.transaction([LOGS_STORE, INDEX_STORE], 'readwrite');
+
+            // Delete all logs for this session
+            const logsStore = tx.objectStore(LOGS_STORE);
+            const index = logsStore.index('sessionUid');
+            const logs = await wrapRequest(index.getAllKeys(sessionUid));
+
+            for (const key of logs) {
+                await wrapRequest(logsStore.delete(key));
             }
-        }
-        return false;
-    },
 
-    getTotalCount: (sessionUid: string): number => {
-        const indexKey = `${LOG_STORAGE_PREFIX}${sessionUid}_index`;
-        const indexStr = localStorage.getItem(indexKey);
-        if (!indexStr) return 0;
-        return JSON.parse(indexStr).totalCount;
-    },
-
-    clearSession: (sessionUid: string) => {
-        const indexKey = `${LOG_STORAGE_PREFIX}${sessionUid}_index`;
-        const indexStr = localStorage.getItem(indexKey);
-        if (indexStr) {
-            const { lastChunkId } = JSON.parse(indexStr);
-            for (let i = 0; i <= lastChunkId; i++) {
-                localStorage.removeItem(`${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${i}`);
-            }
-            localStorage.removeItem(indexKey);
+            // Delete session index
+            const indexStore = tx.objectStore(INDEX_STORE);
+            await wrapRequest(indexStore.delete(sessionUid));
+        } catch (e) {
+            console.error('IndexedDB clear failed:', e);
         }
     },
 
-    // Robustly get all logs for export by iterating chunks 
-    getAllLogs: (sessionUid: string): SynthLogItem[] => {
-        const indexKey = `${LOG_STORAGE_PREFIX}${sessionUid}_index`;
-        const indexStr = localStorage.getItem(indexKey);
+    // Get all logs for export
+    getAllLogs: async (sessionUid: string): Promise<SynthLogItem[]> => {
+        try {
+            const db = await getDB();
+            const tx = db.transaction(LOGS_STORE, 'readonly');
+            const store = tx.objectStore(LOGS_STORE);
+            const index = store.index('sessionUid');
 
-        console.log(`[Export Debug] Fetching logs for session ${sessionUid}`);
-        console.log(`[Export Debug] Index Key: ${indexKey}, Exists: ${!!indexStr}`);
+            const logs = await wrapRequest(index.getAll(sessionUid)) as (SynthLogItem & { sessionUid: string; timestamp: number })[];
 
-        if (!indexStr) return [];
+            // Sort by timestamp ascending (oldest first for export)
+            logs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-        const indexData = JSON.parse(indexStr);
-        console.log(`[Export Debug] Index Data:`, indexData);
-
-        let lastChunkId = indexData.lastChunkId;
-        const totalCount = indexData.totalCount;
-
-        // Fallback if lastChunkId is missing (legacy sessions)
-        if (lastChunkId === undefined && totalCount > 0) {
-            lastChunkId = Math.floor((totalCount - 1) / CHUNK_SIZE);
-            console.log(`[Export Debug] Calculated lastChunkId: ${lastChunkId} from count ${totalCount}`);
-        } else if (lastChunkId === undefined) {
-            lastChunkId = 0;
-            console.log(`[Export Debug] Defaulted lastChunkId to 0`);
-        } else {
-            console.log(`[Export Debug] Using stored lastChunkId: ${lastChunkId}`);
+            // Remove internal fields
+            return logs.map(({ sessionUid: _s, timestamp: _t, ...log }) => log as SynthLogItem);
+        } catch (e) {
+            console.error('IndexedDB getAllLogs failed:', e);
+            return [];
         }
-
-        let all: SynthLogItem[] = [];
-
-        for (let i = 0; i <= lastChunkId; i++) {
-            const chunkKey = `${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${i}`;
-            const chunkStr = localStorage.getItem(chunkKey);
-            console.log(`[Export Debug] Chunk ${i} (Key: ${chunkKey}): ${chunkStr ? 'FOUND' : 'MISSING'}, Length: ${chunkStr?.length}`);
-
-            if (chunkStr) {
-                try {
-                    const chunk = JSON.parse(chunkStr);
-                    if (Array.isArray(chunk)) {
-                        all = all.concat(chunk);
-                        console.log(`[Export Debug] Chunk ${i} added ${chunk.length} items. Total: ${all.length}`);
-                    } else {
-                        console.warn(`[Export Debug] Chunk ${i} is not an array`, chunk);
-                    }
-                } catch (e) {
-                    console.error("Error parsing chunk", i, e);
-                }
-            }
-        }
-        console.log(`[Export Debug] Final log count: ${all.length}`);
-        return all;
     },
 
-    // For cleaning up old sessions if needed
-    getAllSessionUids: (): string[] => {
-        return Object.keys(localStorage)
+    // Get all session UIDs
+    getAllSessionUids: async (): Promise<string[]> => {
+        try {
+            const db = await getDB();
+            const tx = db.transaction(INDEX_STORE, 'readonly');
+            const store = tx.objectStore(INDEX_STORE);
+            const indices = await wrapRequest(store.getAll()) as LogIndex[];
+            return indices.map(i => i.sessionUid);
+        } catch (e) {
+            console.error('IndexedDB getAllSessionUids failed:', e);
+            return [];
+        }
+    },
+
+    // Migrate data from LocalStorage to IndexedDB (one-time migration)
+    migrateFromLocalStorage: async (): Promise<void> => {
+        const LOG_STORAGE_PREFIX = 'synth_logs_';
+
+        // Find all LocalStorage sessions
+        const localStorageSessions = Object.keys(localStorage)
             .filter(k => k.startsWith(LOG_STORAGE_PREFIX) && k.endsWith('_index'))
             .map(k => k.replace(LOG_STORAGE_PREFIX, '').replace('_index', ''));
+
+        if (localStorageSessions.length === 0) {
+            console.log('[Migration] No LocalStorage sessions to migrate');
+            return;
+        }
+
+        console.log(`[Migration] Found ${localStorageSessions.length} sessions to migrate`);
+
+        for (const sessionUid of localStorageSessions) {
+            try {
+                // Check if already migrated
+                const existingCount = await LogStorageService.getTotalCount(sessionUid);
+                if (existingCount > 0) {
+                    console.log(`[Migration] Session ${sessionUid} already exists in IndexedDB, skipping`);
+                    continue;
+                }
+
+                // Read from LocalStorage
+                const indexKey = `${LOG_STORAGE_PREFIX}${sessionUid}_index`;
+                const indexStr = localStorage.getItem(indexKey);
+                if (!indexStr) continue;
+
+                const indexData = JSON.parse(indexStr);
+                let lastChunkId = indexData.lastChunkId ?? Math.floor((indexData.totalCount - 1) / 50);
+
+                let allLogs: SynthLogItem[] = [];
+                for (let i = 0; i <= lastChunkId; i++) {
+                    const chunkKey = `${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${i}`;
+                    const chunkStr = localStorage.getItem(chunkKey);
+                    if (chunkStr) {
+                        const chunk = JSON.parse(chunkStr);
+                        if (Array.isArray(chunk)) {
+                            allLogs = allLogs.concat(chunk);
+                        }
+                    }
+                }
+
+                // Save to IndexedDB
+                for (const log of allLogs) {
+                    await LogStorageService.saveLog(sessionUid, log);
+                }
+
+                // Clear from LocalStorage after successful migration
+                for (let i = 0; i <= lastChunkId; i++) {
+                    localStorage.removeItem(`${LOG_STORAGE_PREFIX}${sessionUid}_chunk_${i}`);
+                }
+                localStorage.removeItem(indexKey);
+
+                console.log(`[Migration] Migrated ${allLogs.length} logs for session ${sessionUid}`);
+            } catch (e) {
+                console.error(`[Migration] Failed to migrate session ${sessionUid}:`, e);
+            }
+        }
+
+        console.log('[Migration] Migration complete');
     }
 };
+
+// Auto-migrate on module load
+LogStorageService.migrateFromLocalStorage().catch(console.error);

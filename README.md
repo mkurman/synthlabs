@@ -144,6 +144,8 @@ Seamless Firebase/Firestore support:
    Edit `.env.local` with your API keys:
    ```env
    VITE_GEMINI_API_KEY=your-gemini-key
+   VITE_OPENAI_API_KEY=your-openai-key
+   VITE_ANTHROPIC_API_KEY=your-anthropic-key
    # Add other provider keys as needed
    ```
 

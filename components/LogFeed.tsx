@@ -106,7 +106,11 @@ const LogFeed: React.FC<LogFeedProps> = ({
                 )}
                 <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
                   <Clock className="w-3 h-3" />
-                  {item.timestamp.split('T')[1].split('.')[0]}
+                  {item.timestamp
+                    ? (typeof item.timestamp === 'string'
+                      ? item.timestamp.split('T')[1]?.split('.')[0]
+                      : new Date(item.timestamp).toLocaleTimeString())
+                    : '--:--:--'}
                 </span>
               </div>
 
