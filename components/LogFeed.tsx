@@ -106,11 +106,17 @@ const LogFeed: React.FC<LogFeedProps> = ({
                 )}
                 <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
                   <Clock className="w-3 h-3" />
-                  {item.timestamp
-                    ? (typeof item.timestamp === 'string'
-                      ? item.timestamp.split('T')[1]?.split('.')[0]
-                      : new Date(item.timestamp).toLocaleTimeString())
-                    : '--:--:--'}
+                  {(() => {
+                    if (!item.timestamp) return '--:--:--';
+                    try {
+                      if (typeof item.timestamp === 'string' && item.timestamp.includes('T')) {
+                        return item.timestamp.split('T')[1]?.split('.')[0] || new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                      }
+                      return new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    } catch {
+                      return '--:--:--';
+                    }
+                  })()}
                 </span>
               </div>
 

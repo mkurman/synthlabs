@@ -4,7 +4,8 @@ import {
     Upload, Database, AlertTriangle, Star, Trash2, CheckCircle2,
     GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
     ShieldCheck, LayoutGrid, List, Search, Server, Clock, Bookmark, Plus,
-    ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileType, MessageCircle
+    ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileType, MessageCircle,
+    ChevronUp, ChevronDown, Maximize2, Minimize2
 } from 'lucide-react';
 import { VerifierItem } from '../types';
 import * as FirebaseService from '../services/firebaseService';
@@ -33,6 +34,21 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
+
+    // Expanded conversations state (track by item ID)
+    const [expandedConversations, setExpandedConversations] = useState<Set<string>>(new Set());
+
+    const toggleConversationExpand = (id: string) => {
+        setExpandedConversations(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
 
     // Dedupe State
     const [showDuplicatesOnly, setShowDuplicatesOnly] = useState(false);
@@ -597,10 +613,22 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                 {/* Multi-turn Conversation View */}
                                 {item.isMultiTurn && item.messages && item.messages.length > 0 ? (
                                     <div className="bg-slate-950/30 p-3 rounded border border-cyan-800/30 my-2">
-                                        <h4 className="text-[10px] uppercase font-bold text-cyan-500 mb-2 flex items-center gap-1">
-                                            <MessageCircle className="w-3 h-3" /> Conversation ({item.messages.length} messages)
-                                        </h4>
-                                        <div className="max-h-48 overflow-y-auto">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h4 className="text-[10px] uppercase font-bold text-cyan-500 flex items-center gap-1">
+                                                <MessageCircle className="w-3 h-3" /> Conversation ({item.messages.length} messages)
+                                            </h4>
+                                            <button
+                                                onClick={() => toggleConversationExpand(item.id)}
+                                                className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-cyan-400 transition-colors uppercase font-bold"
+                                            >
+                                                {expandedConversations.has(item.id) ? (
+                                                    <><Minimize2 className="w-3 h-3" /> Collapse</>
+                                                ) : (
+                                                    <><Maximize2 className="w-3 h-3" /> Expand</>
+                                                )}
+                                            </button>
+                                        </div>
+                                        <div className={expandedConversations.has(item.id) ? '' : 'max-h-48 overflow-y-auto'}>
                                             <ConversationView messages={item.messages} />
                                         </div>
                                     </div>

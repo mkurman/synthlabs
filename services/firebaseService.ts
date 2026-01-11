@@ -1,11 +1,28 @@
 import { initializeApp, getApps, deleteApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { SynthLogItem, FirebaseConfig, VerifierItem } from '../types';
 import { logger } from '../utils/logger';
 
 let db: Firestore | null = null;
 let app: FirebaseApp | null = null;
 let currentConfigStr: string | null = null;
+
+// Recursively remove undefined values from objects/arrays (Firestore doesn't support undefined)
+const sanitizeForFirestore = (obj: any): any => {
+    if (obj === undefined) return null;
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) {
+        return obj.map(item => sanitizeForFirestore(item));
+    }
+    const cleaned: any = {};
+    for (const key of Object.keys(obj)) {
+        const value = obj[key];
+        if (value !== undefined) {
+            cleaned[key] = sanitizeForFirestore(value);
+        }
+    }
+    return cleaned;
+};
 
 export interface SavedSession {
     id: string;
@@ -107,7 +124,7 @@ export const saveLogToFirebase = async (log: SynthLogItem, collectionName: strin
             duration: log.duration || 0,
             tokenCount: log.tokenCount || 0,
             modelUsed: log.modelUsed,
-            createdAt: new Date()
+            createdAt: log.timestamp
         };
 
         if (log.deepMetadata) {
@@ -140,9 +157,12 @@ export const saveLogToFirebase = async (log: SynthLogItem, collectionName: strin
         const MAX_RETRIES = 3;
         let lastError: Error | null = null;
 
+        // Sanitize entire docData to remove any nested undefined values
+        const sanitizedDocData = sanitizeForFirestore(docData);
+
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
-                await addDoc(collection(db, collectionName), docData);
+                await addDoc(collection(db, collectionName), sanitizedDocData);
                 return; // Success, exit
             } catch (retryErr: any) {
                 lastError = retryErr;

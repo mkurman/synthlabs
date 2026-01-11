@@ -137,8 +137,16 @@ export interface HuggingFaceConfig {
   dataset: string;
   config: string;
   split: string;
-  columnName?: string;     // Specific column to target (e.g., "prompt", "question")
+  columnName?: string;       // DEPRECATED: kept for backward compatibility
+  inputColumns?: string[];   // Columns to combine for input (question)
+  outputColumns?: string[];  // Columns to combine for output (answer)
   messageTurnIndex?: number; // If the target is a list/chat, which index to pick
+}
+
+export interface DetectedColumns {
+  input: string[];   // Auto-detected input columns
+  output: string[];  // Auto-detected output columns
+  all: string[];     // All available columns
 }
 
 export interface ProgressStats {

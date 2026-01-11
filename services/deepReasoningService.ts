@@ -427,7 +427,8 @@ export const orchestrateMultiTurnConversation = async (
       id: crypto.randomUUID(),
       seed_preview: displayQuery.substring(0, 150) + (displayQuery.length > 150 ? "..." : ""),
       full_seed: initialInput,
-      query: initialQuery,
+      query: initialQuery || displayQuery,
+
       reasoning: messages.filter(m => m.role === 'assistant').map(m => m.reasoning).filter(Boolean).join('\n---\n'),
       answer: messages[messages.length - 1]?.content || "",
       timestamp: new Date().toISOString(),
@@ -494,5 +495,233 @@ const callAgent = async (
       retryDelay,
       generationParams
     });
+  }
+};
+
+// ============================================================================
+// CONVERSATION TRACE REWRITING
+// ============================================================================
+
+interface ConversationRewriteParams {
+  messages: ChatMessage[];            // Existing conversation
+  config: DeepConfig;                 // DEEP mode config
+  engineMode: 'regular' | 'deep';     // Which engine to use
+  converterPrompt?: string;           // For regular mode
+  signal?: AbortSignal;
+  maxRetries: number;
+  retryDelay: number;
+  generationParams?: GenerationParams;
+  onMessageRewritten?: (index: number, total: number) => void;
+  // For regular mode external API
+  regularModeConfig?: {
+    provider: 'gemini' | 'external';
+    externalProvider: string;
+    apiKey: string;
+    model: string;
+    customBaseUrl: string;
+  };
+}
+
+/**
+ * Rewrites reasoning traces in an existing conversation.
+ * 
+ * Process:
+ * 1. Iterate through all messages in the conversation
+ * 2. For each assistant message with <think>...</think> content:
+ *    a. Extract the reasoning trace
+ *    b. Run it through DEEP or regular converter to create symbolic reasoning
+ *    c. Replace the <think> content with the new reasoning
+ * 3. Return the conversation with updated reasoning traces
+ */
+export const orchestrateConversationRewrite = async (
+  params: ConversationRewriteParams
+): Promise<SynthLogItem> => {
+  const {
+    messages,
+    config,
+    engineMode,
+    converterPrompt,
+    signal,
+    maxRetries,
+    retryDelay,
+    generationParams,
+    onMessageRewritten,
+    regularModeConfig
+  } = params;
+
+  const startTime = Date.now();
+  const rewrittenMessages: ChatMessage[] = [];
+  const thinkTagRegex = /<think>([\s\S]*?)<\/think>/i;
+
+  logger.group("🔄 STARTING CONVERSATION TRACE REWRITING");
+  logger.log("Total messages:", messages.length);
+  logger.log("Engine mode:", engineMode);
+
+  try {
+    let assistantIndex = 0;
+    const totalAssistants = messages.filter(m => m.role === 'assistant').length;
+
+    for (let i = 0; i < messages.length; i++) {
+      if (signal?.aborted) break;
+
+      const message = messages[i];
+
+      // Keep user/system messages unchanged
+      if (message.role !== 'assistant') {
+        rewrittenMessages.push({ ...message });
+        continue;
+      }
+
+      assistantIndex++;
+
+      // Check if this message has <think> content
+      const thinkMatch = message.content.match(thinkTagRegex);
+      let originalThinking = "";
+      let outsideThinkContent = message.content;
+      let isImputation = false;
+
+      if (!thinkMatch) {
+        // No <think> tags, but we are in "Generate/Rewrite" mode.
+        // If we are in Generator mode (implied by this function being called for an implementation plan that supports it),
+        // we should "impute" the reasoning.
+        isImputation = true;
+        logger.log(`Message ${i}: No think tags found. Switching to IMPUTATION mode.`);
+        outsideThinkContent = message.content.trim();
+      } else {
+        originalThinking = thinkMatch[1].trim();
+        outsideThinkContent = message.content.replace(thinkTagRegex, '').trim();
+        logger.log(`Message ${i}: Rewriting think content (${originalThinking.length} chars)`);
+      }
+
+      // Build context for rewriting - include the user question from previous message
+      const prevUserMsg = messages.slice(0, i).reverse().find(m => m.role === 'user');
+      const userContext = prevUserMsg ? `[USER QUERY]:\n${prevUserMsg.content}\n\n` : '';
+
+      let rewriteInput = "";
+      if (isImputation) {
+        rewriteInput = `
+[TASK]: REVERSE ENGINEERING REASONING
+[INSTRUCTION]: Analyze the [USER QUERY] and the [ASSISTANT RESPONSE]. Generate a detailed stenographic reasoning trace (<think>...</think>) that logically connects the query to the response.
+${userContext}
+[ASSISTANT RESPONSE]:
+${outsideThinkContent}
+`;
+      } else {
+        rewriteInput = `${userContext}[RAW REASONING TRACE]:\n${originalThinking}`;
+      }
+
+      let newReasoning: string;
+
+      if (engineMode === 'deep') {
+        // Use DEEP pipeline for rewriting
+        const deepResult = await orchestrateDeepReasoning({
+          input: rewriteInput,
+          config: config,
+          signal: signal,
+          maxRetries: maxRetries,
+          retryDelay: retryDelay,
+          generationParams: generationParams
+        });
+
+        newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
+      } else {
+        // Use regular converter
+        const prompt = converterPrompt || DEEP_PHASE_PROMPTS.writer;
+
+        if (regularModeConfig?.provider === 'gemini') {
+          const result = await GeminiService.generateGenericJSON(
+            rewriteInput,
+            prompt,
+            { maxRetries, retryDelay, generationParams }
+          );
+          newReasoning = result.reasoning || originalThinking;
+        } else if (regularModeConfig) {
+          const result = await ExternalApiService.callExternalApi({
+            provider: regularModeConfig.externalProvider as any,
+            apiKey: regularModeConfig.apiKey || SettingsService.getApiKey(regularModeConfig.externalProvider as any),
+            model: regularModeConfig.model,
+            customBaseUrl: regularModeConfig.customBaseUrl || SettingsService.getCustomBaseUrl(),
+            systemPrompt: prompt,
+            userPrompt: `[INPUT LOGIC START]\n${rewriteInput}\n[INPUT LOGIC END]`,
+            signal,
+            maxRetries,
+            retryDelay,
+            generationParams
+          });
+          newReasoning = result.reasoning || originalThinking;
+        } else {
+          // Fallback - use DEEP writer phase
+          const writerRes = await executePhase(
+            config.phases.writer,
+            rewriteInput,
+            signal,
+            maxRetries,
+            retryDelay,
+            generationParams
+          );
+          newReasoning = writerRes.result?.reasoning || originalThinking;
+        }
+      }
+
+      // Reconstruct the message with new reasoning
+      const newContent = `<think>${newReasoning}</think>\n\n${outsideThinkContent}`;
+
+      rewrittenMessages.push({
+        ...message,
+        content: newContent,
+        reasoning: newReasoning
+      });
+
+      onMessageRewritten?.(assistantIndex, totalAssistants);
+      logger.log(`Message ${i}: Rewritten successfully`);
+    }
+
+    logger.log("✅ Conversation rewrite complete");
+    logger.groupEnd();
+
+    // Build the display query from first user message
+    const firstUser = rewrittenMessages.find(m => m.role === 'user');
+    const displayQuery = firstUser?.content?.substring(0, 150) || "Conversation";
+
+    // Combine all reasoning traces for the main reasoning field
+    const allReasoning = rewrittenMessages
+      .filter(m => m.role === 'assistant' && m.reasoning)
+      .map(m => m.reasoning)
+      .join('\n---\n');
+
+    return {
+      id: crypto.randomUUID(),
+      seed_preview: displayQuery + (displayQuery.length >= 150 ? "..." : ""),
+      full_seed: messages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
+      query: displayQuery,
+      reasoning: allReasoning,
+      answer: rewrittenMessages[rewrittenMessages.length - 1]?.content || "",
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - startTime,
+      tokenCount: rewrittenMessages.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
+      modelUsed: engineMode === 'deep' ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
+      isMultiTurn: true,
+      messages: rewrittenMessages
+    };
+
+  } catch (error: any) {
+    logger.error("💥 Conversation rewrite failed:", error);
+    logger.groupEnd();
+
+    return {
+      id: crypto.randomUUID(),
+      seed_preview: "Conversation Rewrite Error",
+      full_seed: messages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
+      query: "ERROR",
+      reasoning: "",
+      answer: "Conversation trace rewriting failed",
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - startTime,
+      modelUsed: "REWRITE ENGINE",
+      isError: true,
+      error: error.message || "Unknown error during conversation rewriting",
+      isMultiTurn: true,
+      messages: messages // Return original on error
+    };
   }
 };

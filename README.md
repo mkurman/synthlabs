@@ -220,6 +220,23 @@ This project is licensed under the Apache 2.0 License.
 
 ---
 
+## Citation
+
+If you find this tool useful, please cite it as:
+
+```
+@misc{synthlabs,
+    author = {Kurman, Mariusz},
+    title = {SYNTHLabs Reasoning Generator},
+    howpublished = {\url{https://github.com/mkurman/synthlabs}},
+    year = {2026}
+}
+```
+
+Thank you!
+
+---
+
 <div align="center">
 
 **Built with ❤️ for the AI research community**

@@ -105,7 +105,10 @@ export const LogStorageService = {
             const start = (page - 1) * pageSize;
             const end = start + pageSize;
 
-            return logs.slice(start, end).map(({ sessionUid: _s, timestamp: _t, ...log }) => log as SynthLogItem);
+            return logs.slice(start, end).map(({ sessionUid: _s, timestamp: _t, ...log }) => ({
+                ...log,
+                timestamp: _t ? new Date(_t).toISOString() : new Date().toISOString()
+            } as SynthLogItem));
         } catch (e) {
             console.error('IndexedDB read failed:', e);
             return [];
@@ -199,8 +202,11 @@ export const LogStorageService = {
             // Sort by timestamp ascending (oldest first for export)
             logs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-            // Remove internal fields
-            return logs.map(({ sessionUid: _s, timestamp: _t, ...log }) => log as SynthLogItem);
+            // Remove internal fields but keep timestamp
+            return logs.map(({ sessionUid: _s, timestamp: _t, ...log }) => ({
+                ...log,
+                timestamp: _t ? new Date(_t).toISOString() : new Date().toISOString()
+            } as SynthLogItem));
         } catch (e) {
             console.error('IndexedDB getAllLogs failed:', e);
             return [];

@@ -11,11 +11,11 @@ import {
 
 import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider,
-    GenerationConfig, ProgressStats, HuggingFaceConfig,
-    CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig
+    GenerationConfig, ProgressStats, HuggingFaceConfig, DetectedColumns,
+    CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig, ChatMessage
 } from './types';
 import { DEFAULT_SYSTEM_PROMPT, DEFAULT_CONVERTER_PROMPT, EXTERNAL_PROVIDERS, DEEP_PHASE_PROMPTS } from './constants';
-import { logger } from './utils/logger';
+import { logger, setVerbose } from './utils/logger';
 import * as GeminiService from './services/geminiService';
 import * as FirebaseService from './services/firebaseService';
 import * as ExternalApiService from './services/externalApiService';
@@ -30,6 +30,7 @@ import AnalyticsDashboard from './components/AnalyticsDashboard';
 import VerifierPanel from './components/VerifierPanel';
 import DataPreviewTable from './components/DataPreviewTable';
 import SettingsPanel from './components/SettingsPanel';
+import ColumnSelector from './components/ColumnSelector';
 
 export default function App() {
     // --- State: Modes ---
@@ -118,6 +119,11 @@ export default function App() {
         systemPrompt: DEEP_PHASE_PROMPTS.userAgent
     });
 
+    // --- State: Conversation Trace Rewriting ---
+    // When enabled, processes existing conversation columns and rewrites <think> content
+    const [conversationRewriteMode, setConversationRewriteMode] = useState(false);
+
+
     // --- State: Data Source ---
     const [dataSourceMode, setDataSourceMode] = useState<'synthetic' | 'huggingface' | 'manual'>('synthetic');
 
@@ -132,6 +138,8 @@ export default function App() {
         config: 'default',
         split: 'train',
         columnName: '',
+        inputColumns: [],
+        outputColumns: [],
         messageTurnIndex: 0
     });
 
@@ -162,10 +170,26 @@ export default function App() {
 
     // --- State: Hugging Face Prefetch ---
     const [availableColumns, setAvailableColumns] = useState<string[]>([]);
+    const [detectedColumns, setDetectedColumns] = useState<DetectedColumns>({ input: [], output: [], all: [] });
     const [isPrefetching, setIsPrefetching] = useState(false);
     const [hfPreviewData, setHfPreviewData] = useState<any[]>([]);
     const [hfTotalRows, setHfTotalRows] = useState<number>(0);
     const [isLoadingHfPreview, setIsLoadingHfPreview] = useState(false);
+
+    // Column detection utility
+    const detectColumns = (columns: string[]): DetectedColumns => {
+        const inputPatterns = ['prompt', 'question', 'input', 'instruction', 'query', 'text', 'problem', 'request'];
+        const outputPatterns = ['response', 'answer', 'output', 'completion', 'chosen', 'target', 'solution', 'reply', 'assistant'];
+
+        const input = columns.filter(c =>
+            inputPatterns.some(p => c.toLowerCase().includes(p))
+        );
+        const output = columns.filter(c =>
+            outputPatterns.some(p => c.toLowerCase().includes(p))
+        );
+
+        return { input, output, all: columns };
+    };
 
     // --- State: Runtime ---
     const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
@@ -194,6 +218,8 @@ export default function App() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const sessionFileInputRef = useRef<HTMLInputElement>(null);
     const sourceFileInputRef = useRef<HTMLInputElement>(null);
+    const environmentRef = useRef(environment);
+
 
 
     // --- Effects ---
@@ -236,7 +262,13 @@ export default function App() {
         setCurrentPage(1);
     }, [sessionUid]);
 
-    // Note: console.log suppression is handled by utils/logger.ts
+    // Toggle verbose logging based on environment mode
+    // Toggle verbose logging based on environment mode
+    useEffect(() => {
+        environmentRef.current = environment;
+        // In production mode, disable verbose logging
+        setVerbose(environment === 'development');
+    }, [environment]);
 
     // Update DB Stats Periodically or when logs change
     const updateDbStats = useCallback(async () => {
@@ -286,44 +318,89 @@ export default function App() {
     };
 
     const getRowContent = (row: any): string => {
-        let content = row;
-        if (hfConfig.columnName && row[hfConfig.columnName] !== undefined) {
-            content = row[hfConfig.columnName];
-        } else if (!hfConfig.columnName) {
-            content = row.messages || row.conversations || row.conversation ||
-                row.prompt || row.instruction || row.text || row.content || row.input || row;
-        }
+        const COLUMN_SEPARATOR = '\n\n' + '-'.repeat(50) + '\n\n';
+
         const getText = (node: any): string => {
             if (!node) return "";
             if (typeof node === 'string') return node;
             if (Array.isArray(node)) return node.map(getText).join('\n');
             return node.content || node.value || node.text || JSON.stringify(node);
         };
-        if (Array.isArray(content)) {
+
+        // Helper to get content from a column
+        const getColumnContent = (columnName: string): string => {
+            const value = row[columnName];
+            if (value === undefined || value === null) return '';
+
+            // Handle array content (e.g., chat messages)
+            if (Array.isArray(value)) {
+                const turnIndex = hfConfig.messageTurnIndex || 0;
+                const firstItem = value[0];
+                const isChat = firstItem && typeof firstItem === 'object' && ('role' in firstItem || 'from' in firstItem);
+                if (isChat) {
+                    if (appMode === 'converter') {
+                        const userIndex = turnIndex * 2;
+                        const assistantIndex = turnIndex * 2 + 1;
+                        const userMsg = value[userIndex];
+                        const assistantMsg = value[assistantIndex];
+                        if (userMsg && assistantMsg) {
+                            return `<input_query>${getText(userMsg)}</input_query><model_response>${getText(assistantMsg)}</model_response>`;
+                        }
+                    }
+                    return getText(value[turnIndex * 2]);
+                } else {
+                    return getText(value[turnIndex]);
+                }
+            }
+
+            if (typeof value === 'object') return JSON.stringify(value);
+            return String(value);
+        };
+
+        // Try inputColumns first (new multi-column approach)
+        if (hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
+            const contents = hfConfig.inputColumns
+                .map(col => getColumnContent(col))
+                .filter(c => c.trim() !== '');
+            if (contents.length > 0) {
+                return contents.join(COLUMN_SEPARATOR);
+            }
+        }
+
+        // Fallback to legacy columnName
+        if (hfConfig.columnName && row[hfConfig.columnName] !== undefined) {
+            return getColumnContent(hfConfig.columnName);
+        }
+
+        // Auto-detect fallback
+        const autoContent = row.messages || row.conversations || row.conversation ||
+            row.prompt || row.instruction || row.text || row.content || row.input || row;
+
+        if (Array.isArray(autoContent)) {
             const turnIndex = hfConfig.messageTurnIndex || 0;
-            const firstItem = content[0];
+            const firstItem = autoContent[0];
             const isChat = firstItem && typeof firstItem === 'object' && ('role' in firstItem || 'from' in firstItem);
             if (appMode === 'converter') {
                 if (isChat) {
                     const userIndex = turnIndex * 2;
                     const assistantIndex = turnIndex * 2 + 1;
-                    const userMsg = content[userIndex];
-                    const assistantMsg = content[assistantIndex];
+                    const userMsg = autoContent[userIndex];
+                    const assistantMsg = autoContent[assistantIndex];
                     if (userMsg && assistantMsg) {
                         return `<input_query>${getText(userMsg)}</input_query><model_response>${getText(assistantMsg)}</model_response>`;
                     }
                 }
-                return getText(content[turnIndex]);
+                return getText(autoContent[turnIndex]);
             } else {
                 if (isChat) {
-                    return getText(content[turnIndex * 2]);
+                    return getText(autoContent[turnIndex * 2]);
                 } else {
-                    return getText(content[turnIndex]);
+                    return getText(autoContent[turnIndex]);
                 }
             }
         }
-        if (typeof content === 'object') return JSON.stringify(content);
-        return String(content);
+        if (typeof autoContent === 'object') return JSON.stringify(autoContent);
+        return String(autoContent);
     };
 
     const prefetchColumns = async (overrideConfig?: HuggingFaceConfig) => {
@@ -334,12 +411,26 @@ export default function App() {
         }
         setIsPrefetching(true);
         setAvailableColumns([]);
+        setDetectedColumns({ input: [], output: [], all: [] });
         setError(null);
         try {
             const rows = await fetchHuggingFaceRows(configToUse, 0, 1);
             if (rows.length > 0 && rows[0]) {
                 if (typeof rows[0] === 'object' && !Array.isArray(rows[0])) {
-                    setAvailableColumns(Object.keys(rows[0]));
+                    const cols = Object.keys(rows[0]);
+                    setAvailableColumns(cols);
+
+                    // Detect and auto-populate columns
+                    const detected = detectColumns(cols);
+                    setDetectedColumns(detected);
+
+                    // Auto-select detected columns if none are already selected
+                    if ((!configToUse.inputColumns || configToUse.inputColumns.length === 0) && detected.input.length > 0) {
+                        setHfConfig(prev => ({ ...prev, inputColumns: detected.input.slice(0, 1) })); // Select first detected input
+                    }
+                    if ((!configToUse.outputColumns || configToUse.outputColumns.length === 0) && detected.output.length > 0) {
+                        setHfConfig(prev => ({ ...prev, outputColumns: detected.output.slice(0, 1) })); // Select first detected output
+                    }
                 } else {
                     setError("Row is not an object, cannot detect columns.");
                 }
@@ -412,6 +503,14 @@ export default function App() {
         setAvailableColumns([]);
     };
 
+    const handleDataSourceModeChange = (mode: 'synthetic' | 'huggingface' | 'manual') => {
+        setDataSourceMode(mode);
+        // Clear column selections when switching data sources
+        setAvailableColumns([]);
+        setDetectedColumns({ input: [], output: [], all: [] });
+        setHfConfig(prev => ({ ...prev, inputColumns: [], outputColumns: [] }));
+    };
+
     const generateRandomTopic = async () => {
         setIsGeneratingTopic(true);
         try {
@@ -461,8 +560,30 @@ export default function App() {
         const reader = new FileReader();
         reader.onload = (event) => {
             if (typeof event.target?.result === 'string') {
-                setConverterInputText(event.target.result);
-                setRowsToFetch(event.target.result.split('\n').filter(l => l.trim()).length);
+                const inputText = event.target.result;
+                setConverterInputText(inputText);
+                setRowsToFetch(inputText.split('\n').filter(l => l.trim()).length);
+
+                // Detect columns from first valid JSON line
+                const lines = inputText.split('\n').filter(l => l.trim());
+                for (const line of lines) {
+                    try {
+                        const obj = JSON.parse(line);
+                        if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
+                            const cols = Object.keys(obj);
+                            setAvailableColumns(cols);
+                            const detected = detectColumns(cols);
+                            setDetectedColumns(detected);
+                            // Auto-select first detected input column if none selected
+                            if ((!hfConfig.inputColumns || hfConfig.inputColumns.length === 0) && detected.input.length > 0) {
+                                setHfConfig(prev => ({ ...prev, inputColumns: detected.input.slice(0, 1) }));
+                            }
+                            break;
+                        }
+                    } catch {
+                        // Not valid JSON, continue
+                    }
+                }
             }
         };
         reader.readAsText(file);
@@ -727,8 +848,8 @@ export default function App() {
     // (Identical generateSingleItem, retryItem, retrySave, retryAllFailed, startGeneration, stopGeneration logic)
     // --- Core Generation Logic ---
     // (Identical generateSingleItem, retryItem, retrySave, retryAllFailed, startGeneration, stopGeneration logic)
-    const generateSingleItem = async (inputText: string, workerId: number, opts: { retryId?: string, originalQuestion?: string } = {}): Promise<SynthLogItem | null> => {
-        const { retryId, originalQuestion } = opts;
+    const generateSingleItem = async (inputText: string, workerId: number, opts: { retryId?: string, originalQuestion?: string, row?: any } = {}): Promise<SynthLogItem | null> => {
+        const { retryId, originalQuestion, row } = opts;
         const startTime = Date.now();
         try {
             const safeInput = typeof inputText === 'string' ? inputText : String(inputText);
@@ -736,6 +857,46 @@ export default function App() {
             const activePrompt = appMode === 'generator' ? systemPrompt : converterPrompt;
             const genParams = getGenerationParams();
             const retryConfig = { maxRetries, retryDelay, generationParams: genParams };
+
+            // --- Conversation Trace Rewriting Mode ---
+            // When enabled, extract messages from row and rewrite/generate <think> content
+            if (conversationRewriteMode && row) {
+                const messagesArray = row.messages || row.conversation || row.conversations;
+                if (Array.isArray(messagesArray) && messagesArray.length > 0) {
+                    // Convert to ChatMessage format if needed
+                    const chatMessages: ChatMessage[] = messagesArray.map((m: any) => ({
+                        role: (m.role || (m.from === 'human' ? 'user' : m.from === 'gpt' ? 'assistant' : m.from)) as 'user' | 'assistant' | 'system',
+                        content: m.content || m.value || String(m),
+                        reasoning: m.reasoning
+                    }));
+
+                    const rewriteResult = await DeepReasoningService.orchestrateConversationRewrite({
+                        messages: chatMessages,
+                        config: deepConfig,
+                        engineMode: engineMode,
+                        converterPrompt: converterPrompt,
+                        signal: abortControllerRef.current?.signal,
+                        maxRetries,
+                        retryDelay,
+                        generationParams: genParams,
+                        regularModeConfig: engineMode === 'regular' ? {
+                            provider: provider,
+                            externalProvider: externalProvider,
+                            apiKey: externalApiKey,
+                            model: externalModel,
+                            customBaseUrl: customBaseUrl
+                        } : undefined
+                    });
+
+                    return {
+                        ...rewriteResult,
+                        id: retryId || rewriteResult.id,
+                        sessionUid: sessionUid
+                    };
+                }
+            }
+
+
 
             if (engineMode === 'regular') {
                 if (provider === 'gemini') {
@@ -1019,8 +1180,11 @@ export default function App() {
                     row: row
                 }));
             } else if (dataSourceMode === 'manual') {
-                const lines = converterInputText.split('\n').filter(line => line.trim().length > 0);
-                workItems = lines.map(line => {
+                const allLines = converterInputText.split('\n').filter(line => line.trim().length > 0);
+                // Apply skip and limit like we do for HuggingFace
+                const linesToProcess = allLines.slice(skipRows, skipRows + rowsToFetch);
+                setProgress({ current: 0, total: linesToProcess.length, activeWorkers: 1 });
+                workItems = linesToProcess.map(line => {
                     try {
                         const obj = JSON.parse(line);
                         return { content: getRowContent(obj), row: obj };
@@ -1028,7 +1192,8 @@ export default function App() {
                         return { content: line, row: null }; // fast path for raw strings
                     }
                 });
-                if (workItems.length === 0) throw new Error("Input text is empty.");
+                if (workItems.length === 0) throw new Error("No rows to process after applying skip/limit. Check your settings.");
+
             } else {
                 // Synthetic
                 const MAX_SEEDS_PER_BATCH = 10;
@@ -1134,7 +1299,8 @@ export default function App() {
 
                     setProgress(p => ({ ...p, activeWorkers: p.activeWorkers + 1 }));
 
-                    const result = await generateSingleItem(item.content, id, { originalQuestion });
+                    const result = await generateSingleItem(item.content, id, { originalQuestion, row: item.row });
+
 
                     setProgress(p => ({
                         ...p,
@@ -1143,7 +1309,8 @@ export default function App() {
                     }));
 
                     if (result) {
-                        // Inject session name
+                        // Inject session name and uid
+                        result.sessionUid = sessionUidRef.current;
                         if (sessionNameRef.current) {
                             result.sessionName = sessionNameRef.current;
                         }
@@ -1153,7 +1320,8 @@ export default function App() {
                         setLogsTrigger(prev => prev + 1);
                         // setTotalLogCount(prev => prev + 1); // Removed optimistic update to avoid drift
 
-                        if (!result.isError && FirebaseService.isFirebaseConfigured()) {
+                        const currentEnv = environmentRef.current;
+                        if (currentEnv === 'production' && !result.isError && FirebaseService.isFirebaseConfigured()) {
                             try {
                                 await FirebaseService.saveLogToFirebase(result);
                                 updateDbStats();
@@ -1638,7 +1806,41 @@ export default function App() {
                                     {activeDeepTab === 'derivation' && renderDeepPhaseConfig('derivation', 'Step 3: Logical Derivation', <GitBranch className="w-4 h-4" />)}
                                     {activeDeepTab === 'rewriter' && renderDeepPhaseConfig('rewriter', 'Step 5: Response Rewriter (Optional)', <FileEdit className="w-4 h-4" />)}
 
+                                    {/* Conversation Trace Rewriting Section - supported in both converter and generator modes */}
+                                    {(appMode === 'converter' || appMode === 'generator') && (dataSourceMode === 'huggingface' || dataSourceMode === 'manual') && (
+                                        <div className="mt-4 pt-4 border-t border-slate-700">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center gap-2">
+                                                    <RefreshCcw className="w-4 h-4 text-amber-400" />
+                                                    <span className="text-sm font-medium text-white">Generate/Rewrite Conversation Traces</span>
+                                                </div>
+                                                <button
+                                                    onClick={() => {
+                                                        const newValue = !conversationRewriteMode;
+                                                        setConversationRewriteMode(newValue);
+                                                        // Auto-disable multi-turn if enabling conversation rewrite
+                                                        if (newValue) {
+                                                            setUserAgentConfig(prev => ({ ...prev, enabled: false }));
+                                                        }
+                                                    }}
+                                                    className={`w-10 h-5 rounded-full transition-all relative ${conversationRewriteMode ? 'bg-amber-600' : 'bg-slate-700'}`}
+                                                >
+                                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${conversationRewriteMode ? 'left-5' : 'left-0.5'}`} />
+                                                </button>
+                                            </div>
+                                            {conversationRewriteMode && (
+                                                <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-lg animate-in fade-in duration-200">
+                                                    <p className="text-[10px] text-amber-300/70">
+                                                        Process existing conversation columns (messages/conversation) and rewrite only the {'<think>...</think>'} reasoning traces using symbolic notation.
+                                                        User messages and final answers are preserved unchanged.
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
                                     {/* User Agent (Multi-Turn) Section */}
+
                                     <div className="mt-4 pt-4 border-t border-slate-700">
                                         <div className="flex items-center justify-between mb-3">
                                             <div className="flex items-center gap-2">
@@ -1646,11 +1848,19 @@ export default function App() {
                                                 <span className="text-sm font-medium text-white">User Agent (Multi-Turn)</span>
                                             </div>
                                             <button
-                                                onClick={() => setUserAgentConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
+                                                onClick={() => {
+                                                    const newEnabled = !userAgentConfig.enabled;
+                                                    setUserAgentConfig(prev => ({ ...prev, enabled: newEnabled }));
+                                                    // Auto-disable conversation rewrite mode if enabling multi-turn
+                                                    if (newEnabled) {
+                                                        setConversationRewriteMode(false);
+                                                    }
+                                                }}
                                                 className={`w-10 h-5 rounded-full transition-all relative ${userAgentConfig.enabled ? 'bg-cyan-600' : 'bg-slate-700'}`}
                                             >
                                                 <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${userAgentConfig.enabled ? 'left-5' : 'left-0.5'}`} />
                                             </button>
+
                                         </div>
                                         {userAgentConfig.enabled && (
                                             <div className="space-y-3 p-3 bg-cyan-500/5 border border-cyan-500/20 rounded-lg animate-in fade-in duration-200">
@@ -1752,9 +1962,9 @@ export default function App() {
                         <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5 space-y-4">
                             <div className="flex justify-between items-center mb-2"><h3 className="text-sm font-semibold text-white flex items-center gap-2"><Database className="w-4 h-4 text-slate-400" /> SOURCE</h3></div>
                             <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
-                                <button onClick={() => setDataSourceMode('synthetic')} className={`flex-1 py-2 text-[10px] font-bold rounded flex flex-col items-center justify-center gap-1 transition-all uppercase tracking-wide ${dataSourceMode === 'synthetic' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}><BrainCircuit className="w-3.5 h-3.5" /> Synthetic</button>
-                                <button onClick={() => setDataSourceMode('huggingface')} className={`flex-1 py-2 text-[10px] font-bold rounded flex flex-col items-center justify-center gap-1 transition-all uppercase tracking-wide ${dataSourceMode === 'huggingface' ? 'bg-amber-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}><Server className="w-3.5 h-3.5" /> HuggingFace</button>
-                                <button onClick={() => setDataSourceMode('manual')} className={`flex-1 py-2 text-[10px] font-bold rounded flex flex-col items-center justify-center gap-1 transition-all uppercase tracking-wide ${dataSourceMode === 'manual' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}><FileText className="w-3.5 h-3.5" /> Manual</button>
+                                <button onClick={() => handleDataSourceModeChange('synthetic')} className={`flex-1 py-2 text-[10px] font-bold rounded flex flex-col items-center justify-center gap-1 transition-all uppercase tracking-wide ${dataSourceMode === 'synthetic' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}><BrainCircuit className="w-3.5 h-3.5" /> Synthetic</button>
+                                <button onClick={() => handleDataSourceModeChange('huggingface')} className={`flex-1 py-2 text-[10px] font-bold rounded flex flex-col items-center justify-center gap-1 transition-all uppercase tracking-wide ${dataSourceMode === 'huggingface' ? 'bg-amber-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}><Server className="w-3.5 h-3.5" /> HuggingFace</button>
+                                <button onClick={() => handleDataSourceModeChange('manual')} className={`flex-1 py-2 text-[10px] font-bold rounded flex flex-col items-center justify-center gap-1 transition-all uppercase tracking-wide ${dataSourceMode === 'manual' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}><FileText className="w-3.5 h-3.5" /> Manual</button>
                             </div>
 
                             {dataSourceMode === 'synthetic' && (
@@ -1784,8 +1994,36 @@ export default function App() {
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Rows to Fetch</label><input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" /></div>
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Skip Rows</label><input type="number" value={skipRows} onChange={e => setSkipRows(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" /></div>
                                     </div>
+                                    {/* Column Selection */}
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                                                <Table className="w-3 h-3" /> Column Mapping
+                                            </label>
+                                            <button onClick={() => prefetchColumns()} disabled={isPrefetching} className="text-[9px] text-amber-500 hover:text-amber-400 flex items-center gap-1 transition-colors disabled:opacity-50">
+                                                {isPrefetching ? <RefreshCcw className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} Scan Columns
+                                            </button>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <ColumnSelector
+                                                label="Input (Question)"
+                                                columns={availableColumns}
+                                                selected={hfConfig.inputColumns || []}
+                                                onSelect={(cols) => setHfConfig(prev => ({ ...prev, inputColumns: cols }))}
+                                                autoDetected={detectedColumns.input}
+                                                placeholder="Select input column(s)"
+                                            />
+                                            <ColumnSelector
+                                                label="Output (Answer)"
+                                                columns={availableColumns}
+                                                selected={hfConfig.outputColumns || []}
+                                                onSelect={(cols) => setHfConfig(prev => ({ ...prev, outputColumns: cols }))}
+                                                autoDetected={detectedColumns.output}
+                                                placeholder="Select output column(s)"
+                                            />
+                                        </div>
+                                    </div>
                                     <div className="flex gap-2">
-                                        <div className="space-y-1 flex-[1.5]"><label className="text-[10px] text-slate-500 font-bold uppercase flex items-center justify-between"><span className="flex items-center gap-1"><Table className="w-3 h-3" /> Column Name</span><button onClick={() => prefetchColumns()} disabled={isPrefetching} className="text-[9px] text-amber-500 hover:text-amber-400 flex items-center gap-1 transition-colors disabled:opacity-50">{isPrefetching ? <RefreshCcw className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} Scan</button></label>{availableColumns.length > 0 ? (<select value={hfConfig.columnName || ''} onChange={e => setHfConfig({ ...hfConfig, columnName: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none"><option value="">Auto-detect (e.g. 'prompt')</option>{availableColumns.map(col => <option key={col} value={col}>{col}</option>)}</select>) : (<input type="text" value={hfConfig.columnName || ''} onChange={e => setHfConfig({ ...hfConfig, columnName: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" placeholder="Auto-detect (e.g. 'prompt')" />)}</div>
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1"><MessageSquare className="w-3 h-3" /> Turn Index</label><input type="number" min="0" value={hfConfig.messageTurnIndex || 0} onChange={e => setHfConfig({ ...hfConfig, messageTurnIndex: Math.max(0, parseInt(e.target.value) || 0) })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" placeholder="0" /></div>
                                     </div>
 
@@ -1826,6 +2064,18 @@ export default function App() {
                                         <input type="file" ref={sourceFileInputRef} onChange={handleLoadSourceFile} className="hidden" accept=".json,.jsonl,.txt" />
                                     </div>
 
+                                    {/* Rows to Fetch and Skip Rows controls */}
+                                    <div className="flex gap-2">
+                                        <div className="space-y-1 flex-1">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase">Rows to Fetch</label>
+                                            <input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />
+                                        </div>
+                                        <div className="space-y-1 flex-1">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase">Skip Rows</label>
+                                            <input type="number" value={skipRows} onChange={e => setSkipRows(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />
+                                        </div>
+                                    </div>
+
                                     {/* Data Preview Table or Raw Input */}
                                     {converterInputText.trim() ? (
                                         <DataPreviewTable
@@ -1842,6 +2092,35 @@ export default function App() {
                                             className="w-full h-32 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-[10px] font-mono text-slate-400 focus:border-indigo-500 outline-none resize-none"
                                             placeholder="Paste text or JSON lines here..."
                                         />
+                                    )}
+
+                                    {/* Column Selection for Manual Input */}
+                                    {availableColumns.length > 0 && (
+                                        <div className="space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                                                    <Table className="w-3 h-3" /> Column Mapping
+                                                </label>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <ColumnSelector
+                                                    label="Input (Question)"
+                                                    columns={availableColumns}
+                                                    selected={hfConfig.inputColumns || []}
+                                                    onSelect={(cols) => setHfConfig(prev => ({ ...prev, inputColumns: cols }))}
+                                                    autoDetected={detectedColumns.input}
+                                                    placeholder="Select input column(s)"
+                                                />
+                                                <ColumnSelector
+                                                    label="Output (Answer)"
+                                                    columns={availableColumns}
+                                                    selected={hfConfig.outputColumns || []}
+                                                    onSelect={(cols) => setHfConfig(prev => ({ ...prev, outputColumns: cols }))}
+                                                    autoDetected={detectedColumns.output}
+                                                    placeholder="Select output column(s)"
+                                                />
+                                            </div>
+                                        </div>
                                     )}
 
                                     <div className="flex items-center justify-between text-[10px] text-slate-600">
