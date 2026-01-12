@@ -4,7 +4,7 @@ import * as GeminiService from './geminiService';
 import * as ExternalApiService from './externalApiService';
 import { SettingsService } from './settingsService';
 import { logger } from '../utils/logger';
-import { DEEP_PHASE_PROMPTS } from '../constants';
+import { PromptService } from './promptService';
 
 interface DeepOrchestrationParams {
   input: string;
@@ -359,7 +359,7 @@ export const orchestrateMultiTurnConversation = async (
       const generatedResponse = await callAgent(
         responderConfig,
         initialInput,
-        DEEP_PHASE_PROMPTS.responder,
+        PromptService.getPrompt('generator', 'responder'),
         signal,
         maxRetries,
         retryDelay,
@@ -395,10 +395,10 @@ export const orchestrateMultiTurnConversation = async (
           apiKey: userAgentConfig.apiKey,
           model: userAgentConfig.model,
           customBaseUrl: userAgentConfig.customBaseUrl,
-          systemPrompt: userAgentConfig.systemPrompt || DEEP_PHASE_PROMPTS.userAgent
+          systemPrompt: userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent')
         },
         userAgentInput,
-        userAgentConfig.systemPrompt || DEEP_PHASE_PROMPTS.userAgent,
+        userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent'),
         signal,
         maxRetries,
         retryDelay,
@@ -418,7 +418,7 @@ export const orchestrateMultiTurnConversation = async (
       const responseResult = await callAgent(
         responderConfig,
         responseInput,
-        responderConfig.systemPrompt || DEEP_PHASE_PROMPTS.responder,
+        responderConfig.systemPrompt || PromptService.getPrompt('generator', 'responder'),
         signal,
         maxRetries,
         retryDelay,
@@ -649,7 +649,7 @@ ${outsideThinkContent}
         newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
       } else {
         // Use regular converter
-        const prompt = converterPrompt || DEEP_PHASE_PROMPTS.writer;
+        const prompt = converterPrompt || PromptService.getPrompt('converter', 'writer');
 
         if (regularModeConfig?.provider === 'gemini') {
           const result = await GeminiService.generateGenericJSON(

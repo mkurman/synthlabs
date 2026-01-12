@@ -41,12 +41,14 @@ export interface AppSettings {
     defaultModel?: string;
     defaultConcurrency?: number;
     theme?: 'dark' | 'light';
+    promptSet?: string;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
     providerKeys: {},
     defaultConcurrency: 4,
-    theme: 'dark'
+    theme: 'dark',
+    promptSet: 'default'
 };
 
 // In-memory cache for synchronous access
@@ -187,6 +189,9 @@ export const waitForSettingsInit = (): Promise<AppSettings> => {
 };
 
 export const SettingsService = {
+    // Wait for initial load
+    waitForSettingsInit: waitForSettingsInit,
+
     // Synchronous getter (uses cache - may return defaults if not yet initialized)
     getSettings: (): AppSettings => {
         return { ...settingsCache };

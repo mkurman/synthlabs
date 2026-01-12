@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink } from 'lucide-react';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText } from 'lucide-react';
 import { SettingsService, AppSettings, AVAILABLE_PROVIDERS } from '../services/settingsService';
+import { PromptService } from '../services/promptService';
 import { PROVIDER_URLS } from '../constants';
 
 interface SettingsPanelProps {
@@ -34,13 +35,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
     const [saved, setSaved] = useState(false);
     const [confirmClear, setConfirmClear] = useState(false);
-    const [activeTab, setActiveTab] = useState<'providers' | 'huggingface' | 'firebase' | 'storage'>('providers');
+    const [activeTab, setActiveTab] = useState<'providers' | 'huggingface' | 'firebase' | 'storage' | 'prompts'>('providers');
+    const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
 
     useEffect(() => {
         if (isOpen) {
             setSettings(SettingsService.getSettings());
             setSaved(false);
             setConfirmClear(false);
+            setAvailablePromptSets(PromptService.getAvailableSets());
         }
     }, [isOpen]);
 
@@ -103,6 +106,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                 <div className="flex border-b border-slate-800">
                     {[
                         { id: 'providers', label: 'API Keys', icon: Key },
+                        { id: 'prompts', label: 'Prompts', icon: FileText },
                         { id: 'huggingface', label: 'HuggingFace', icon: Cloud },
                         { id: 'firebase', label: 'Firebase', icon: Database },
                         { id: 'storage', label: 'Storage', icon: Cpu },
@@ -485,6 +489,36 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             )}
                                         </div>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'prompts' && (
+                        <div className="space-y-6">
+                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                    <FileText className="w-4 h-4 text-emerald-400" />
+                                    Prompt Configuration
+                                </h3>
+                                <p className="text-xs text-slate-500 mb-4">
+                                    Select the prompt set to use for generating reasoning traces and responses.
+                                    Prompts are loaded from <code>/prompts/&lt;set_name&gt;/</code>.
+                                </p>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Active Prompt Set</label>
+                                    <select
+                                        value={settings.promptSet || 'default'}
+                                        onChange={(e) => updateSetting('promptSet', e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                    >
+                                        {availablePromptSets.map(set => (
+                                            <option key={set} value={set}>{set}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[10px] text-slate-600 mt-2">
+                                        Default set is usually correct irrespective of the model. Custom sets can be added by creating new folders in the <code>prompts</code> directory.
+                                    </p>
                                 </div>
                             </div>
                         </div>

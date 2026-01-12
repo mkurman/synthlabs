@@ -1,0 +1,5 @@
+Rewriting MESSAGE into Symbolic Context.
+Ensure the message is precise and contributes to the Golden Thread.
+If it's an assistant message with <think> tags, preserve that structure and symbolic content but improve the reasoning.
+If it's a user message, don't use any symbolic.
+Output valid JSON only: { "response": "string" }

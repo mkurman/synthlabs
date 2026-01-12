@@ -14,8 +14,9 @@ import {
     GenerationConfig, ProgressStats, HuggingFaceConfig, DetectedColumns,
     CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig, ChatMessage
 } from './types';
-import { DEFAULT_SYSTEM_PROMPT, DEFAULT_CONVERTER_PROMPT, EXTERNAL_PROVIDERS, DEEP_PHASE_PROMPTS } from './constants';
+import { EXTERNAL_PROVIDERS } from './constants';
 import { logger, setVerbose } from './utils/logger';
+import { PromptService } from './services/promptService';
 import * as GeminiService from './services/geminiService';
 import * as FirebaseService from './services/firebaseService';
 import * as ExternalApiService from './services/externalApiService';
@@ -77,19 +78,19 @@ export default function App() {
     const [deepConfig, setDeepConfig] = useState<DeepConfig>({
         phases: {
             meta: {
-                id: 'meta', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.meta
+                id: 'meta', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'meta')
             },
             retrieval: {
-                id: 'retrieval', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.retrieval
+                id: 'retrieval', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'retrieval')
             },
             derivation: {
-                id: 'derivation', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.derivation
+                id: 'derivation', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'derivation')
             },
             writer: {
-                id: 'writer', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.writer
+                id: 'writer', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'writer')
             },
             rewriter: {
-                id: 'rewriter', enabled: false, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.rewriter
+                id: 'rewriter', enabled: false, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'rewriter')
             }
         }
     });
@@ -116,7 +117,7 @@ export default function App() {
         apiKey: '',
         model: 'gemini-3-flash-preview',
         customBaseUrl: '',
-        systemPrompt: DEEP_PHASE_PROMPTS.userAgent
+        systemPrompt: PromptService.getPrompt('generator', 'user_agent')
     });
 
     // --- State: Conversation Trace Rewriting ---
@@ -192,8 +193,8 @@ export default function App() {
     };
 
     // --- State: Runtime ---
-    const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
-    const [converterPrompt, setConverterPrompt] = useState(DEFAULT_CONVERTER_PROMPT);
+    const [systemPrompt, setSystemPrompt] = useState(PromptService.getPrompt('generator', 'system'));
+    const [converterPrompt, setConverterPrompt] = useState(PromptService.getPrompt('converter', 'system'));
 
     // Log Management
     const [visibleLogs, setVisibleLogs] = useState<SynthLogItem[]>([]);
@@ -810,7 +811,7 @@ export default function App() {
                             apiKey: '',
                             model: 'gemini-3-flash-preview',
                             customBaseUrl: '',
-                            systemPrompt: DEEP_PHASE_PROMPTS.rewriter
+                            systemPrompt: PromptService.getPrompt('converter', 'rewriter')
                         };
                     }
                     setDeepConfig(mergedDeepConfig);
@@ -1108,7 +1109,7 @@ export default function App() {
                             apiKey: userAgentConfig.apiKey,
                             model: userAgentConfig.model,
                             customBaseUrl: userAgentConfig.customBaseUrl,
-                            systemPrompt: DEEP_PHASE_PROMPTS.responder
+                            systemPrompt: PromptService.getPrompt('generator', 'responder')
                         }
                         : runtimeDeepConfig.phases[responderPhase as keyof typeof runtimeDeepConfig.phases];
 
@@ -1298,17 +1299,20 @@ export default function App() {
                 setSessionName(null);
             }
         }
+        // Ensure settings are loaded before validation
+        await SettingsService.waitForSettingsInit();
+
         // Check for API key - use inline, settings, or require it
-        const resolvedApiKey = externalApiKey || SettingsService.getApiKey(externalProvider);
+        const resolvedApiKey = externalApiKey?.trim() || SettingsService.getApiKey(externalProvider);
         if (engineMode === 'regular' && provider === 'external' && !resolvedApiKey && externalProvider !== 'ollama') {
             setError("API Key is required for external providers (except Ollama). Click the Settings icon (⚙) in the header or enter a key here.");
             return;
         }
         if (engineMode === 'deep') {
             const writer = deepConfig.phases.writer;
-            const writerApiKey = writer.apiKey || (writer.externalProvider ? SettingsService.getApiKey(writer.externalProvider) : '');
+            const writerApiKey = writer.apiKey?.trim() || (writer.externalProvider ? SettingsService.getApiKey(writer.externalProvider) : '');
             if (writer.provider !== 'gemini' && !writerApiKey && writer.externalProvider !== 'ollama') {
-                setError("Writer Agent requires an API Key. Click the Settings icon (⚙) in the header to configure, or enter a key inline in the Writer phase.");
+                setError(`Writer Agent requires an API Key for ${writer.externalProvider}. Click the Settings icon (⚙) in the header to configure, or enter a key inline in the Writer phase.`);
                 return;
             }
         }
@@ -1585,7 +1589,13 @@ export default function App() {
                             <>
                                 <div className="space-y-1">
                                     <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
-                                    <input type="password" value={phase.apiKey} onChange={e => updateDeepPhase(phaseId, { apiKey: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none" placeholder="Leave empty if using main key" />
+                                    <input
+                                        type="password"
+                                        value={phase.apiKey}
+                                        onChange={e => updateDeepPhase(phaseId, { apiKey: e.target.value })}
+                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                                        placeholder={SettingsService.getApiKey(phase.externalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
+                                    />
                                 </div>
                                 <div className="space-y-1">
                                     <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
@@ -1594,7 +1604,13 @@ export default function App() {
                                 {phase.externalProvider === 'other' && (
                                     <div className="space-y-1">
                                         <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
-                                        <input type="text" value={phase.customBaseUrl} onChange={e => updateDeepPhase(phaseId, { customBaseUrl: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none" />
+                                        <input
+                                            type="text"
+                                            value={phase.customBaseUrl}
+                                            onChange={e => updateDeepPhase(phaseId, { customBaseUrl: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                                            placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
+                                        />
                                     </div>
                                 )}
                             </>
@@ -1611,6 +1627,37 @@ export default function App() {
             </div>
         );
     };
+
+
+
+    // --- Effect: Load Settings & Prompts on Mount ---
+    const refreshPrompts = useCallback(() => {
+        setSystemPrompt(PromptService.getPrompt('generator', 'system'));
+        setConverterPrompt(PromptService.getPrompt('converter', 'system'));
+
+        setDeepConfig((prev: DeepConfig) => ({
+            ...prev,
+            phases: {
+                meta: { ...prev.phases.meta, systemPrompt: PromptService.getPrompt('generator', 'meta') },
+                retrieval: { ...prev.phases.retrieval, systemPrompt: PromptService.getPrompt('generator', 'retrieval') },
+                derivation: { ...prev.phases.derivation, systemPrompt: PromptService.getPrompt('generator', 'derivation') },
+                writer: { ...prev.phases.writer, systemPrompt: PromptService.getPrompt('converter', 'writer') },
+                rewriter: { ...prev.phases.rewriter, systemPrompt: PromptService.getPrompt('converter', 'rewriter') }
+            }
+        }));
+
+        setUserAgentConfig((prev: UserAgentConfig) => ({
+            ...prev,
+            systemPrompt: PromptService.getPrompt('generator', 'user_agent')
+        }));
+    }, []);
+
+    useEffect(() => {
+        // Wait for settings to load from IndexedDB, then refresh prompts
+        SettingsService.waitForSettingsInit().then(() => {
+            refreshPrompts();
+        });
+    }, [refreshPrompts]);
 
     return (
         <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
@@ -2415,6 +2462,7 @@ export default function App() {
                 isOpen={showSettings}
                 onClose={() => setShowSettings(false)}
                 onSettingsChanged={async () => {
+                    refreshPrompts();
                     // Refresh logs to pick up any storage changes
                     await refreshLogs();
                 }}

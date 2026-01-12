@@ -161,6 +161,47 @@ Seamless Firebase/Firestore support:
 
 ---
 
+## Custom Prompts
+
+The generator supports dynamic prompt sets. You can create your own "persona" or logical framework by adding files to the `prompts/` directory.
+
+### Create a New Prompt Set
+
+1. Create a new folder in `prompts/` (e.g., `prompts/my-set/`).
+2. Inside your set folder, create subdirectories for each category:
+   - `generator/`
+   - `converter/`
+   - `verifier/`
+3. Add `.txt` files for each role. The app will automatically discover your set and show it in the **Settings > Prompts** tab.
+
+### Directory Structure & Roles
+
+```text
+prompts/
+  └── <set_name>/
+      ├── generator/
+      │   ├── system.txt      (Main generator persona)
+      │   ├── meta.txt        (Task decomposition)
+      │   ├── retrieval.txt   (Constraint identification)
+      │   ├── derivation.txt  (Logical reasoning chains)
+      │   ├── responder.txt   (Final answer formulation)
+      │   └── user_agent.txt  (Multi-turn interaction agent)
+      ├── converter/
+      │   ├── system.txt      (Main converter persona)
+      │   ├── writer.txt      (Writing the final reasoning trace)
+      │   └── rewriter.txt    (Polishing converted output)
+      └── verifier/
+          ├── query_rewrite.txt
+          ├── reasoning_rewrite.txt
+          ├── answer_rewrite.txt
+          └── message_rewrite.txt
+```
+
+> [!TIP]
+> If a specific role file is missing in your custom set, the system will automatically fall back to the version in the `default` set.
+
+---
+
 ## Firebase Setup (Optional)
 
 For cloud persistence and production mode, set up Firestore:

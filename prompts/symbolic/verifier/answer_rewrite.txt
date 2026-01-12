@@ -1,0 +1,3 @@
+Rewriting ANSWER into Crystalline Form.
+Style: High density, zero fluff.
+Output valid JSON only: { "response": "string" }

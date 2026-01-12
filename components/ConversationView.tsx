@@ -1,10 +1,18 @@
 import React, { useState } from 'react';
-import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings } from 'lucide-react';
+import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings, Edit3, RotateCcw, Check, X, Loader2 } from 'lucide-react';
 import { ChatMessage } from '../types';
 import ReasoningHighlighter from './ReasoningHighlighter';
 
 interface ConversationViewProps {
     messages: ChatMessage[];
+    onEditStart?: (index: number, content: string) => void;
+    onEditSave?: () => void;
+    onEditCancel?: () => void;
+    onEditChange?: (val: string) => void;
+    onRewrite?: (index: number) => void;
+    editingIndex?: number;
+    editValue?: string;
+    rewritingIndex?: number;
 }
 
 // Helper to parse <think> tags from content
@@ -52,7 +60,17 @@ const getRoleStyles = (role: string) => {
     }
 };
 
-const ConversationView: React.FC<ConversationViewProps> = ({ messages }) => {
+const ConversationView: React.FC<ConversationViewProps> = ({
+    messages,
+    onEditStart,
+    onEditSave,
+    onEditCancel,
+    onEditChange,
+    onRewrite,
+    editingIndex,
+    editValue,
+    rewritingIndex
+}) => {
     const [expandedReasoning, setExpandedReasoning] = useState<Set<number>>(new Set());
 
     const toggleReasoning = (index: number) => {
@@ -86,11 +104,12 @@ const ConversationView: React.FC<ConversationViewProps> = ({ messages }) => {
 
                 const styles = getRoleStyles(msg.role);
                 const IconComponent = styles.icon;
+                const isEditing = editingIndex === idx;
 
                 return (
                     <div
                         key={idx}
-                        className={`flex gap-3 ${styles.align}`}
+                        className={`group flex gap-3 ${styles.align}`}
                     >
                         {/* Avatar */}
                         <div
@@ -104,11 +123,49 @@ const ConversationView: React.FC<ConversationViewProps> = ({ messages }) => {
                             className={`flex-1 max-w-[85%] ${styles.textAlign}`}
                         >
                             <div
-                                className={`inline-block rounded-xl px-4 py-3 text-sm leading-relaxed ${styles.bubble}`}
+                                className={`inline-block w-full text-left rounded-xl px-4 py-3 text-sm leading-relaxed relative ${styles.bubble}`}
                             >
+                                {/* Edit/Rewrite Controls */}
+                                <div className={`absolute top-2 ${msg.role === 'user' ? 'left-2' : 'right-2'} opacity-0 group-hover:opacity-100 transition-opacity flex gap-1`}>
+                                    {isEditing ? (
+                                        <>
+                                            <button onClick={onEditSave} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                <Check className="w-3 h-3" />
+                                            </button>
+                                            <button onClick={onEditCancel} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <button
+                                                onClick={() => onEditStart?.(idx, msg.content)}
+                                                className="p-1 text-slate-500 hover:text-white hover:bg-slate-700/50 rounded"
+                                                title="Edit"
+                                            >
+                                                <Edit3 className="w-3 h-3" />
+                                            </button>
+                                            {onRewrite && (
+                                                <button
+                                                    onClick={() => onRewrite(idx)}
+                                                    disabled={rewritingIndex === idx}
+                                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                    title="AI Rewrite"
+                                                >
+                                                    {rewritingIndex === idx ? (
+                                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                                    ) : (
+                                                        <RotateCcw className="w-3 h-3" />
+                                                    )}
+                                                </button>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+
                                 {/* Reasoning Toggle for Assistant Messages */}
-                                {msg.role === 'assistant' && displayReasoning && (
-                                    <div className="mt-2">
+                                {msg.role === 'assistant' && displayReasoning && !isEditing && (
+                                    <div className="mt-2 text-left">
                                         <button
                                             onClick={() => toggleReasoning(idx)}
                                             className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-400 transition-colors uppercase font-bold tracking-wider"
@@ -128,10 +185,18 @@ const ConversationView: React.FC<ConversationViewProps> = ({ messages }) => {
                                         )}
                                     </div>
                                 )}
-                                <p className="whitespace-pre-wrap">{displayContent}</p>
+
+                                {isEditing ? (
+                                    <textarea
+                                        value={editValue}
+                                        onChange={e => onEditChange?.(e.target.value)}
+                                        className="w-full bg-slate-900/50 border border-cyan-500/50 rounded p-2 text-inherit resize-none outline-none min-h-[100px]"
+                                        autoFocus
+                                    />
+                                ) : (
+                                    <p className="whitespace-pre-wrap">{displayContent}</p>
+                                )}
                             </div>
-
-
 
                             {/* Role Label */}
                             <div
