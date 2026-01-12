@@ -10,6 +10,7 @@ export interface SynthLogItem {
   id: string;
   sessionUid?: string; // New: track which session generated this
   sessionName?: string; // New: human readable session name
+  source?: string; // Data source: HuggingFace dataset name, 'manual', 'synthetic', etc.
   seed_preview: string;
   full_seed: string;
   query: string;
@@ -140,7 +141,9 @@ export interface HuggingFaceConfig {
   columnName?: string;       // DEPRECATED: kept for backward compatibility
   inputColumns?: string[];   // Columns to combine for input (question)
   outputColumns?: string[];  // Columns to combine for output (answer)
+  mcqColumn?: string;        // Optional column containing MCQ options (dict or list)
   messageTurnIndex?: number; // If the target is a list/chat, which index to pick
+  maxMultiTurnTraces?: number; // Max number of multi-turn traces to process (empty = all)
 }
 
 export interface DetectedColumns {

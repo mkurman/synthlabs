@@ -4,10 +4,12 @@ import * as GeminiService from './geminiService';
 import * as ExternalApiService from './externalApiService';
 import { SettingsService } from './settingsService';
 import { logger } from '../utils/logger';
-import { DEEP_PHASE_PROMPTS } from '../constants';
+import { PromptService } from './promptService';
 
 interface DeepOrchestrationParams {
   input: string;
+  originalQuery?: string; // Clean input without expected answer, used for training data query field
+  expectedAnswer?: string; // Optional reference answer from dataset
   config: DeepConfig;
   signal?: AbortSignal;
   maxRetries: number;
@@ -85,7 +87,10 @@ const getModelName = (cfg: DeepPhaseConfig) => {
 export const orchestrateDeepReasoning = async (
   params: DeepOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { input, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams } = params;
+  const { input, originalQuery, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams } = params;
+
+  // Use originalQuery for output fields (training data), fall back to input if not provided
+  const cleanQuery = originalQuery || input;
 
   // Storage for the full history of each step
   const deepTrace: Record<string, { model: string; input: string; output: any; timestamp: string; duration: number }> = {};
@@ -200,27 +205,35 @@ Instructions: Based on the reasoning trace above, write the final high-quality r
 
       if (rewriterRes.result && rewriterRes.result.answer) {
         // Overwrite the original answer with the rewritten one
-        writerResult.answer = rewriterRes.result.answer;
+        writerResult.answer = rewriterRes.result.answer.trim();
       } else if (typeof rewriterRes.result === 'string') {
         // Fallback if rewriter output string directly
-        writerResult.answer = rewriterRes.result;
+        writerResult.answer = rewriterRes.result.trim();
       }
     } else {
       // Use Derivation result as the answer if Rewriter is disabled
       writerResult.answer = derivationResult.conclusion_preview || "See reasoning trace for details.";
+      writerResult.answer = writerResult.answer.trim();
+
+      // PRESERVATION LOGIC: If we have an expectedAnswer from the dataset AND Rewriter is disabled,
+      // we use the dataset's answer instead of the model's conclusion.
+      if (expectedAnswer && expectedAnswer.trim().length > 0) {
+        writerResult.answer = expectedAnswer.trim();
+      }
     }
 
-    // Set Query from Meta Result
-    writerResult.query = metaResult.intent || "Refined Query";
+    // Set Query from originalQuery (clean input without expected answer)
+    // The user wants their actual input preserved, not an AI-generated intent like 'educational'
+    writerResult.query = cleanQuery.trim();
 
     logger.groupEnd();
 
     // 5. Return formatted log item
     const finalLogItem: SynthLogItem = {
       id: crypto.randomUUID(),
-      seed_preview: input.substring(0, 150) + "...",
-      full_seed: input,
-      query: writerResult.query || "Inferred Query",
+      seed_preview: cleanQuery.substring(0, 150) + "...",
+      full_seed: cleanQuery,
+      query: cleanQuery.trim(), // Use clean input (without expected answer) as query
       reasoning: writerResult.reasoning || "Writer failed to generate reasoning.",
       answer: writerResult.answer || "Writer failed to generate answer.",
       timestamp: new Date().toISOString(),
@@ -308,7 +321,7 @@ export const orchestrateMultiTurnConversation = async (
   };
 
   if (isSlugOrId(displayQuery)) {
-    displayQuery = initialInput.substring(0, 300) + (initialInput.length > 300 ? "..." : "");
+    displayQuery = initialInput;
   }
 
   const messages: ChatMessage[] = [];
@@ -316,9 +329,9 @@ export const orchestrateMultiTurnConversation = async (
   // Helper to format assistant content with <think> tags
   const formatAssistantContent = (answer: string, reasoning?: string): string => {
     if (reasoning && reasoning.trim()) {
-      return `<think>${reasoning}</think>\n\n${answer}`;
+      return `<think>${reasoning.trim()}</think>\n\n${answer.trim()}`;
     }
-    return answer;
+    return answer.trim();
   };
 
   logger.group("🔄 STARTING MULTI-TURN CONVERSATION ORCHESTRATION");
@@ -346,7 +359,7 @@ export const orchestrateMultiTurnConversation = async (
       const generatedResponse = await callAgent(
         responderConfig,
         initialInput,
-        DEEP_PHASE_PROMPTS.responder,
+        PromptService.getPrompt('generator', 'responder'),
         signal,
         maxRetries,
         retryDelay,
@@ -382,10 +395,10 @@ export const orchestrateMultiTurnConversation = async (
           apiKey: userAgentConfig.apiKey,
           model: userAgentConfig.model,
           customBaseUrl: userAgentConfig.customBaseUrl,
-          systemPrompt: userAgentConfig.systemPrompt || DEEP_PHASE_PROMPTS.userAgent
+          systemPrompt: userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent')
         },
         userAgentInput,
-        userAgentConfig.systemPrompt || DEEP_PHASE_PROMPTS.userAgent,
+        userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent'),
         signal,
         maxRetries,
         retryDelay,
@@ -405,7 +418,7 @@ export const orchestrateMultiTurnConversation = async (
       const responseResult = await callAgent(
         responderConfig,
         responseInput,
-        responderConfig.systemPrompt || DEEP_PHASE_PROMPTS.responder,
+        responderConfig.systemPrompt || PromptService.getPrompt('generator', 'responder'),
         signal,
         maxRetries,
         retryDelay,
@@ -512,6 +525,7 @@ interface ConversationRewriteParams {
   retryDelay: number;
   generationParams?: GenerationParams;
   onMessageRewritten?: (index: number, total: number) => void;
+  maxTraces?: number;                 // Max number of assistant messages to process (undefined = all)
   // For regular mode external API
   regularModeConfig?: {
     provider: 'gemini' | 'external';
@@ -546,6 +560,7 @@ export const orchestrateConversationRewrite = async (
     retryDelay,
     generationParams,
     onMessageRewritten,
+    maxTraces,
     regularModeConfig
   } = params;
 
@@ -559,7 +574,8 @@ export const orchestrateConversationRewrite = async (
 
   try {
     let assistantIndex = 0;
-    const totalAssistants = messages.filter(m => m.role === 'assistant').length;
+    const allAssistants = messages.filter(m => m.role === 'assistant').length;
+    const totalAssistants = maxTraces && maxTraces > 0 ? Math.min(maxTraces, allAssistants) : allAssistants;
 
     for (let i = 0; i < messages.length; i++) {
       if (signal?.aborted) break;
@@ -568,6 +584,13 @@ export const orchestrateConversationRewrite = async (
 
       // Keep user/system messages unchanged
       if (message.role !== 'assistant') {
+        rewrittenMessages.push({ ...message });
+        continue;
+      }
+
+      // Stop processing if we've reached the max traces limit
+      if (maxTraces && maxTraces > 0 && assistantIndex >= maxTraces) {
+        // Copy remaining assistant messages unchanged
         rewrittenMessages.push({ ...message });
         continue;
       }
@@ -626,7 +649,7 @@ ${outsideThinkContent}
         newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
       } else {
         // Use regular converter
-        const prompt = converterPrompt || DEEP_PHASE_PROMPTS.writer;
+        const prompt = converterPrompt || PromptService.getPrompt('converter', 'writer');
 
         if (regularModeConfig?.provider === 'gemini') {
           const result = await GeminiService.generateGenericJSON(
@@ -679,12 +702,29 @@ ${outsideThinkContent}
     logger.log("✅ Conversation rewrite complete");
     logger.groupEnd();
 
+    // Truncate messages if maxTraces is set - keep only up to maxTraces assistant messages
+    let finalMessages = rewrittenMessages;
+    if (maxTraces && maxTraces > 0) {
+      let assistantCount = 0;
+      let cutoffIndex = rewrittenMessages.length;
+      for (let i = 0; i < rewrittenMessages.length; i++) {
+        if (rewrittenMessages[i].role === 'assistant') {
+          assistantCount++;
+          if (assistantCount >= maxTraces) {
+            cutoffIndex = i + 1; // Include this assistant message
+            break;
+          }
+        }
+      }
+      finalMessages = rewrittenMessages.slice(0, cutoffIndex);
+    }
+
     // Build the display query from first user message
-    const firstUser = rewrittenMessages.find(m => m.role === 'user');
-    const displayQuery = firstUser?.content?.substring(0, 150) || "Conversation";
+    const firstUser = finalMessages.find(m => m.role === 'user');
+    const displayQuery = firstUser?.content || "Conversation";
 
     // Combine all reasoning traces for the main reasoning field
-    const allReasoning = rewrittenMessages
+    const allReasoning = finalMessages
       .filter(m => m.role === 'assistant' && m.reasoning)
       .map(m => m.reasoning)
       .join('\n---\n');
@@ -692,16 +732,16 @@ ${outsideThinkContent}
     return {
       id: crypto.randomUUID(),
       seed_preview: displayQuery + (displayQuery.length >= 150 ? "..." : ""),
-      full_seed: messages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
+      full_seed: finalMessages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
       query: displayQuery,
       reasoning: allReasoning,
-      answer: rewrittenMessages[rewrittenMessages.length - 1]?.content || "",
+      answer: finalMessages[finalMessages.length - 1]?.content || "",
       timestamp: new Date().toISOString(),
       duration: Date.now() - startTime,
-      tokenCount: rewrittenMessages.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
+      tokenCount: finalMessages.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
       modelUsed: engineMode === 'deep' ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
       isMultiTurn: true,
-      messages: rewrittenMessages
+      messages: finalMessages
     };
 
   } catch (error: any) {

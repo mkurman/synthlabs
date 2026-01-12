@@ -5,11 +5,13 @@ import {
     GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
     ShieldCheck, LayoutGrid, List, Search, Server, Clock, Bookmark, Plus,
     ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileType, MessageCircle,
-    ChevronUp, ChevronDown, Maximize2, Minimize2
+    ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2
 } from 'lucide-react';
-import { VerifierItem } from '../types';
+import { VerifierItem, ExternalProvider } from '../types';
 import * as FirebaseService from '../services/firebaseService';
 import * as HuggingFaceService from '../services/huggingFaceService';
+import * as VerifierRewriterService from '../services/verifierRewriterService';
+import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 
@@ -28,6 +30,8 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [isLimitEnabled, setIsLimitEnabled] = useState(true);
     const [isImporting, setIsImporting] = useState(false);
     const [availableSessions, setAvailableSessions] = useState<FirebaseService.SavedSession[]>([]);
+    const [discoveredSessions, setDiscoveredSessions] = useState<FirebaseService.DiscoveredSession[]>([]);
+    const [isLoadingDiscoveredSessions, setIsLoadingDiscoveredSessions] = useState(false);
     const [selectedSessionFilter, setSelectedSessionFilter] = useState<string>('all'); // 'all', 'current', 'custom', or session ID
     const [customSessionId, setCustomSessionId] = useState('');
 
@@ -59,13 +63,23 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [hfRepo, setHfRepo] = useState('');
     const [hfFormat, setHfFormat] = useState<'jsonl' | 'parquet'>('parquet'); // Default to Parquet
     const [isUploading, setIsUploading] = useState(false);
-    const [exportColumns, setExportColumns] = useState<Record<string, boolean>>({
-        full_seed: true,
-        query: true,
-        reasoning: true,
-        answer: true,
-        score: true,
-        modelUsed: true
+    const [exportColumns, setExportColumns] = useState<Record<string, boolean>>({});
+
+    // Inline Editing State
+    const [editingField, setEditingField] = useState<{ itemId: string; field: string; messageIndex?: number; originalValue: string } | null>(null);
+    const [editValue, setEditValue] = useState('');
+    const [rewritingField, setRewritingField] = useState<{ itemId: string; field: string; messageIndex?: number } | null>(null);
+
+    // Rewriter Config State
+    const [isRewriterPanelOpen, setIsRewriterPanelOpen] = useState(false);
+    const [rewriterConfig, setRewriterConfig] = useState<VerifierRewriterService.RewriterConfig>({
+        provider: 'external',
+        externalProvider: 'openrouter',
+        apiKey: '',
+        model: 'openai/gpt-4o-mini',
+        customBaseUrl: '',
+        maxRetries: 3,
+        retryDelay: 2000
     });
 
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -73,9 +87,16 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     // Load available sessions when Import tab is active
     useEffect(() => {
         if (activeTab === 'import' && FirebaseService.isFirebaseConfigured()) {
+            // Fetch saved sessions
             FirebaseService.getSessionsFromFirebase()
                 .then(setAvailableSessions)
                 .catch(console.error);
+            // Fetch discovered sessions from logs
+            setIsLoadingDiscoveredSessions(true);
+            FirebaseService.getUniqueSessionUidsFromLogs()
+                .then(setDiscoveredSessions)
+                .catch(console.error)
+                .finally(() => setIsLoadingDiscoveredSessions(false));
         }
     }, [activeTab]);
 
@@ -84,12 +105,40 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         setCurrentPage(1);
     }, [showDuplicatesOnly, filterScore, data.length]);
 
+    // Dynamically discover columns from loaded data
+    useEffect(() => {
+        if (data.length === 0) return;
+
+        // Collect all unique keys from all items
+        const allKeys = new Set<string>();
+        // Internal fields to exclude from export options
+        const excludeKeys = ['id', 'isDuplicate', 'duplicateGroupId', 'isDiscarded', 'verifiedTimestamp'];
+        // Priority fields that should be checked by default
+        const defaultChecked = ['query', 'reasoning', 'answer', 'full_seed', 'score', 'modelUsed', 'source', 'messages'];
+
+        data.forEach(item => {
+            Object.keys(item).forEach(key => {
+                if (!excludeKeys.includes(key)) {
+                    allKeys.add(key);
+                }
+            });
+        });
+
+        // Build new export columns state
+        const newColumns: Record<string, boolean> = {};
+        allKeys.forEach(key => {
+            newColumns[key] = defaultChecked.includes(key);
+        });
+
+        setExportColumns(newColumns);
+    }, [data]);
+
     // --- Logic: Import ---
 
     const normalizeImportItem = (raw: any): VerifierItem => {
         // 1. Query/Input Mapping
         let query = raw.query || raw.instruction || raw.question || raw.prompt || raw.input || "";
-        if (Array.isArray(raw.messages)) {
+        if (!query && Array.isArray(raw.messages)) {
             const lastUser = raw.messages.findLast((m: any) => m.role === 'user');
             if (lastUser) query = lastUser.content;
         }
@@ -394,6 +443,104 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         }
     };
 
+    // --- Inline Editing Handlers ---
+
+    const startEditing = (itemId: string, field: 'query' | 'reasoning' | 'answer', currentValue: string) => {
+        setEditingField({ itemId, field, originalValue: currentValue });
+        setEditValue(currentValue);
+    };
+
+    const cancelEditing = () => {
+        setEditingField(null);
+        setEditValue('');
+    };
+
+    const saveEditing = () => {
+        if (!editingField) return;
+
+        setData(prev => prev.map(item => {
+            if (item.id === editingField.itemId) {
+                if (editingField.field === 'message' && editingField.messageIndex !== undefined && item.messages) {
+                    const newMessages = [...item.messages];
+                    if (newMessages[editingField.messageIndex]) {
+                        newMessages[editingField.messageIndex] = {
+                            ...newMessages[editingField.messageIndex],
+                            content: editValue
+                        };
+                    }
+                    return { ...item, messages: newMessages };
+                } else if (['query', 'reasoning', 'answer'].includes(editingField.field)) {
+                    return { ...item, [editingField.field]: editValue };
+                }
+            }
+            return item;
+        }));
+
+        setEditingField(null);
+        setEditValue('');
+    };
+
+    const handleMessageRewrite = async (itemId: string, messageIndex: number) => {
+        const item = data.find(i => i.id === itemId);
+        if (!item || !item.messages || !item.messages[messageIndex]) return;
+
+        setRewritingField({ itemId, field: 'message', messageIndex });
+        try {
+            const newValue = await VerifierRewriterService.rewriteMessage({
+                item,
+                messageIndex,
+                config: rewriterConfig
+            });
+
+            setData(prev => prev.map(i => {
+                if (i.id === itemId && i.messages) {
+                    const newMessages = [...i.messages];
+                    newMessages[messageIndex] = {
+                        ...newMessages[messageIndex],
+                        content: newValue
+                    };
+                    return { ...i, messages: newMessages };
+                }
+                return i;
+            }));
+        } catch (error) {
+            console.error("Rewrite failed:", error);
+            alert("Rewrite failed. See console for details.");
+        } finally {
+            setRewritingField(null);
+        }
+    };
+
+    const handleFieldRewrite = async (itemId: string, field: 'query' | 'reasoning' | 'answer') => {
+        const item = data.find(i => i.id === itemId);
+        if (!item) return;
+
+        // Ensure query is populated with fallback if empty, to match display logic
+        const itemForRewrite = {
+            ...item,
+            query: item.query || (item as any).QUERY || item.full_seed || ''
+        };
+
+        setRewritingField({ itemId, field });
+        try {
+            const newValue = await VerifierRewriterService.rewriteField({
+                item: itemForRewrite,
+                field,
+                config: rewriterConfig
+            });
+            setData(prev => prev.map(i =>
+                i.id === itemId
+                    ? { ...i, [field]: newValue }
+                    : i
+            ));
+        } catch (err: any) {
+            console.error('Rewrite failed:', err);
+            alert('Rewrite failed: ' + err.message);
+        } finally {
+            setRewritingField(null);
+        }
+    };
+
     // --- Render Helpers ---
 
     const filteredData = useMemo(() => {
@@ -472,7 +619,15 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                         <option value="all">All Sessions</option>
                                         <option value="current">Current Session</option>
                                         <option value="custom">Specific Session ID...</option>
-                                        {availableSessions.length > 0 && <optgroup label="Saved Cloud Sessions">
+                                        {isLoadingDiscoveredSessions && <optgroup label="⏳ Loading sessions from logs..."></optgroup>}
+                                        {!isLoadingDiscoveredSessions && discoveredSessions.length > 0 && <optgroup label="📊 Sessions from Logs">
+                                            {discoveredSessions.map(s => (
+                                                <option key={`log-${s.uid}`} value={s.uid}>
+                                                    {s.uid.substring(0, 8)}... ({s.count} logs)
+                                                </option>
+                                            ))}
+                                        </optgroup>}
+                                        {availableSessions.length > 0 && <optgroup label="💾 Saved Cloud Sessions">
                                             {availableSessions.map(s => (
                                                 <option key={s.id} value={s.id}>{s.name} ({new Date(s.createdAt).toLocaleDateString()})</option>
                                             ))}
@@ -531,6 +686,86 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             {/* REVIEW TAB */}
             {activeTab === 'review' && (
                 <div className="flex-1 flex flex-col gap-4 animate-in fade-in">
+                    {/* Rewriter Settings Panel */}
+                    <div className="bg-slate-950/50 rounded-xl border border-slate-800 overflow-hidden">
+                        <button
+                            onClick={() => setIsRewriterPanelOpen(!isRewriterPanelOpen)}
+                            className="w-full flex items-center justify-between px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
+                        >
+                            <span className="flex items-center gap-2">
+                                <Settings2 className="w-4 h-4" />
+                                REWRITER SETTINGS
+                            </span>
+                            {isRewriterPanelOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </button>
+                        {isRewriterPanelOpen && (
+                            <div className="px-4 pb-4 grid grid-cols-1 md:grid-cols-4 gap-4 border-t border-slate-800 pt-4">
+                                <div>
+                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Provider</label>
+                                    <select
+                                        value={rewriterConfig.externalProvider}
+                                        onChange={e => setRewriterConfig(prev => ({ ...prev, externalProvider: e.target.value as ExternalProvider }))}
+                                        className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
+                                    >
+                                        {AVAILABLE_PROVIDERS.map(p => (
+                                            <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Model</label>
+                                    <input
+                                        type="text"
+                                        value={rewriterConfig.model}
+                                        onChange={e => setRewriterConfig(prev => ({ ...prev, model: e.target.value }))}
+                                        placeholder="Model name"
+                                        className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">API Key</label>
+                                    <input
+                                        type="password"
+                                        value={rewriterConfig.apiKey}
+                                        onChange={e => setRewriterConfig(prev => ({ ...prev, apiKey: e.target.value }))}
+                                        placeholder="Use default from settings"
+                                        className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Custom Base URL</label>
+                                    <input
+                                        type="text"
+                                        value={rewriterConfig.customBaseUrl || ''}
+                                        onChange={e => setRewriterConfig(prev => ({ ...prev, customBaseUrl: e.target.value }))}
+                                        placeholder="Optional"
+                                        className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
+                                    />
+                                </div>
+                                <div className="col-span-1 md:col-span-2 flex gap-4">
+                                    <div className="flex-1">
+                                        <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Max Retries</label>
+                                        <input
+                                            type="number"
+                                            value={rewriterConfig.maxRetries ?? 3}
+                                            onChange={e => setRewriterConfig(prev => ({ ...prev, maxRetries: parseInt(e.target.value) || 0 }))}
+                                            className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
+                                        />
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Retry Delay (ms)</label>
+                                        <input
+                                            type="number"
+                                            value={rewriterConfig.retryDelay ?? 2000}
+                                            onChange={e => setRewriterConfig(prev => ({ ...prev, retryDelay: parseInt(e.target.value) || 0 }))}
+                                            className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     {/* Toolbar */}
                     <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-950/50 p-3 rounded-xl border border-slate-800">
                         <div className="flex items-center gap-4">
@@ -602,12 +837,55 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                     </button>
                                 </div>
 
+                                {/* Query Section */}
                                 <div className="flex-1 min-h-0">
-                                    <h4 className="text-[10px] uppercase font-bold text-slate-500 mb-1 flex items-center gap-1">
-                                        Query
-                                        {item.isMultiTurn && <MessageCircle className="w-3 h-3 text-cyan-400" />}
-                                    </h4>
-                                    <p className="text-xs text-slate-200 line-clamp-2 font-medium">{item.query}</p>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <h4 className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                                            Query
+                                            {item.isMultiTurn && <MessageCircle className="w-3 h-3 text-cyan-400" />}
+                                        </h4>
+                                        <div className="flex items-center gap-1">
+                                            {editingField?.itemId === item.id && editingField.field === 'query' ? (
+                                                <>
+                                                    <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                        <Check className="w-3 h-3" />
+                                                    </button>
+                                                    <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                        <X className="w-3 h-3" />
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <button onClick={() => startEditing(item.id, 'query', item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                        <Edit3 className="w-3 h-3" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleFieldRewrite(item.id, 'query')}
+                                                        disabled={rewritingField?.itemId === item.id && rewritingField.field === 'query'}
+                                                        className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                        title="AI Rewrite"
+                                                    >
+                                                        {rewritingField?.itemId === item.id && rewritingField.field === 'query' ? (
+                                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                                        ) : (
+                                                            <RotateCcw className="w-3 h-3" />
+                                                        )}
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {editingField?.itemId === item.id && editingField.field === 'query' ? (
+                                        <textarea
+                                            value={editValue}
+                                            onChange={e => setEditValue(e.target.value)}
+                                            onBlur={saveEditing}
+                                            autoFocus
+                                            className="w-full bg-slate-900 border border-teal-500 rounded p-2 text-xs text-slate-200 font-medium resize-none min-h-[60px] outline-none"
+                                        />
+                                    ) : (
+                                        <p className="text-xs text-slate-200 line-clamp-2 font-medium">{item.query || (item as any).QUERY || item.full_seed || '(No query)'}</p>
+                                    )}
                                 </div>
 
                                 {/* Multi-turn Conversation View */}
@@ -629,23 +907,122 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                             </button>
                                         </div>
                                         <div className={expandedConversations.has(item.id) ? '' : 'max-h-48 overflow-y-auto'}>
-                                            <ConversationView messages={item.messages} />
+                                            <ConversationView
+                                                messages={item.messages}
+                                                onEditStart={(idx, content) => {
+                                                    setEditingField({ itemId: item.id, field: 'message', messageIndex: idx, originalValue: content });
+                                                    setEditValue(content);
+                                                }}
+                                                onEditSave={saveEditing}
+                                                onEditCancel={cancelEditing}
+                                                onEditChange={setEditValue}
+                                                onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
+                                                editingIndex={editingField?.itemId === item.id && editingField.field === 'message' ? editingField.messageIndex : undefined}
+                                                editValue={editValue}
+                                                rewritingIndex={rewritingField?.itemId === item.id && rewritingField.field === 'message' ? rewritingField.messageIndex : undefined}
+                                            />
                                         </div>
                                     </div>
                                 ) : (
                                     <>
+                                        {/* Reasoning Section */}
                                         <div className="bg-slate-950/30 p-2 rounded border border-slate-800/50 my-2">
-                                            <h4 className="text-[10px] uppercase font-bold text-slate-500 mb-1">Reasoning Trace</h4>
-                                            <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
-                                                <ReasoningHighlighter text={item.reasoning} />
+                                            <div className="flex items-center justify-between mb-1">
+                                                <h4 className="text-[10px] uppercase font-bold text-slate-500">Reasoning Trace</h4>
+                                                <div className="flex items-center gap-1">
+                                                    {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                        <>
+                                                            <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                                <Check className="w-3 h-3" />
+                                                            </button>
+                                                            <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                                <X className="w-3 h-3" />
+                                                            </button>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <button onClick={() => startEditing(item.id, 'reasoning', item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                <Edit3 className="w-3 h-3" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleFieldRewrite(item.id, 'reasoning')}
+                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === 'reasoning'}
+                                                                className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                                title="AI Rewrite"
+                                                            >
+                                                                {rewritingField?.itemId === item.id && rewritingField.field === 'reasoning' ? (
+                                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                                ) : (
+                                                                    <RotateCcw className="w-3 h-3" />
+                                                                )}
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
                                             </div>
+                                            {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                <textarea
+                                                    value={editValue}
+                                                    onChange={e => setEditValue(e.target.value)}
+                                                    onBlur={saveEditing}
+                                                    autoFocus
+                                                    className="w-full bg-slate-900 border border-teal-500 rounded p-2 text-[10px] text-slate-400 font-mono resize-none min-h-[100px] outline-none"
+                                                />
+                                            ) : (
+                                                <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
+                                                    <ReasoningHighlighter text={item.reasoning} />
+                                                </div>
+                                            )}
                                         </div>
 
+                                        {/* Answer Section */}
                                         <div className="bg-slate-950/50 p-2 rounded border border-slate-800/50">
-                                            <h4 className="text-[10px] uppercase font-bold text-slate-500 mb-1">Answer Preview</h4>
-                                            <div className="max-h-32 overflow-y-auto">
-                                                <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{item.answer}</p>
+                                            <div className="flex items-center justify-between mb-1">
+                                                <h4 className="text-[10px] uppercase font-bold text-slate-500">Answer Preview</h4>
+                                                <div className="flex items-center gap-1">
+                                                    {editingField?.itemId === item.id && editingField.field === 'answer' ? (
+                                                        <>
+                                                            <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                                <Check className="w-3 h-3" />
+                                                            </button>
+                                                            <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                                <X className="w-3 h-3" />
+                                                            </button>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <button onClick={() => startEditing(item.id, 'answer', item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                <Edit3 className="w-3 h-3" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleFieldRewrite(item.id, 'answer')}
+                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === 'answer'}
+                                                                className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                                title="AI Rewrite"
+                                                            >
+                                                                {rewritingField?.itemId === item.id && rewritingField.field === 'answer' ? (
+                                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                                ) : (
+                                                                    <RotateCcw className="w-3 h-3" />
+                                                                )}
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
                                             </div>
+                                            {editingField?.itemId === item.id && editingField.field === 'answer' ? (
+                                                <textarea
+                                                    value={editValue}
+                                                    onChange={e => setEditValue(e.target.value)}
+                                                    onBlur={saveEditing}
+                                                    autoFocus
+                                                    className="w-full bg-slate-900 border border-teal-500 rounded p-2 text-[10px] text-slate-400 font-mono resize-none min-h-[80px] outline-none"
+                                                />
+                                            ) : (
+                                                <div className="max-h-32 overflow-y-auto">
+                                                    <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{item.answer}</p>
+                                                </div>
+                                            )}
                                         </div>
                                     </>
                                 )}

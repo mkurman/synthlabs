@@ -6,7 +6,7 @@ import {
     Cloud, Laptop, ShieldCheck, Globe, Archive, FileText, Server, BrainCircuit,
     Timer, RotateCcw, MessageSquare, Table, Layers, Search, PenTool, GitBranch,
     PlusCircle, FileX, RefreshCcw, Copy, X, FileEdit, CloudUpload, CloudDownload, Calendar,
-    LayoutDashboard, Bookmark, Beaker
+    LayoutDashboard, Bookmark, Beaker, List
 } from 'lucide-react';
 
 import {
@@ -14,8 +14,9 @@ import {
     GenerationConfig, ProgressStats, HuggingFaceConfig, DetectedColumns,
     CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig, ChatMessage
 } from './types';
-import { DEFAULT_SYSTEM_PROMPT, DEFAULT_CONVERTER_PROMPT, EXTERNAL_PROVIDERS, DEEP_PHASE_PROMPTS } from './constants';
+import { EXTERNAL_PROVIDERS } from './constants';
 import { logger, setVerbose } from './utils/logger';
+import { PromptService } from './services/promptService';
 import * as GeminiService from './services/geminiService';
 import * as FirebaseService from './services/firebaseService';
 import * as ExternalApiService from './services/externalApiService';
@@ -77,19 +78,19 @@ export default function App() {
     const [deepConfig, setDeepConfig] = useState<DeepConfig>({
         phases: {
             meta: {
-                id: 'meta', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.meta
+                id: 'meta', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'meta')
             },
             retrieval: {
-                id: 'retrieval', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.retrieval
+                id: 'retrieval', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'retrieval')
             },
             derivation: {
-                id: 'derivation', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.derivation
+                id: 'derivation', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'derivation')
             },
             writer: {
-                id: 'writer', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.writer
+                id: 'writer', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'writer')
             },
             rewriter: {
-                id: 'rewriter', enabled: false, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: DEEP_PHASE_PROMPTS.rewriter
+                id: 'rewriter', enabled: false, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'rewriter')
             }
         }
     });
@@ -116,7 +117,7 @@ export default function App() {
         apiKey: '',
         model: 'gemini-3-flash-preview',
         customBaseUrl: '',
-        systemPrompt: DEEP_PHASE_PROMPTS.userAgent
+        systemPrompt: PromptService.getPrompt('generator', 'user_agent')
     });
 
     // --- State: Conversation Trace Rewriting ---
@@ -192,8 +193,8 @@ export default function App() {
     };
 
     // --- State: Runtime ---
-    const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
-    const [converterPrompt, setConverterPrompt] = useState(DEFAULT_CONVERTER_PROMPT);
+    const [systemPrompt, setSystemPrompt] = useState(PromptService.getPrompt('generator', 'system'));
+    const [converterPrompt, setConverterPrompt] = useState(PromptService.getPrompt('converter', 'system'));
 
     // Log Management
     const [visibleLogs, setVisibleLogs] = useState<SynthLogItem[]>([]);
@@ -320,6 +321,31 @@ export default function App() {
     const getRowContent = (row: any): string => {
         const COLUMN_SEPARATOR = '\n\n' + '-'.repeat(50) + '\n\n';
 
+        // Helper to format MCQ options from dict or list into readable string
+        const formatMcqOptions = (options: any): string => {
+            if (!options) return '';
+
+            // Handle dictionary format: {"A": "option text", "B": "option text"}
+            if (typeof options === 'object' && !Array.isArray(options)) {
+                return Object.entries(options)
+                    .map(([key, value]) => `${key}: ${value}`)
+                    .join('\n');
+            }
+
+            // Handle array format: ["option A", "option B"] - add A, B, C labels
+            if (Array.isArray(options)) {
+                const labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                return options
+                    .map((opt: any, idx: number) => `${labels[idx] || idx + 1}: ${typeof opt === 'object' ? JSON.stringify(opt) : opt}`)
+                    .join('\n');
+            }
+
+            // Fallback for string (already formatted)
+            if (typeof options === 'string') return options;
+
+            return JSON.stringify(options);
+        };
+
         const getText = (node: any): string => {
             if (!node) return "";
             if (typeof node === 'string') return node;
@@ -360,8 +386,17 @@ export default function App() {
         // Try inputColumns first (new multi-column approach)
         if (hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
             const contents = hfConfig.inputColumns
-                .map(col => getColumnContent(col))
-                .filter(c => c.trim() !== '');
+                .map((col: string) => getColumnContent(col))
+                .filter((c: string) => c.trim() !== '');
+
+            // Append MCQ options if mcqColumn is configured
+            if (hfConfig.mcqColumn && row[hfConfig.mcqColumn]) {
+                const formattedOptions = formatMcqOptions(row[hfConfig.mcqColumn]);
+                if (formattedOptions) {
+                    contents.push('\nOptions:\n' + formattedOptions);
+                }
+            }
+
             if (contents.length > 0) {
                 return contents.join(COLUMN_SEPARATOR);
             }
@@ -401,6 +436,62 @@ export default function App() {
         }
         if (typeof autoContent === 'object') return JSON.stringify(autoContent);
         return String(autoContent);
+    };
+
+    const getRowExpectedOutput = (row: any): string => {
+        if (!row) return "";
+
+        const getText = (node: any): string => {
+            if (!node) return "";
+            if (typeof node === 'string') return node;
+            if (Array.isArray(node)) return node.map(getText).join('\n');
+            return node.content || node.value || node.text || JSON.stringify(node);
+        };
+
+        const getColumnContent = (columnName: string): string => {
+            const value = row[columnName];
+            if (value === undefined || value === null) return '';
+
+            if (Array.isArray(value)) {
+                const turnIndex = hfConfig.messageTurnIndex || 0;
+                const firstItem = value[0];
+                const isChat = firstItem && typeof firstItem === 'object' && ('role' in firstItem || 'from' in firstItem);
+                if (isChat) {
+                    // For output, we usually want the assistant response if it's chat
+                    return getText(value[turnIndex * 2 + 1] || value[turnIndex * 2]);
+                }
+                return getText(value[turnIndex]);
+            }
+
+            if (typeof value === 'object') return JSON.stringify(value);
+            return String(value);
+        };
+
+        // Try outputColumns if configured
+        if (hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
+            return hfConfig.outputColumns
+                .map((col: string) => getColumnContent(col))
+                .filter((c: string) => c.trim() !== '')
+                .join('\n\n');
+        }
+
+        // Auto-detect fallback for answer
+        const candidates = ['answer', 'output', 'response', 'target', 'label', 'gpt', 'assistant'];
+        for (const c of candidates) {
+            if (row[c]) return getColumnContent(c);
+        }
+
+        // Try messages/conversation format
+        const msgs = row.messages || row.conversation || row.conversations;
+        if (Array.isArray(msgs)) {
+            const turnIndex = hfConfig.messageTurnIndex || 0;
+            const assistantMsg = msgs.find((m: any, idx: number) =>
+                (m.role === 'assistant' || m.from === 'gpt') && idx >= turnIndex * 2
+            );
+            if (assistantMsg) return getText(assistantMsg);
+        }
+
+        return "";
     };
 
     const prefetchColumns = async (overrideConfig?: HuggingFaceConfig) => {
@@ -509,6 +600,20 @@ export default function App() {
         setAvailableColumns([]);
         setDetectedColumns({ input: [], output: [], all: [] });
         setHfConfig(prev => ({ ...prev, inputColumns: [], outputColumns: [] }));
+    };
+
+    const handleExternalProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const newProvider = e.target.value as ExternalProvider;
+        setExternalProvider(newProvider);
+
+        // Auto-load API Key and Base URL from saved settings
+        const savedKey = SettingsService.getApiKey(newProvider);
+        setExternalApiKey(savedKey || '');
+
+        if (newProvider === 'other') {
+            const savedBaseUrl = SettingsService.getCustomBaseUrl();
+            setCustomBaseUrl(savedBaseUrl || '');
+        }
     };
 
     const generateRandomTopic = async () => {
@@ -672,7 +777,7 @@ export default function App() {
             config: {
                 appMode, engineMode, environment, provider, externalProvider, externalApiKey, externalModel,
                 customBaseUrl, deepConfig, userAgentConfig, concurrency, rowsToFetch, skipRows, sleepTime, maxRetries, retryDelay,
-                feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt,
+                feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt, conversationRewriteMode,
                 converterInputText, generationParams: { temperature, topP, topK, frequencyPenalty, presencePenalty }
             }
         };
@@ -706,7 +811,7 @@ export default function App() {
                             apiKey: '',
                             model: 'gemini-3-flash-preview',
                             customBaseUrl: '',
-                            systemPrompt: DEEP_PHASE_PROMPTS.rewriter
+                            systemPrompt: PromptService.getPrompt('converter', 'rewriter')
                         };
                     }
                     setDeepConfig(mergedDeepConfig);
@@ -727,6 +832,7 @@ export default function App() {
                 if (c.topicCategory) setTopicCategory(c.topicCategory);
                 if (c.systemPrompt) setSystemPrompt(c.systemPrompt);
                 if (c.converterPrompt) setConverterPrompt(c.converterPrompt);
+                if (c.conversationRewriteMode !== undefined) setConversationRewriteMode(c.conversationRewriteMode);
                 if (c.converterInputText) setConverterInputText(c.converterInputText);
                 if (c.generationParams) {
                     if (c.generationParams.temperature !== undefined) setTemperature(String(c.generationParams.temperature));
@@ -851,6 +957,12 @@ export default function App() {
     const generateSingleItem = async (inputText: string, workerId: number, opts: { retryId?: string, originalQuestion?: string, row?: any } = {}): Promise<SynthLogItem | null> => {
         const { retryId, originalQuestion, row } = opts;
         const startTime = Date.now();
+        // Determine source for tracking (outside try for catch access)
+        const source = dataSourceMode === 'huggingface'
+            ? `hf:${hfConfig.dataset}`
+            : dataSourceMode === 'manual'
+                ? 'manual'
+                : 'synthetic';
         try {
             const safeInput = typeof inputText === 'string' ? inputText : String(inputText);
             let result;
@@ -863,12 +975,17 @@ export default function App() {
             if (conversationRewriteMode && row) {
                 const messagesArray = row.messages || row.conversation || row.conversations;
                 if (Array.isArray(messagesArray) && messagesArray.length > 0) {
-                    // Convert to ChatMessage format if needed
-                    const chatMessages: ChatMessage[] = messagesArray.map((m: any) => ({
-                        role: (m.role || (m.from === 'human' ? 'user' : m.from === 'gpt' ? 'assistant' : m.from)) as 'user' | 'assistant' | 'system',
-                        content: m.content || m.value || String(m),
-                        reasoning: m.reasoning
-                    }));
+                    // Convert to ChatMessage format if needed, filtering out empty messages
+                    const chatMessages: ChatMessage[] = messagesArray
+                        .map((m: any) => {
+                            const content = m.content || m.value || (typeof m === 'string' ? m : '');
+                            return {
+                                role: (m.role || (m.from === 'human' ? 'user' : m.from === 'gpt' ? 'assistant' : m.from)) as 'user' | 'assistant' | 'system',
+                                content: content,
+                                reasoning: m.reasoning
+                            };
+                        })
+                        .filter((m: ChatMessage) => m.content.trim().length > 0); // Skip empty messages
 
                     const rewriteResult = await DeepReasoningService.orchestrateConversationRewrite({
                         messages: chatMessages,
@@ -879,6 +996,7 @@ export default function App() {
                         maxRetries,
                         retryDelay,
                         generationParams: genParams,
+                        maxTraces: hfConfig.maxMultiTurnTraces,
                         regularModeConfig: engineMode === 'regular' ? {
                             provider: provider,
                             externalProvider: externalProvider,
@@ -891,7 +1009,8 @@ export default function App() {
                     return {
                         ...rewriteResult,
                         id: retryId || rewriteResult.id,
-                        sessionUid: sessionUid
+                        sessionUid: sessionUid,
+                        source: source
                     };
                 }
             }
@@ -909,10 +1028,10 @@ export default function App() {
                 } else {
                     let promptInput = "";
                     if (appMode === 'generator') {
-                        promptInput = `[SEED TEXT START]\n${safeInput.substring(0, 2000)}\n[SEED TEXT END]`;
+                        promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
                     } else {
                         const contentToConvert = extractInputContent(safeInput);
-                        promptInput = `[INPUT LOGIC START]\n${contentToConvert.substring(0, 8000)}\n[INPUT LOGIC END]`;
+                        promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
                     }
                     result = await ExternalApiService.callExternalApi({
                         provider: externalProvider,
@@ -937,9 +1056,10 @@ export default function App() {
                 return {
                     id: retryId || crypto.randomUUID(),
                     sessionUid: sessionUid,
+                    source: source,
                     seed_preview: safeInput.substring(0, 150) + "...",
                     full_seed: safeInput,
-                    query: ensureString(result.query),
+                    query: safeInput, // Use original input as query, not AI-generated
                     reasoning: reasoning,
                     answer: answer,
                     timestamp: new Date().toISOString(),
@@ -953,6 +1073,15 @@ export default function App() {
                 if (appMode === 'converter') {
                     inputPayload = extractInputContent(safeInput);
                 }
+
+                // Extract expected answer from dataset row
+                const expectedAnswer = opts.row ? getRowExpectedOutput(opts.row) : undefined;
+
+                // In generator mode, append the gold answer to the seed so all agents see it
+                if (appMode === 'generator' && expectedAnswer && expectedAnswer.trim().length > 0) {
+                    inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${expectedAnswer.trim()}`;
+                }
+
                 // Deep copy to prevent mutation of state
                 const runtimeDeepConfig = JSON.parse(JSON.stringify(deepConfig));
 
@@ -960,6 +1089,8 @@ export default function App() {
                 // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
+                    originalQuery: safeInput, // Clean input for training data (no expected answer)
+                    expectedAnswer: expectedAnswer,
                     config: runtimeDeepConfig,
                     signal: abortControllerRef.current?.signal || undefined,
                     maxRetries,
@@ -978,13 +1109,13 @@ export default function App() {
                             apiKey: userAgentConfig.apiKey,
                             model: userAgentConfig.model,
                             customBaseUrl: userAgentConfig.customBaseUrl,
-                            systemPrompt: DEEP_PHASE_PROMPTS.responder
+                            systemPrompt: PromptService.getPrompt('generator', 'responder')
                         }
                         : runtimeDeepConfig.phases[responderPhase as keyof typeof runtimeDeepConfig.phases];
 
                     const multiTurnResult = await DeepReasoningService.orchestrateMultiTurnConversation({
                         initialInput: inputPayload,
-                        initialQuery: originalQuestion || deepResult.query || inputPayload.substring(0, 200), // Use detected question or query or fallback
+                        initialQuery: originalQuestion || deepResult.query || inputPayload, // Use detected question or query or fallback
                         initialResponse: deepResult.answer || '',
                         initialReasoning: deepResult.reasoning || '',
                         userAgentConfig: userAgentConfig,
@@ -998,6 +1129,7 @@ export default function App() {
                     return {
                         ...multiTurnResult,
                         sessionUid: sessionUid,
+                        source: source,
                         duration: Date.now() - startTime,
                         tokenCount: Math.round((multiTurnResult.answer?.length || 0 + (multiTurnResult.reasoning?.length || 0)) / 4),
                         isMultiTurn: true
@@ -1009,6 +1141,7 @@ export default function App() {
                 return {
                     ...deepResult,
                     sessionUid: sessionUid,
+                    source: source,
                     duration: Date.now() - startTime,
                     tokenCount: Math.round((answer.length + reasoning.length) / 4)
                 };
@@ -1020,6 +1153,7 @@ export default function App() {
             return {
                 id: retryId || crypto.randomUUID(),
                 sessionUid: sessionUid,
+                source: source,
                 seed_preview: safeErrInput.substring(0, 50),
                 full_seed: safeErrInput,
                 query: "ERROR",
@@ -1133,7 +1267,29 @@ export default function App() {
             if (!confirm) return;
         }
         if (!append) {
-            const newUid = crypto.randomUUID();
+            // Determine source for session naming
+            const sourceLabel = dataSourceMode === 'huggingface'
+                ? `hf:${hfConfig.dataset}`
+                : dataSourceMode === 'manual'
+                    ? 'manual'
+                    : 'synthetic';
+
+            let newUid: string;
+
+            // In production mode with Firebase, create session first and use its ID
+            if (environment === 'production' && FirebaseService.isFirebaseConfigured()) {
+                try {
+                    const sessionName = `${appMode === 'generator' ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
+                    newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel);
+                    logger.log(`Created Firebase session: ${newUid}`);
+                } catch (e) {
+                    logger.warn("Failed to create Firebase session, using local UUID", e);
+                    newUid = crypto.randomUUID();
+                }
+            } else {
+                newUid = crypto.randomUUID();
+            }
+
             setSessionUid(newUid);
             sessionUidRef.current = newUid; // Sync immediately for worker
             setVisibleLogs([]);
@@ -1143,17 +1299,20 @@ export default function App() {
                 setSessionName(null);
             }
         }
+        // Ensure settings are loaded before validation
+        await SettingsService.waitForSettingsInit();
+
         // Check for API key - use inline, settings, or require it
-        const resolvedApiKey = externalApiKey || SettingsService.getApiKey(externalProvider);
+        const resolvedApiKey = externalApiKey?.trim() || SettingsService.getApiKey(externalProvider);
         if (engineMode === 'regular' && provider === 'external' && !resolvedApiKey && externalProvider !== 'ollama') {
             setError("API Key is required for external providers (except Ollama). Click the Settings icon (⚙) in the header or enter a key here.");
             return;
         }
         if (engineMode === 'deep') {
             const writer = deepConfig.phases.writer;
-            const writerApiKey = writer.apiKey || (writer.externalProvider ? SettingsService.getApiKey(writer.externalProvider) : '');
+            const writerApiKey = writer.apiKey?.trim() || (writer.externalProvider ? SettingsService.getApiKey(writer.externalProvider) : '');
             if (writer.provider !== 'gemini' && !writerApiKey && writer.externalProvider !== 'ollama') {
-                setError("Writer Agent requires an API Key. Click the Settings icon (⚙) in the header to configure, or enter a key inline in the Writer phase.");
+                setError(`Writer Agent requires an API Key for ${writer.externalProvider}. Click the Settings icon (⚙) in the header to configure, or enter a key inline in the Writer phase.`);
                 return;
             }
         }
@@ -1430,7 +1589,13 @@ export default function App() {
                             <>
                                 <div className="space-y-1">
                                     <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
-                                    <input type="password" value={phase.apiKey} onChange={e => updateDeepPhase(phaseId, { apiKey: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none" placeholder="Leave empty if using main key" />
+                                    <input
+                                        type="password"
+                                        value={phase.apiKey}
+                                        onChange={e => updateDeepPhase(phaseId, { apiKey: e.target.value })}
+                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                                        placeholder={SettingsService.getApiKey(phase.externalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
+                                    />
                                 </div>
                                 <div className="space-y-1">
                                     <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
@@ -1439,7 +1604,13 @@ export default function App() {
                                 {phase.externalProvider === 'other' && (
                                     <div className="space-y-1">
                                         <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
-                                        <input type="text" value={phase.customBaseUrl} onChange={e => updateDeepPhase(phaseId, { customBaseUrl: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none" />
+                                        <input
+                                            type="text"
+                                            value={phase.customBaseUrl}
+                                            onChange={e => updateDeepPhase(phaseId, { customBaseUrl: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                                            placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
+                                        />
                                     </div>
                                 )}
                             </>
@@ -1456,6 +1627,37 @@ export default function App() {
             </div>
         );
     };
+
+
+
+    // --- Effect: Load Settings & Prompts on Mount ---
+    const refreshPrompts = useCallback(() => {
+        setSystemPrompt(PromptService.getPrompt('generator', 'system'));
+        setConverterPrompt(PromptService.getPrompt('converter', 'system'));
+
+        setDeepConfig((prev: DeepConfig) => ({
+            ...prev,
+            phases: {
+                meta: { ...prev.phases.meta, systemPrompt: PromptService.getPrompt('generator', 'meta') },
+                retrieval: { ...prev.phases.retrieval, systemPrompt: PromptService.getPrompt('generator', 'retrieval') },
+                derivation: { ...prev.phases.derivation, systemPrompt: PromptService.getPrompt('generator', 'derivation') },
+                writer: { ...prev.phases.writer, systemPrompt: PromptService.getPrompt('converter', 'writer') },
+                rewriter: { ...prev.phases.rewriter, systemPrompt: PromptService.getPrompt('converter', 'rewriter') }
+            }
+        }));
+
+        setUserAgentConfig((prev: UserAgentConfig) => ({
+            ...prev,
+            systemPrompt: PromptService.getPrompt('generator', 'user_agent')
+        }));
+    }, []);
+
+    useEffect(() => {
+        // Wait for settings to load from IndexedDB, then refresh prompts
+        SettingsService.waitForSettingsInit().then(() => {
+            refreshPrompts();
+        });
+    }, [refreshPrompts]);
 
     return (
         <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
@@ -1784,7 +1986,7 @@ export default function App() {
                                         </div>
                                     ) : (
                                         <div className="space-y-3">
-                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label><select value={externalProvider} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setExternalProvider(e.target.value as ExternalProvider)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none">{EXTERNAL_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}</select></div>
+                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label><select value={externalProvider} onChange={handleExternalProviderChange} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none">{EXTERNAL_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}</select></div>
                                             {externalProvider === 'other' && <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label><input type="text" value={customBaseUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>}
                                             <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label><input type="password" value={externalApiKey} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
                                             <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label><input type="text" value={externalModel} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalModel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
@@ -1829,11 +2031,25 @@ export default function App() {
                                                 </button>
                                             </div>
                                             {conversationRewriteMode && (
-                                                <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-lg animate-in fade-in duration-200">
+                                                <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-lg animate-in fade-in duration-200 space-y-3">
                                                     <p className="text-[10px] text-amber-300/70">
                                                         Process existing conversation columns (messages/conversation) and rewrite only the {'<think>...</think>'} reasoning traces using symbolic notation.
                                                         User messages and final answers are preserved unchanged.
                                                     </p>
+                                                    <div className="flex items-center gap-3">
+                                                        <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                                                            <Layers className="w-3 h-3" /> Max Traces
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            value={hfConfig.maxMultiTurnTraces || ''}
+                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHfConfig({ ...hfConfig, maxMultiTurnTraces: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
+                                                            className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-amber-500 outline-none"
+                                                            placeholder="All"
+                                                        />
+                                                        <span className="text-[10px] text-slate-500">Empty = process all traces</span>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -2022,9 +2238,26 @@ export default function App() {
                                                 placeholder="Select output column(s)"
                                             />
                                         </div>
+                                        {/* MCQ Column Selector */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                                                <List className="w-3 h-3" /> MCQ Options Column (optional)
+                                            </label>
+                                            <select
+                                                value={hfConfig.mcqColumn || ''}
+                                                onChange={(e) => setHfConfig(prev => ({ ...prev, mcqColumn: e.target.value || undefined }))}
+                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none"
+                                            >
+                                                <option value="">None</option>
+                                                {availableColumns.map(col => (
+                                                    <option key={col} value={col}>{col}</option>
+                                                ))}
+                                            </select>
+                                        </div>
                                     </div>
                                     <div className="flex gap-2">
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1"><MessageSquare className="w-3 h-3" /> Turn Index</label><input type="number" min="0" value={hfConfig.messageTurnIndex || 0} onChange={e => setHfConfig({ ...hfConfig, messageTurnIndex: Math.max(0, parseInt(e.target.value) || 0) })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" placeholder="0" /></div>
+                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1"><Layers className="w-3 h-3" /> Max Traces</label><input type="number" min="0" value={hfConfig.maxMultiTurnTraces || ''} onChange={e => setHfConfig({ ...hfConfig, maxMultiTurnTraces: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" placeholder="All" /></div>
                                     </div>
 
                                     {/* Dataset Info & Preview */}
@@ -2120,6 +2353,22 @@ export default function App() {
                                                     placeholder="Select output column(s)"
                                                 />
                                             </div>
+                                            {/* MCQ Column Selector for Manual Data */}
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                                                    <List className="w-3 h-3" /> MCQ Options Column (optional)
+                                                </label>
+                                                <select
+                                                    value={hfConfig.mcqColumn || ''}
+                                                    onChange={(e) => setHfConfig(prev => ({ ...prev, mcqColumn: e.target.value || undefined }))}
+                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none"
+                                                >
+                                                    <option value="">None</option>
+                                                    {availableColumns.map(col => (
+                                                        <option key={col} value={col}>{col}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
                                         </div>
                                     )}
 
@@ -2213,6 +2462,7 @@ export default function App() {
                 isOpen={showSettings}
                 onClose={() => setShowSettings(false)}
                 onSettingsChanged={async () => {
+                    refreshPrompts();
                     // Refresh logs to pick up any storage changes
                     await refreshLogs();
                 }}
