@@ -335,7 +335,7 @@ export default function App() {
             if (Array.isArray(options)) {
                 const labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
                 return options
-                    .map((opt, idx) => `${labels[idx] || idx + 1}: ${typeof opt === 'object' ? JSON.stringify(opt) : opt}`)
+                    .map((opt: any, idx: number) => `${labels[idx] || idx + 1}: ${typeof opt === 'object' ? JSON.stringify(opt) : opt}`)
                     .join('\n');
             }
 
@@ -385,8 +385,8 @@ export default function App() {
         // Try inputColumns first (new multi-column approach)
         if (hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
             const contents = hfConfig.inputColumns
-                .map(col => getColumnContent(col))
-                .filter(c => c.trim() !== '');
+                .map((col: string) => getColumnContent(col))
+                .filter((c: string) => c.trim() !== '');
 
             // Append MCQ options if mcqColumn is configured
             if (hfConfig.mcqColumn && row[hfConfig.mcqColumn]) {
@@ -435,6 +435,62 @@ export default function App() {
         }
         if (typeof autoContent === 'object') return JSON.stringify(autoContent);
         return String(autoContent);
+    };
+
+    const getRowExpectedOutput = (row: any): string => {
+        if (!row) return "";
+
+        const getText = (node: any): string => {
+            if (!node) return "";
+            if (typeof node === 'string') return node;
+            if (Array.isArray(node)) return node.map(getText).join('\n');
+            return node.content || node.value || node.text || JSON.stringify(node);
+        };
+
+        const getColumnContent = (columnName: string): string => {
+            const value = row[columnName];
+            if (value === undefined || value === null) return '';
+
+            if (Array.isArray(value)) {
+                const turnIndex = hfConfig.messageTurnIndex || 0;
+                const firstItem = value[0];
+                const isChat = firstItem && typeof firstItem === 'object' && ('role' in firstItem || 'from' in firstItem);
+                if (isChat) {
+                    // For output, we usually want the assistant response if it's chat
+                    return getText(value[turnIndex * 2 + 1] || value[turnIndex * 2]);
+                }
+                return getText(value[turnIndex]);
+            }
+
+            if (typeof value === 'object') return JSON.stringify(value);
+            return String(value);
+        };
+
+        // Try outputColumns if configured
+        if (hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
+            return hfConfig.outputColumns
+                .map((col: string) => getColumnContent(col))
+                .filter((c: string) => c.trim() !== '')
+                .join('\n\n');
+        }
+
+        // Auto-detect fallback for answer
+        const candidates = ['answer', 'output', 'response', 'target', 'label', 'gpt', 'assistant'];
+        for (const c of candidates) {
+            if (row[c]) return getColumnContent(c);
+        }
+
+        // Try messages/conversation format
+        const msgs = row.messages || row.conversation || row.conversations;
+        if (Array.isArray(msgs)) {
+            const turnIndex = hfConfig.messageTurnIndex || 0;
+            const assistantMsg = msgs.find((m: any, idx: number) =>
+                (m.role === 'assistant' || m.from === 'gpt') && idx >= turnIndex * 2
+            );
+            if (assistantMsg) return getText(assistantMsg);
+        }
+
+        return "";
     };
 
     const prefetchColumns = async (overrideConfig?: HuggingFaceConfig) => {
@@ -1023,6 +1079,7 @@ export default function App() {
                 // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
+                    expectedAnswer: opts.row ? getRowExpectedOutput(opts.row) : undefined,
                     config: runtimeDeepConfig,
                     signal: abortControllerRef.current?.signal || undefined,
                     maxRetries,

@@ -8,6 +8,7 @@ import { DEEP_PHASE_PROMPTS } from '../constants';
 
 interface DeepOrchestrationParams {
   input: string;
+  expectedAnswer?: string; // New: optional reference answer from dataset
   config: DeepConfig;
   signal?: AbortSignal;
   maxRetries: number;
@@ -85,7 +86,7 @@ const getModelName = (cfg: DeepPhaseConfig) => {
 export const orchestrateDeepReasoning = async (
   params: DeepOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { input, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams } = params;
+  const { input, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams } = params;
 
   // Storage for the full history of each step
   const deepTrace: Record<string, { model: string; input: string; output: any; timestamp: string; duration: number }> = {};
@@ -200,19 +201,26 @@ Instructions: Based on the reasoning trace above, write the final high-quality r
 
       if (rewriterRes.result && rewriterRes.result.answer) {
         // Overwrite the original answer with the rewritten one
-        writerResult.answer = rewriterRes.result.answer;
+        writerResult.answer = rewriterRes.result.answer.trim();
       } else if (typeof rewriterRes.result === 'string') {
         // Fallback if rewriter output string directly
-        writerResult.answer = rewriterRes.result;
+        writerResult.answer = rewriterRes.result.trim();
       }
     } else {
       // Use Derivation result as the answer if Rewriter is disabled
       writerResult.answer = derivationResult.conclusion_preview || "See reasoning trace for details.";
+      writerResult.answer = writerResult.answer.trim();
+
+      // PRESERVATION LOGIC: If we have an expectedAnswer from the dataset AND Rewriter is disabled,
+      // we use the dataset's answer instead of the model's conclusion.
+      if (expectedAnswer && expectedAnswer.trim().length > 0) {
+        writerResult.answer = expectedAnswer.trim();
+      }
     }
 
     // Set Query from original input, not from META result
     // The user wants their actual input preserved, not an AI-generated intent like 'educational'
-    writerResult.query = input;
+    writerResult.query = input.trim();
 
     logger.groupEnd();
 
@@ -317,9 +325,9 @@ export const orchestrateMultiTurnConversation = async (
   // Helper to format assistant content with <think> tags
   const formatAssistantContent = (answer: string, reasoning?: string): string => {
     if (reasoning && reasoning.trim()) {
-      return `<think>${reasoning}</think>\n\n${answer}`;
+      return `<think>${reasoning.trim()}</think>\n\n${answer.trim()}`;
     }
-    return answer;
+    return answer.trim();
   };
 
   logger.group("🔄 STARTING MULTI-TURN CONVERSATION ORCHESTRATION");
