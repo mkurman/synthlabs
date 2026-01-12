@@ -28,6 +28,8 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [isLimitEnabled, setIsLimitEnabled] = useState(true);
     const [isImporting, setIsImporting] = useState(false);
     const [availableSessions, setAvailableSessions] = useState<FirebaseService.SavedSession[]>([]);
+    const [discoveredSessions, setDiscoveredSessions] = useState<FirebaseService.DiscoveredSession[]>([]);
+    const [isLoadingDiscoveredSessions, setIsLoadingDiscoveredSessions] = useState(false);
     const [selectedSessionFilter, setSelectedSessionFilter] = useState<string>('all'); // 'all', 'current', 'custom', or session ID
     const [customSessionId, setCustomSessionId] = useState('');
 
@@ -59,23 +61,23 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [hfRepo, setHfRepo] = useState('');
     const [hfFormat, setHfFormat] = useState<'jsonl' | 'parquet'>('parquet'); // Default to Parquet
     const [isUploading, setIsUploading] = useState(false);
-    const [exportColumns, setExportColumns] = useState<Record<string, boolean>>({
-        full_seed: true,
-        query: true,
-        reasoning: true,
-        answer: true,
-        score: true,
-        modelUsed: true
-    });
+    const [exportColumns, setExportColumns] = useState<Record<string, boolean>>({});
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Load available sessions when Import tab is active
     useEffect(() => {
         if (activeTab === 'import' && FirebaseService.isFirebaseConfigured()) {
+            // Fetch saved sessions
             FirebaseService.getSessionsFromFirebase()
                 .then(setAvailableSessions)
                 .catch(console.error);
+            // Fetch discovered sessions from logs
+            setIsLoadingDiscoveredSessions(true);
+            FirebaseService.getUniqueSessionUidsFromLogs()
+                .then(setDiscoveredSessions)
+                .catch(console.error)
+                .finally(() => setIsLoadingDiscoveredSessions(false));
         }
     }, [activeTab]);
 
@@ -83,6 +85,34 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     useEffect(() => {
         setCurrentPage(1);
     }, [showDuplicatesOnly, filterScore, data.length]);
+
+    // Dynamically discover columns from loaded data
+    useEffect(() => {
+        if (data.length === 0) return;
+
+        // Collect all unique keys from all items
+        const allKeys = new Set<string>();
+        // Internal fields to exclude from export options
+        const excludeKeys = ['id', 'isDuplicate', 'duplicateGroupId', 'isDiscarded', 'verifiedTimestamp'];
+        // Priority fields that should be checked by default
+        const defaultChecked = ['query', 'reasoning', 'answer', 'full_seed', 'score', 'modelUsed', 'source', 'messages'];
+
+        data.forEach(item => {
+            Object.keys(item).forEach(key => {
+                if (!excludeKeys.includes(key)) {
+                    allKeys.add(key);
+                }
+            });
+        });
+
+        // Build new export columns state
+        const newColumns: Record<string, boolean> = {};
+        allKeys.forEach(key => {
+            newColumns[key] = defaultChecked.includes(key);
+        });
+
+        setExportColumns(newColumns);
+    }, [data]);
 
     // --- Logic: Import ---
 
@@ -472,7 +502,15 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                         <option value="all">All Sessions</option>
                                         <option value="current">Current Session</option>
                                         <option value="custom">Specific Session ID...</option>
-                                        {availableSessions.length > 0 && <optgroup label="Saved Cloud Sessions">
+                                        {isLoadingDiscoveredSessions && <optgroup label="⏳ Loading sessions from logs..."></optgroup>}
+                                        {!isLoadingDiscoveredSessions && discoveredSessions.length > 0 && <optgroup label="📊 Sessions from Logs">
+                                            {discoveredSessions.map(s => (
+                                                <option key={`log-${s.uid}`} value={s.uid}>
+                                                    {s.uid.substring(0, 8)}... ({s.count} logs)
+                                                </option>
+                                            ))}
+                                        </optgroup>}
+                                        {availableSessions.length > 0 && <optgroup label="💾 Saved Cloud Sessions">
                                             {availableSessions.map(s => (
                                                 <option key={s.id} value={s.id}>{s.name} ({new Date(s.createdAt).toLocaleDateString()})</option>
                                             ))}

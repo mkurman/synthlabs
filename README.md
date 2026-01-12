@@ -16,7 +16,9 @@
 ## Features
 
 ### Generator Mode
-Create synthetic datasets from scratch using AI-powered generation. Define topics, customize prompts, and generate high-quality reasoning traces in the SYNTH format.
+Create synthetic datasets from scratch using AI-powered generation. Define topics, customize prompts, and generate high-quality reasoning traces in the [SYNTH](https://huggingface.co/datasets/PleIAs/SYNTH) format.
+
+Core idea: [SYNTH The New Data Frontier by PleIAs](https://pleias.fr/blog/blogsynth-the-new-data-frontier)
 
 <details>
 <summary>📸 Screenshot</summary>

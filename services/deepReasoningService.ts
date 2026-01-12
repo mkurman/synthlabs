@@ -210,8 +210,9 @@ Instructions: Based on the reasoning trace above, write the final high-quality r
       writerResult.answer = derivationResult.conclusion_preview || "See reasoning trace for details.";
     }
 
-    // Set Query from Meta Result
-    writerResult.query = metaResult.intent || "Refined Query";
+    // Set Query from original input, not from META result
+    // The user wants their actual input preserved, not an AI-generated intent like 'educational'
+    writerResult.query = input;
 
     logger.groupEnd();
 
@@ -220,7 +221,7 @@ Instructions: Based on the reasoning trace above, write the final high-quality r
       id: crypto.randomUUID(),
       seed_preview: input.substring(0, 150) + "...",
       full_seed: input,
-      query: writerResult.query || "Inferred Query",
+      query: input, // Use original input as query
       reasoning: writerResult.reasoning || "Writer failed to generate reasoning.",
       answer: writerResult.answer || "Writer failed to generate answer.",
       timestamp: new Date().toISOString(),
@@ -308,7 +309,7 @@ export const orchestrateMultiTurnConversation = async (
   };
 
   if (isSlugOrId(displayQuery)) {
-    displayQuery = initialInput.substring(0, 300) + (initialInput.length > 300 ? "..." : "");
+    displayQuery = initialInput;
   }
 
   const messages: ChatMessage[] = [];
@@ -512,6 +513,7 @@ interface ConversationRewriteParams {
   retryDelay: number;
   generationParams?: GenerationParams;
   onMessageRewritten?: (index: number, total: number) => void;
+  maxTraces?: number;                 // Max number of assistant messages to process (undefined = all)
   // For regular mode external API
   regularModeConfig?: {
     provider: 'gemini' | 'external';
@@ -546,6 +548,7 @@ export const orchestrateConversationRewrite = async (
     retryDelay,
     generationParams,
     onMessageRewritten,
+    maxTraces,
     regularModeConfig
   } = params;
 
@@ -559,7 +562,8 @@ export const orchestrateConversationRewrite = async (
 
   try {
     let assistantIndex = 0;
-    const totalAssistants = messages.filter(m => m.role === 'assistant').length;
+    const allAssistants = messages.filter(m => m.role === 'assistant').length;
+    const totalAssistants = maxTraces && maxTraces > 0 ? Math.min(maxTraces, allAssistants) : allAssistants;
 
     for (let i = 0; i < messages.length; i++) {
       if (signal?.aborted) break;
@@ -568,6 +572,13 @@ export const orchestrateConversationRewrite = async (
 
       // Keep user/system messages unchanged
       if (message.role !== 'assistant') {
+        rewrittenMessages.push({ ...message });
+        continue;
+      }
+
+      // Stop processing if we've reached the max traces limit
+      if (maxTraces && maxTraces > 0 && assistantIndex >= maxTraces) {
+        // Copy remaining assistant messages unchanged
         rewrittenMessages.push({ ...message });
         continue;
       }
@@ -679,12 +690,29 @@ ${outsideThinkContent}
     logger.log("✅ Conversation rewrite complete");
     logger.groupEnd();
 
+    // Truncate messages if maxTraces is set - keep only up to maxTraces assistant messages
+    let finalMessages = rewrittenMessages;
+    if (maxTraces && maxTraces > 0) {
+      let assistantCount = 0;
+      let cutoffIndex = rewrittenMessages.length;
+      for (let i = 0; i < rewrittenMessages.length; i++) {
+        if (rewrittenMessages[i].role === 'assistant') {
+          assistantCount++;
+          if (assistantCount >= maxTraces) {
+            cutoffIndex = i + 1; // Include this assistant message
+            break;
+          }
+        }
+      }
+      finalMessages = rewrittenMessages.slice(0, cutoffIndex);
+    }
+
     // Build the display query from first user message
-    const firstUser = rewrittenMessages.find(m => m.role === 'user');
-    const displayQuery = firstUser?.content?.substring(0, 150) || "Conversation";
+    const firstUser = finalMessages.find(m => m.role === 'user');
+    const displayQuery = firstUser?.content || "Conversation";
 
     // Combine all reasoning traces for the main reasoning field
-    const allReasoning = rewrittenMessages
+    const allReasoning = finalMessages
       .filter(m => m.role === 'assistant' && m.reasoning)
       .map(m => m.reasoning)
       .join('\n---\n');
@@ -692,16 +720,16 @@ ${outsideThinkContent}
     return {
       id: crypto.randomUUID(),
       seed_preview: displayQuery + (displayQuery.length >= 150 ? "..." : ""),
-      full_seed: messages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
+      full_seed: finalMessages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
       query: displayQuery,
       reasoning: allReasoning,
-      answer: rewrittenMessages[rewrittenMessages.length - 1]?.content || "",
+      answer: finalMessages[finalMessages.length - 1]?.content || "",
       timestamp: new Date().toISOString(),
       duration: Date.now() - startTime,
-      tokenCount: rewrittenMessages.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
+      tokenCount: finalMessages.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
       modelUsed: engineMode === 'deep' ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
       isMultiTurn: true,
-      messages: rewrittenMessages
+      messages: finalMessages
     };
 
   } catch (error: any) {

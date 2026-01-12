@@ -180,7 +180,7 @@ export const generateReasoningTrace = async (
 ): Promise<{ query: string; reasoning: string; answer: string }> => {
   if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
 
-  const userMessage = `[SEED TEXT START]\n${seedText.substring(0, 2000)}\n[SEED TEXT END]`;
+  const userMessage = `[SEED TEXT START]\n${seedText}\n[SEED TEXT END]`;
 
   const genConfig: any = {
     systemInstruction: systemPrompt,
@@ -272,7 +272,7 @@ export const convertReasoningTrace = async (
 ): Promise<{ query: string; reasoning: string; answer: string }> => {
   if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
 
-  const userMessage = `[INPUT LOGIC START]\n${inputText.substring(0, 8000)}\n[INPUT LOGIC END]`;
+  const userMessage = `[INPUT LOGIC START]\n${inputText}\n[INPUT LOGIC END]`;
 
   const genConfig: any = {
     systemInstruction: systemPrompt,

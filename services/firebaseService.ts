@@ -115,6 +115,7 @@ export const saveLogToFirebase = async (log: SynthLogItem, collectionName: strin
         // Explicitly construct data to save
         const docData: any = {
             sessionUid: log.sessionUid || 'unknown',
+            source: log.source,
             seed_preview: log.seed_preview,
             full_seed: log.full_seed,
             query: log.query,
@@ -228,6 +229,24 @@ export const saveSessionToFirebase = async (sessionData: any, name: string) => {
     }
 };
 
+// Create a new session in Firebase and return its ID for use as sessionUid
+// This ensures synth_sessions and synth_logs are always in sync
+export const createSessionInFirebase = async (name?: string, source?: string): Promise<string> => {
+    if (!db) throw new Error("Firebase not initialized");
+    try {
+        const docRef = await addDoc(collection(db, 'synth_sessions'), {
+            name: name || `Auto Session ${new Date().toLocaleString()}`,
+            source: source,
+            createdAt: new Date().toISOString(),
+            isAutoCreated: true
+        });
+        return docRef.id;
+    } catch (e) {
+        console.error("Error creating session", e);
+        throw e;
+    }
+};
+
 export const getSessionsFromFirebase = async (): Promise<SavedSession[]> => {
     if (!db) throw new Error("Firebase not initialized");
     try {
@@ -328,5 +347,59 @@ export const saveFinalDataset = async (items: VerifierItem[], collectionName = '
     } catch (e) {
         console.error("Error saving final dataset", e);
         throw e;
+    }
+};
+
+// Get unique session UIDs from synth_logs with count of logs per session
+export interface DiscoveredSession {
+    uid: string;
+    count: number;
+    latestTimestamp?: string;
+}
+
+export const getUniqueSessionUidsFromLogs = async (): Promise<DiscoveredSession[]> => {
+    if (!db) throw new Error("Firebase not initialized");
+    try {
+        // Fetch all logs to get complete session discovery
+        // Note: For very large collections, consider pagination or aggregation
+        const q = query(
+            collection(db, 'synth_logs'),
+            orderBy('createdAt', 'desc')
+        );
+        const snapshot = await getDocs(q);
+
+        // Aggregate by sessionUid
+        const sessionMap = new Map<string, { count: number; latestTimestamp: string }>();
+
+        snapshot.docs.forEach(d => {
+            const data = d.data();
+            const uid = data.sessionUid || 'unknown';
+            const timestamp = data.createdAt || data.timestamp || '';
+
+            if (sessionMap.has(uid)) {
+                const existing = sessionMap.get(uid)!;
+                existing.count++;
+                if (timestamp && timestamp > existing.latestTimestamp) {
+                    existing.latestTimestamp = timestamp;
+                }
+            } else {
+                sessionMap.set(uid, { count: 1, latestTimestamp: timestamp });
+            }
+        });
+
+        // Convert to array and sort by count descending
+        const results: DiscoveredSession[] = [];
+        sessionMap.forEach((value, uid) => {
+            results.push({
+                uid,
+                count: value.count,
+                latestTimestamp: value.latestTimestamp
+            });
+        });
+
+        return results.sort((a, b) => b.count - a.count);
+    } catch (e) {
+        console.error("Error getting unique session UIDs from logs", e);
+        return [];
     }
 };
