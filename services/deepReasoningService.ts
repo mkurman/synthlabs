@@ -8,7 +8,8 @@ import { DEEP_PHASE_PROMPTS } from '../constants';
 
 interface DeepOrchestrationParams {
   input: string;
-  expectedAnswer?: string; // New: optional reference answer from dataset
+  originalQuery?: string; // Clean input without expected answer, used for training data query field
+  expectedAnswer?: string; // Optional reference answer from dataset
   config: DeepConfig;
   signal?: AbortSignal;
   maxRetries: number;
@@ -86,7 +87,10 @@ const getModelName = (cfg: DeepPhaseConfig) => {
 export const orchestrateDeepReasoning = async (
   params: DeepOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { input, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams } = params;
+  const { input, originalQuery, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams } = params;
+
+  // Use originalQuery for output fields (training data), fall back to input if not provided
+  const cleanQuery = originalQuery || input;
 
   // Storage for the full history of each step
   const deepTrace: Record<string, { model: string; input: string; output: any; timestamp: string; duration: number }> = {};
@@ -218,18 +222,18 @@ Instructions: Based on the reasoning trace above, write the final high-quality r
       }
     }
 
-    // Set Query from original input, not from META result
+    // Set Query from originalQuery (clean input without expected answer)
     // The user wants their actual input preserved, not an AI-generated intent like 'educational'
-    writerResult.query = input.trim();
+    writerResult.query = cleanQuery.trim();
 
     logger.groupEnd();
 
     // 5. Return formatted log item
     const finalLogItem: SynthLogItem = {
       id: crypto.randomUUID(),
-      seed_preview: input.substring(0, 150) + "...",
-      full_seed: input,
-      query: input, // Use original input as query
+      seed_preview: cleanQuery.substring(0, 150) + "...",
+      full_seed: cleanQuery,
+      query: cleanQuery.trim(), // Use clean input (without expected answer) as query
       reasoning: writerResult.reasoning || "Writer failed to generate reasoning.",
       answer: writerResult.answer || "Writer failed to generate answer.",
       timestamp: new Date().toISOString(),

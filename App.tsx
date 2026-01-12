@@ -1072,6 +1072,15 @@ export default function App() {
                 if (appMode === 'converter') {
                     inputPayload = extractInputContent(safeInput);
                 }
+
+                // Extract expected answer from dataset row
+                const expectedAnswer = opts.row ? getRowExpectedOutput(opts.row) : undefined;
+
+                // In generator mode, append the gold answer to the seed so all agents see it
+                if (appMode === 'generator' && expectedAnswer && expectedAnswer.trim().length > 0) {
+                    inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${expectedAnswer.trim()}`;
+                }
+
                 // Deep copy to prevent mutation of state
                 const runtimeDeepConfig = JSON.parse(JSON.stringify(deepConfig));
 
@@ -1079,7 +1088,8 @@ export default function App() {
                 // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
-                    expectedAnswer: opts.row ? getRowExpectedOutput(opts.row) : undefined,
+                    originalQuery: safeInput, // Clean input for training data (no expected answer)
+                    expectedAnswer: expectedAnswer,
                     config: runtimeDeepConfig,
                     signal: abortControllerRef.current?.signal || undefined,
                     maxRetries,
