@@ -141,6 +141,7 @@ export interface HuggingFaceConfig {
   columnName?: string;       // DEPRECATED: kept for backward compatibility
   inputColumns?: string[];   // Columns to combine for input (question)
   outputColumns?: string[];  // Columns to combine for output (answer)
+  reasoningColumns?: string[]; // Columns to combine for reasoning (optional)
   mcqColumn?: string;        // Optional column containing MCQ options (dict or list)
   messageTurnIndex?: number; // If the target is a list/chat, which index to pick
   maxMultiTurnTraces?: number; // Max number of multi-turn traces to process (empty = all)
@@ -149,6 +150,7 @@ export interface HuggingFaceConfig {
 export interface DetectedColumns {
   input: string[];   // Auto-detected input columns
   output: string[];  // Auto-detected output columns
+  reasoning: string[]; // Auto-detected reasoning columns
   all: string[];     // All available columns
 }
 
