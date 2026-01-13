@@ -6,7 +6,7 @@ import {
     Cloud, Laptop, ShieldCheck, Globe, Archive, FileText, Server, BrainCircuit,
     Timer, RotateCcw, MessageSquare, Table, Layers, Search, PenTool, GitBranch,
     PlusCircle, FileX, RefreshCcw, Copy, X, FileEdit, CloudUpload, CloudDownload, Calendar,
-    LayoutDashboard, Bookmark, Beaker, List
+    LayoutDashboard, Bookmark, Beaker, List, Info
 } from 'lucide-react';
 
 import {
@@ -171,7 +171,7 @@ export default function App() {
 
     // --- State: Hugging Face Prefetch ---
     const [availableColumns, setAvailableColumns] = useState<string[]>([]);
-    const [detectedColumns, setDetectedColumns] = useState<DetectedColumns>({ input: [], output: [], all: [] });
+    const [detectedColumns, setDetectedColumns] = useState<DetectedColumns>({ input: [], output: [], all: [], reasoning: [] });
     const [isPrefetching, setIsPrefetching] = useState(false);
     const [hfPreviewData, setHfPreviewData] = useState<any[]>([]);
     const [hfTotalRows, setHfTotalRows] = useState<number>(0);
@@ -181,6 +181,7 @@ export default function App() {
     const detectColumns = (columns: string[]): DetectedColumns => {
         const inputPatterns = ['prompt', 'question', 'input', 'instruction', 'query', 'text', 'problem', 'request'];
         const outputPatterns = ['response', 'answer', 'output', 'completion', 'chosen', 'target', 'solution', 'reply', 'assistant'];
+        const reasoningPatterns = ['reasoning', 'thought', 'think', 'rationale', 'chain', 'brain', 'logic'];
 
         const input = columns.filter(c =>
             inputPatterns.some(p => c.toLowerCase().includes(p))
@@ -188,8 +189,11 @@ export default function App() {
         const output = columns.filter(c =>
             outputPatterns.some(p => c.toLowerCase().includes(p))
         );
+        const reasoning = columns.filter(c =>
+            reasoningPatterns.some(p => c.toLowerCase().includes(p))
+        );
 
-        return { input, output, all: columns };
+        return { input, output, reasoning, all: columns };
     };
 
     // --- State: Runtime ---
@@ -301,16 +305,22 @@ export default function App() {
     // ... (Helper Extraction, RowContent, Action functions same as before) ...
     // Re-pasting the core helpers to ensure file integrity
 
-    const extractInputContent = (text: string): string => {
+    const extractInputContent = (text: string, options: { format?: 'llm' | 'display' } = {}): string => {
         const queryMatch = text.match(/<input_query>([\s\S]*?)<\/input_query>/);
         const responseMatch = text.match(/<model_response>([\s\S]*?)<\/model_response>/);
+
         if (queryMatch && responseMatch) {
             const query = queryMatch[1].trim();
             const rawResponse = responseMatch[1].trim();
             const thinkMatch = rawResponse.match(/<think>([\s\S]*?)<\/think>/i);
             const logic = thinkMatch ? thinkMatch[1].trim() : rawResponse;
+
+            if (options.format === 'display') {
+                return query; // Just return the query for UI summary
+            }
             return `[USER QUERY]:\n${query}\n\n[RAW REASONING TRACE]:\n${logic}`;
         }
+
         const match = text.match(/<think>([\s\S]*?)<\/think>/i);
         if (match && match[1]) {
             return match[1].trim();
@@ -394,6 +404,20 @@ export default function App() {
                 const formattedOptions = formatMcqOptions(row[hfConfig.mcqColumn]);
                 if (formattedOptions) {
                     contents.push('\nOptions:\n' + formattedOptions);
+                }
+            }
+
+            // Append reasoning if reasoningColumns are configured
+            if (hfConfig.reasoningColumns && hfConfig.reasoningColumns.length > 0) {
+                const reasoning = hfConfig.reasoningColumns
+                    .map((col: string) => getColumnContent(col))
+                    .filter((c: string) => c.trim() !== '')
+                    .join('\n\n');
+
+                if (reasoning) {
+                    // If we have input content (query), we wrap both for extractInputContent
+                    const inputQuery = contents.join(COLUMN_SEPARATOR);
+                    return `<input_query>${inputQuery}</input_query><model_response><think>${reasoning}</think></model_response>`;
                 }
             }
 
@@ -502,7 +526,7 @@ export default function App() {
         }
         setIsPrefetching(true);
         setAvailableColumns([]);
-        setDetectedColumns({ input: [], output: [], all: [] });
+        setDetectedColumns({ input: [], output: [], all: [], reasoning: [] });
         setError(null);
         try {
             const rows = await fetchHuggingFaceRows(configToUse, 0, 1);
@@ -521,6 +545,9 @@ export default function App() {
                     }
                     if ((!configToUse.outputColumns || configToUse.outputColumns.length === 0) && detected.output.length > 0) {
                         setHfConfig(prev => ({ ...prev, outputColumns: detected.output.slice(0, 1) })); // Select first detected output
+                    }
+                    if ((!configToUse.reasoningColumns || configToUse.reasoningColumns.length === 0) && detected.reasoning.length > 0) {
+                        setHfConfig(prev => ({ ...prev, reasoningColumns: detected.reasoning.slice(0, 1) })); // Select first detected reasoning
                     }
                 } else {
                     setError("Row is not an object, cannot detect columns.");
@@ -598,8 +625,22 @@ export default function App() {
         setDataSourceMode(mode);
         // Clear column selections when switching data sources
         setAvailableColumns([]);
-        setDetectedColumns({ input: [], output: [], all: [] });
-        setHfConfig(prev => ({ ...prev, inputColumns: [], outputColumns: [] }));
+        setDetectedColumns({ input: [], output: [], all: [], reasoning: [] });
+        setHfConfig(prev => ({ ...prev, inputColumns: [], outputColumns: [], reasoningColumns: [] }));
+    };
+
+    const handleExternalProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const newProvider = e.target.value as ExternalProvider;
+        setExternalProvider(newProvider);
+
+        // Auto-load API Key and Base URL from saved settings
+        const savedKey = SettingsService.getApiKey(newProvider);
+        setExternalApiKey(savedKey || '');
+
+        if (newProvider === 'other') {
+            const savedBaseUrl = SettingsService.getCustomBaseUrl();
+            setCustomBaseUrl(savedBaseUrl || '');
+        }
     };
 
     const handleExternalProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -682,6 +723,10 @@ export default function App() {
                             // Auto-select first detected input column if none selected
                             if ((!hfConfig.inputColumns || hfConfig.inputColumns.length === 0) && detected.input.length > 0) {
                                 setHfConfig(prev => ({ ...prev, inputColumns: detected.input.slice(0, 1) }));
+                            }
+                            // Auto-select detected reasoning columns if none selected
+                            if ((!hfConfig.reasoningColumns || hfConfig.reasoningColumns.length === 0) && detected.reasoning.length > 0) {
+                                setHfConfig(prev => ({ ...prev, reasoningColumns: detected.reasoning }));
                             }
                             break;
                         }
@@ -1017,13 +1062,22 @@ export default function App() {
 
 
 
+            // Extract expected answer from dataset row - available for both regular and deep modes
+            const expectedAnswer = opts.row ? getRowExpectedOutput(opts.row) : undefined;
+
             if (engineMode === 'regular') {
                 if (provider === 'gemini') {
+                    // Reinforce JSON structure for regular mode to ensure service parsing works
+                    let enhancedPrompt = activePrompt;
+                    if (!enhancedPrompt.toLowerCase().includes("json")) {
+                        enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields. If you are a writer/refiner, use the provided trace/logic as the 'reasoning' and output your result as the 'answer'.";
+                    }
+
                     if (appMode === 'generator') {
-                        result = await GeminiService.generateReasoningTrace(safeInput, activePrompt, retryConfig);
+                        result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, retryConfig);
                     } else {
                         const contentToConvert = extractInputContent(safeInput);
-                        result = await GeminiService.convertReasoningTrace(contentToConvert, activePrompt, retryConfig);
+                        result = await GeminiService.convertReasoningTrace(contentToConvert, enhancedPrompt, retryConfig);
                     }
                 } else {
                     let promptInput = "";
@@ -1033,12 +1087,19 @@ export default function App() {
                         const contentToConvert = extractInputContent(safeInput);
                         promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
                     }
+
+                    // Reinforce JSON structure for external providers too
+                    let enhancedPrompt = activePrompt;
+                    if (!enhancedPrompt.toLowerCase().includes("json")) {
+                        enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
+                    }
+
                     result = await ExternalApiService.callExternalApi({
                         provider: externalProvider,
                         apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
                         model: externalModel,
                         customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
-                        systemPrompt: activePrompt,
+                        systemPrompt: enhancedPrompt,
                         userPrompt: promptInput,
                         signal: abortControllerRef.current?.signal || undefined,
                         maxRetries,
@@ -1053,18 +1114,25 @@ export default function App() {
                 };
                 const answer = ensureString(result.answer);
                 const reasoning = ensureString(result.reasoning);
+
+                // If in converter mode and we have a ground truth expectedAnswer, prioritize it?
+                // Actually, if the user is RUNNING a converter, they might want to see the CONVERTED answer.
+                // However, the user said "no answer from ground truth", implying they WANT the ground truth preserved.
+                // In converter mode, usually the "answer" field in the dataset is the ground truth.
+                const finalAnswer = (appMode === 'converter' && expectedAnswer) ? expectedAnswer : answer;
+
                 return {
                     id: retryId || crypto.randomUUID(),
                     sessionUid: sessionUid,
                     source: source,
                     seed_preview: safeInput.substring(0, 150) + "...",
                     full_seed: safeInput,
-                    query: safeInput, // Use original input as query, not AI-generated
+                    query: appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput, // Clean input for display
                     reasoning: reasoning,
-                    answer: answer,
+                    answer: finalAnswer,
                     timestamp: new Date().toISOString(),
                     duration: Date.now() - startTime,
-                    tokenCount: Math.round((answer.length + reasoning.length) / 4), // Rough estimate
+                    tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4), // Rough estimate
                     modelUsed: provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${externalModel}`,
                     provider: externalProvider
                 };
@@ -1073,9 +1141,6 @@ export default function App() {
                 if (appMode === 'converter') {
                     inputPayload = extractInputContent(safeInput);
                 }
-
-                // Extract expected answer from dataset row
-                const expectedAnswer = opts.row ? getRowExpectedOutput(opts.row) : undefined;
 
                 // In generator mode, append the gold answer to the seed so all agents see it
                 if (appMode === 'generator' && expectedAnswer && expectedAnswer.trim().length > 0) {
@@ -1089,7 +1154,7 @@ export default function App() {
                 // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
-                    originalQuery: safeInput, // Clean input for training data (no expected answer)
+                    originalQuery: appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput, // Clean input for training data (no expected answer)
                     expectedAnswer: expectedAnswer,
                     config: runtimeDeepConfig,
                     signal: abortControllerRef.current?.signal || undefined,
@@ -2220,9 +2285,20 @@ export default function App() {
                                                 {isPrefetching ? <RefreshCcw className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />} Scan Columns
                                             </button>
                                         </div>
+                                        <div className="bg-amber-500/10 border border-amber-500/20 p-2 rounded text-[10px] text-amber-200 mb-2 flex gap-2 items-start">
+                                            <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                                            <div>
+                                                <span className="font-bold">Column Mapping Guide:</span>
+                                                <ul className="list-disc ml-4 mt-1 space-y-0.5 text-amber-200/80">
+                                                    <li><b>Input Column:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">query</code> field. This acts as the prompt for the reasoning engine.</li>
+                                                    <li><b>Ground Truth:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">answer</code> field. Used for reference/verification.</li>
+                                                    <li><b>Reasoning Column (optional):</b> Explicitly map a column containing pre-existing reasoning.</li>
+                                                </ul>
+                                            </div>
+                                        </div>
                                         <div className="grid grid-cols-2 gap-2">
                                             <ColumnSelector
-                                                label="Input (Question)"
+                                                label="Input Column (Maps to 'query')"
                                                 columns={availableColumns}
                                                 selected={hfConfig.inputColumns || []}
                                                 onSelect={(cols) => setHfConfig(prev => ({ ...prev, inputColumns: cols }))}
@@ -2230,13 +2306,39 @@ export default function App() {
                                                 placeholder="Select input column(s)"
                                             />
                                             <ColumnSelector
-                                                label="Output (Answer)"
+                                                label="Reasoning Columns (optional)"
                                                 columns={availableColumns}
-                                                selected={hfConfig.outputColumns || []}
-                                                onSelect={(cols) => setHfConfig(prev => ({ ...prev, outputColumns: cols }))}
-                                                autoDetected={detectedColumns.output}
-                                                placeholder="Select output column(s)"
+                                                selected={hfConfig.reasoningColumns || []}
+                                                onSelect={(cols) => setHfConfig(prev => ({ ...prev, reasoningColumns: cols }))}
+                                                autoDetected={detectedColumns.reasoning}
+                                                placeholder="Select reasoning column(s)"
                                             />
+                                            <div className="col-span-2">
+                                                <ColumnSelector
+                                                    label="Ground Truth (Maps to 'answer')"
+                                                    columns={availableColumns}
+                                                    selected={hfConfig.outputColumns || []}
+                                                    onSelect={(cols) => setHfConfig(prev => ({ ...prev, outputColumns: cols }))}
+                                                    autoDetected={detectedColumns.output}
+                                                    placeholder="Select output column(s)"
+                                                />
+                                            </div>
+                                        </div>
+                                        {/* MCQ Column Selector */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                                                <List className="w-3 h-3" /> MCQ Options Column (optional)
+                                            </label>
+                                            <select
+                                                value={hfConfig.mcqColumn || ''}
+                                                onChange={(e) => setHfConfig(prev => ({ ...prev, mcqColumn: e.target.value || undefined }))}
+                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none"
+                                            >
+                                                <option value="">None</option>
+                                                {availableColumns.map(col => (
+                                                    <option key={col} value={col}>{col}</option>
+                                                ))}
+                                            </select>
                                         </div>
                                         {/* MCQ Column Selector */}
                                         <div className="space-y-1">
@@ -2335,9 +2437,20 @@ export default function App() {
                                                     <Table className="w-3 h-3" /> Column Mapping
                                                 </label>
                                             </div>
+                                            <div className="bg-amber-500/10 border border-amber-500/20 p-2 rounded text-[10px] text-amber-200 mb-2 flex gap-2 items-start">
+                                                <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                                                <div>
+                                                    <span className="font-bold">Column Mapping Guide:</span>
+                                                    <ul className="list-disc ml-4 mt-1 space-y-0.5 text-amber-200/80">
+                                                        <li><b>Input Column:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">query</code> field.</li>
+                                                        <li><b>Ground Truth:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">answer</code> field. Used for reference/verification.</li>
+                                                        <li><b>Reasoning Column (optional):</b> Explicitly map a column containing pre-existing reasoning.</li>
+                                                    </ul>
+                                                </div>
+                                            </div>
                                             <div className="grid grid-cols-2 gap-2">
                                                 <ColumnSelector
-                                                    label="Input (Question)"
+                                                    label="Input Column (Maps to 'query')"
                                                     columns={availableColumns}
                                                     selected={hfConfig.inputColumns || []}
                                                     onSelect={(cols) => setHfConfig(prev => ({ ...prev, inputColumns: cols }))}
@@ -2345,13 +2458,39 @@ export default function App() {
                                                     placeholder="Select input column(s)"
                                                 />
                                                 <ColumnSelector
-                                                    label="Output (Answer)"
+                                                    label="Reasoning Columns (optional)"
                                                     columns={availableColumns}
-                                                    selected={hfConfig.outputColumns || []}
-                                                    onSelect={(cols) => setHfConfig(prev => ({ ...prev, outputColumns: cols }))}
-                                                    autoDetected={detectedColumns.output}
-                                                    placeholder="Select output column(s)"
+                                                    selected={hfConfig.reasoningColumns || []}
+                                                    onSelect={(cols) => setHfConfig(prev => ({ ...prev, reasoningColumns: cols }))}
+                                                    autoDetected={detectedColumns.reasoning}
+                                                    placeholder="Select reasoning column(s)"
                                                 />
+                                                <div className="col-span-2">
+                                                    <ColumnSelector
+                                                        label="Ground Truth (Maps to 'answer')"
+                                                        columns={availableColumns}
+                                                        selected={hfConfig.outputColumns || []}
+                                                        onSelect={(cols) => setHfConfig(prev => ({ ...prev, outputColumns: cols }))}
+                                                        autoDetected={detectedColumns.output}
+                                                        placeholder="Select output column(s)"
+                                                    />
+                                                </div>
+                                            </div>
+                                            {/* MCQ Column Selector for Manual Data */}
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                                                    <List className="w-3 h-3" /> MCQ Options Column (optional)
+                                                </label>
+                                                <select
+                                                    value={hfConfig.mcqColumn || ''}
+                                                    onChange={(e) => setHfConfig(prev => ({ ...prev, mcqColumn: e.target.value || undefined }))}
+                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none"
+                                                >
+                                                    <option value="">None</option>
+                                                    {availableColumns.map(col => (
+                                                        <option key={col} value={col}>{col}</option>
+                                                    ))}
+                                                </select>
                                             </div>
                                             {/* MCQ Column Selector for Manual Data */}
                                             <div className="space-y-1">
