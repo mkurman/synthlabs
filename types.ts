@@ -109,6 +109,7 @@ export interface DeepPhaseConfig {
   model: string;
   customBaseUrl: string;
   systemPrompt: string;
+  structuredOutput: boolean;
 }
 
 export interface DeepConfig {
@@ -132,6 +133,7 @@ export interface UserAgentConfig {
   model: string;
   customBaseUrl: string;
   systemPrompt: string;
+  structuredOutput: boolean;
 }
 
 export interface HuggingFaceConfig {

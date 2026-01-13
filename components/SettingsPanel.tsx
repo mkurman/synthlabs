@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap } from 'lucide-react';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot } from 'lucide-react';
 import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, WorkflowDefaults, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG, EMPTY_DEEP_DEFAULTS } from '../services/settingsService';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING, TaskType } from '../services/taskClassifierService';
@@ -38,7 +38,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     const [confirmClear, setConfirmClear] = useState(false);
     const [activeTab, setActiveTab] = useState<'providers' | 'huggingface' | 'firebase' | 'storage' | 'prompts'>('providers');
     const [apiSubTab, setApiSubTab] = useState<'keys' | 'defaults'>('keys');
-    const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ generator: true, converter: false });
+    const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ generalPurpose: true, generator: true, converter: false });
     const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
     const [promptMetadata, setPromptMetadata] = useState<Record<string, PromptSetMetadata>>({});
 
@@ -304,6 +304,64 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     <p className="text-xs text-slate-500">
                                         Configure default provider and model for each workflow step.
                                     </p>
+
+                                    {/* General Purpose Model Section */}
+                                    <div className="bg-slate-900/50 rounded-lg border border-slate-800">
+                                        <button
+                                            onClick={() => toggleSection('generalPurpose')}
+                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-800/50 rounded-t-lg"
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Bot className="w-4 h-4 text-emerald-400" />
+                                                <span className="text-sm font-bold text-white">General purpose model</span>
+                                            </div>
+                                            {expandedSections['generalPurpose'] ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+                                        </button>
+                                        {expandedSections['generalPurpose'] && (
+                                            <div className="p-3 pt-0 space-y-3">
+                                                <div className="space-y-2">
+                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Default Model</label>
+                                                    <div className="flex gap-2">
+                                                        <select
+                                                            value={settings.generalPurposeModel?.provider === 'external'
+                                                                ? settings.generalPurposeModel?.externalProvider || 'gemini'
+                                                                : settings.generalPurposeModel?.provider || 'gemini'}
+                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                                                                const selectedProvider = e.target.value;
+                                                                const isExternal = selectedProvider !== 'gemini';
+                                                                updateSetting('generalPurposeModel', {
+                                                                    ...settings.generalPurposeModel,
+                                                                    ...EMPTY_STEP_CONFIG,
+                                                                    provider: isExternal ? 'external' : 'gemini',
+                                                                    externalProvider: isExternal ? selectedProvider : '',
+                                                                    model: settings.generalPurposeModel?.model || ''
+                                                                });
+                                                            }}
+                                                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                        >
+                                                            {allProviders.map(p => (
+                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                            ))}
+                                                        </select>
+                                                        <input
+                                                            type="text"
+                                                            value={settings.generalPurposeModel?.model || ''}
+                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('generalPurposeModel', {
+                                                                ...settings.generalPurposeModel,
+                                                                ...EMPTY_STEP_CONFIG,
+                                                                model: e.target.value,
+                                                                provider: settings.generalPurposeModel?.provider || 'gemini',
+                                                                externalProvider: settings.generalPurposeModel?.externalProvider || ''
+                                                            })}
+                                                            placeholder="Model ID"
+                                                            className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                        />
+                                                    </div>
+                                                    <p className="text-[10px] text-slate-500">Used for general tasks that don't require specialized prompts (e.g., optimization)</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
 
                                     {/* Generator Section */}
                                     <div className="bg-slate-900/50 rounded-lg border border-slate-800">

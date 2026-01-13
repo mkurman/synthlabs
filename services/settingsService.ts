@@ -16,7 +16,7 @@ export const AVAILABLE_PROVIDERS = EXTERNAL_PROVIDERS;
 
 // Model configuration for a single workflow step
 export interface StepModelConfig {
-    provider: 'gemini' | 'external';
+    provider: 'gemini' | 'external' | 'other';
     externalProvider: string;
     model: string;
 }
@@ -82,6 +82,9 @@ export interface AppSettings {
     // Workflow step default models
     workflowDefaults?: WorkflowDefaults;
 
+    // General purpose model (for non-specialized tasks like optimization)
+    generalPurposeModel?: StepModelConfig;
+
     // Custom endpoint for 'other' provider
     customEndpointUrl?: string;
 
@@ -124,6 +127,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     providerKeys: {},
     providerDefaultModels: {},
     workflowDefaults: { ...DEFAULT_WORKFLOW_DEFAULTS },
+    generalPurposeModel: { ...EMPTY_STEP_CONFIG },
     defaultConcurrency: 4,
     theme: 'dark',
     promptSet: 'default',
