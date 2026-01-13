@@ -833,34 +833,43 @@ export default function App() {
                                 detectedCols = Object.keys(arr[0]);
                             }
                         }
-                    } catch {
-                        // Not valid JSON array, try JSONL
+                    } catch (error) {
+                        logger.warn('Failed to parse file as JSON array, trying JSONL format:', error);
                     }
                 }
-
-                // Fallback row count for JSONL/text format
-                if (rowCount === 0) {
-                    rowCount = inputText.split('\n').filter(l => l.trim()).length;
-                }
-
-                // Set the correct row count
-                setRowsToFetch(rowCount);
 
                 // Fallback to JSONL format if no columns detected
                 if (detectedCols.length === 0) {
                     const lines = inputText.split('\n').filter(l => l.trim());
+                    let validJsonlRows = 0;
                     for (const line of lines) {
                         try {
                             const obj = JSON.parse(line);
                             if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
-                                detectedCols = Object.keys(obj);
-                                break;
+                                validJsonlRows++;
+                                // Detect columns from first valid object
+                                if (detectedCols.length === 0) {
+                                    detectedCols = Object.keys(obj);
+                                }
                             }
-                        } catch {
-                            // Not valid JSON, continue
+                        } catch (error) {
+                            logger.warn(`Skipping invalid JSONL line: "${line.substring(0, 50)}..."`, error);
                         }
                     }
+                    // Use validated JSONL row count if we found valid rows
+                    if (validJsonlRows > 0) {
+                        rowCount = validJsonlRows;
+                    }
                 }
+
+                // Fallback row count for plain text format (if still no valid rows)
+                if (rowCount === 0) {
+                    rowCount = inputText.split('\n').filter(l => l.trim()).length;
+                    logger.warn('Could not parse file as JSON or JSONL, using line count as fallback');
+                }
+
+                // Set the correct row count
+                setRowsToFetch(rowCount);
 
                 // Apply detected columns
                 if (detectedCols.length > 0) {
