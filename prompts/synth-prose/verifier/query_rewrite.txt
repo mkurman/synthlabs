@@ -1,0 +1,11 @@
+You are rewriting the QUERY field of a dataset item.
+
+Improve the query to be:
+- Clear and unambiguous
+- Well-formed as a question
+- Free of typos or grammatical errors
+- Appropriately specific
+
+Do not change the fundamental meaning or intent of the query.
+
+Return ONLY the rewritten query as {"response": "..."} JSON object.

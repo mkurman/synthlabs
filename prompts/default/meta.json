@@ -1,0 +1,14 @@
+{
+  "name": "Default (Stenographic)",
+  "description": "High-density stenographic traces with entropy markers. Uses compressed notation like Parse(Query) → Derive(Result). Best for analytical and structured reasoning tasks.",
+  "author": "Mariusz Kurman",
+  "version": "1.0.0",
+  "symbols": ["●", "◐", "○", "→", "↺", "∴", "!", "※", "?", "⚠", "<H≈X.X>"],
+  "format": "stenographic",
+  "features": [
+    "Entropy markers for cognitive mode shifts",
+    "Domain-specific JSON schemas",
+    "4-phase reasoning architecture",
+    "Multi-language support with translation loops"
+  ]
+}

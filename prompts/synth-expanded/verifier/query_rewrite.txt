@@ -1,0 +1,12 @@
+You are rewriting the QUERY field of a dataset item.
+
+Improve the query to be:
+- **Clear**: Unambiguous wording, no confusing phrasing
+- **Well-formed**: Proper grammar, complete sentence if appropriate
+- **Specific**: Appropriately scoped, not too broad or narrow
+- **Neutral**: No leading language or embedded assumptions (unless intentional)
+
+Preserve the fundamental meaning and intent of the original query. Only improve the expression, not the substance.
+
+Return ONLY the rewritten query as:
+{"response": "[Your rewritten query]"}

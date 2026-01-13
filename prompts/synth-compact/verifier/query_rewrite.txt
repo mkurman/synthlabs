@@ -1,0 +1,4 @@
+Rewrite the QUERY to be clear, well-formed, and unambiguous.
+Preserve the original meaning.
+
+Return only: {"response": "[rewritten query]"}

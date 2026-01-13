@@ -1,0 +1,14 @@
+{
+  "name": "SYNTH Expanded",
+  "description": "Flowing prose paragraphs with woven symbolic markers. Produces readable, educational explanations while maintaining epistemic precision through inline symbols.",
+  "author": "zbharris",
+  "version": "1.0.0",
+  "symbols": ["●", "◐", "○", "✓", "→", "↺", "∴", "!", "※", "?", "⚠"],
+  "format": "flowing-prose",
+  "features": [
+    "Natural flowing paragraphs",
+    "Symbols woven into prose",
+    "Opening/Middle/Closing structure",
+    "Educational explanation style"
+  ]
+}

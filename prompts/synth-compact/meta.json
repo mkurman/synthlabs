@@ -1,0 +1,14 @@
+{
+  "name": "SYNTH Compact",
+  "description": "Compact labeled symbol chains with entropy markers. Produces dense reasoning traces like: <H≈0.3> [parse] ● → [fact] ● → [infer] ◐ → ∴. Ideal for token-efficient training data.",
+  "author": "zbharris",
+  "version": "1.0.0",
+  "symbols": ["●", "◐", "○", "✓", "→", "↺", "∴", "!", "※", "?", "⚠", "<H≈X.X>"],
+  "format": "compact-chain",
+  "features": [
+    "Labeled symbol chains",
+    "Entropy markers at phase transitions",
+    "2-6 word labels per step",
+    "Minimal token overhead"
+  ]
+}

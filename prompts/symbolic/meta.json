@@ -1,0 +1,14 @@
+{
+  "name": "Symbolic (Aetheric)",
+  "description": "Alternative symbolic system using Aetheric notation. Employs unique operators like Ω (Origin), Φ (Focus), and ∫ (Synthesize) for a different reasoning aesthetic.",
+  "author": "Mariusz Kurman",
+  "version": "1.0.0",
+  "symbols": ["Ω", "Φ", ">>", "<<", "∫", "∂", "⊥", "∴", "◊", "≈", "[H:x.x]", "[T:x]"],
+  "format": "aetheric",
+  "features": [
+    "Unique Aetheric symbology",
+    "Truth value markers [T:1/0.5/0/?]",
+    "Golden Thread reasoning phases",
+    "Crystallization-based conclusions"
+  ]
+}

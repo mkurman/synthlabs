@@ -1,0 +1,14 @@
+{
+  "name": "SYNTH Prose",
+  "description": "Structured markdown sections with inline symbolic markers. Closest match to original PleIAs SYNTH dataset format with ### headers and prose explanations.",
+  "author": "zbharris",
+  "version": "1.0.0",
+  "symbols": ["●", "◐", "○", "→", "↺", "∴", "!", "※", "?", "⚠", "✓"],
+  "format": "sectioned-prose",
+  "features": [
+    "Markdown section headers (### 1. Title)",
+    "Prose with inline confidence markers",
+    "Flexible domain-appropriate section titles",
+    "Matches original SYNTH parquet format"
+  ]
+}
