@@ -12,6 +12,7 @@ export interface RewriterConfig {
     customBaseUrl?: string;
     maxRetries?: number;
     retryDelay?: number;
+    systemPrompt?: string;  // Custom system prompt override
 }
 
 export type RewritableField = 'query' | 'reasoning' | 'answer';
@@ -136,7 +137,8 @@ export async function callRewriterAI(
             userPrompt,
             signal,
             maxRetries: config.maxRetries ?? 2,
-            retryDelay: config.retryDelay ?? 1000
+            retryDelay: config.retryDelay ?? 1000,
+            structuredOutput: true
         });
 
         return cleanResponse(result);
@@ -152,7 +154,8 @@ export async function rewriteField(params: RewriteFieldParams): Promise<string> 
     // Load prompt from PromptService (uses promptSet if provided for auto-routing consistency)
     // "query" -> "query_rewrite", "reasoning" -> "reasoning_rewrite", etc.
     const promptName = `${field}_rewrite`;
-    const systemPrompt = PromptService.getPrompt('verifier', promptName, promptSet);
+    // Use custom prompt from config if provided, otherwise load from PromptService
+    const systemPrompt = config.systemPrompt || PromptService.getPrompt('verifier', promptName, promptSet);
 
     const userPrompt = buildItemContext(item, field);
 
@@ -170,7 +173,8 @@ export async function rewriteMessage(params: RewriteMessageParams): Promise<stri
         throw new Error('Invalid message index or no messages in item');
     }
 
-    const systemPrompt = PromptService.getPrompt('verifier', 'message_rewrite', promptSet);
+    // Use custom prompt from config if provided, otherwise load from PromptService
+    const systemPrompt = config.systemPrompt || PromptService.getPrompt('verifier', 'message_rewrite', promptSet);
     const userPrompt = buildMessageContext(item, messageIndex);
 
     const result = await callRewriterAI(systemPrompt, userPrompt, config, signal);

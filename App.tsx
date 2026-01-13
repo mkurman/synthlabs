@@ -174,6 +174,10 @@ export default function App() {
     const [detectedTaskType, setDetectedTaskType] = useState<TaskType | null>(null);
     const [autoRoutedPromptSet, setAutoRoutedPromptSet] = useState<string | null>(null);
 
+    // --- State: Session-level Prompt Set (overrides user preferences for this session only) ---
+    const [sessionPromptSet, setSessionPromptSet] = useState<string | null>(null);
+    const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
+
     // --- State: Hugging Face Prefetch ---
     const [availableColumns, setAvailableColumns] = useState<string[]>([]);
     const [detectedColumns, setDetectedColumns] = useState<DetectedColumns>({ input: [], output: [], all: [], reasoning: [] });
@@ -185,9 +189,9 @@ export default function App() {
     // Column detection utility with expanded patterns
     const detectColumns = (columns: string[]): DetectedColumns => {
         const inputPatterns = [
-            'prompt', 'question', 'input', 'instruction', 'query', 'text', 'problem', 'request',
-            'context', 'document', 'passage', 'source', 'user', 'human', 'message', 'conversation',
-            'dialog', 'task', 'seed'
+            'query', 'question', 'prompt', 'input', 'instruction', 'text', 'problem', 'request',
+            'context', 'document', 'passage', 'user', 'human', 'message', 'conversation',
+            'dialog', 'task'
         ];
         const outputPatterns = [
             'response', 'answer', 'output', 'completion', 'chosen', 'target', 'solution', 'reply',
@@ -280,6 +284,40 @@ export default function App() {
             }
         }
     }, []);
+
+    // Load available prompt sets on mount
+    useEffect(() => {
+        const sets = PromptService.getAvailableSets();
+        setAvailablePromptSets(sets);
+    }, []);
+
+    // Reload all prompts when session prompt set changes
+    useEffect(() => {
+        // Determine which prompt set to use (session override or user's default)
+        const activeSet = sessionPromptSet || SettingsService.getSettings().promptSet || 'default';
+
+        // Update regular mode prompts (SYSTEM RUBRIC)
+        setSystemPrompt(PromptService.getPrompt('generator', 'system', activeSet));
+        setConverterPrompt(PromptService.getPrompt('converter', 'system', activeSet));
+
+        // Update deepConfig phases with prompts from the active set
+        setDeepConfig((prev: DeepConfig) => ({
+            ...prev,
+            phases: {
+                meta: { ...prev.phases.meta, systemPrompt: PromptService.getPrompt('generator', 'meta', activeSet) },
+                retrieval: { ...prev.phases.retrieval, systemPrompt: PromptService.getPrompt('generator', 'retrieval', activeSet) },
+                derivation: { ...prev.phases.derivation, systemPrompt: PromptService.getPrompt('generator', 'derivation', activeSet) },
+                writer: { ...prev.phases.writer, systemPrompt: PromptService.getPrompt('converter', 'writer', activeSet) },
+                rewriter: { ...prev.phases.rewriter, systemPrompt: PromptService.getPrompt('converter', 'rewriter', activeSet) }
+            }
+        }));
+
+        // Update userAgentConfig
+        setUserAgentConfig((prev: UserAgentConfig) => ({
+            ...prev,
+            systemPrompt: PromptService.getPrompt('generator', 'user_agent', activeSet)
+        }));
+    }, [sessionPromptSet]);
 
     // Load logs from local storage when session changes or pagination upgrades
     const refreshLogs = useCallback(async () => {
@@ -401,6 +439,9 @@ export default function App() {
         const getColumnContent = (columnName: string): string => {
             const value = row[columnName];
             if (value === undefined || value === null) return '';
+
+            // Return string values as-is (what's in the dataset is what you get)
+            if (typeof value === 'string') return value;
 
             // Handle array content (e.g., chat messages)
             if (Array.isArray(value)) {
@@ -683,11 +724,72 @@ export default function App() {
         setIsOptimizing(true);
         try {
             const activePrompt = appMode === 'generator' ? systemPrompt : converterPrompt;
-            const refined = await GeminiService.optimizeSystemPrompt(activePrompt);
+            const settings = SettingsService.getSettings();
+            const generalPurposeModel = settings.generalPurposeModel;
+
+            console.log('[Optimize] General purpose model:', generalPurposeModel);
+            console.log('[Optimize] Provider keys:', settings.providerKeys);
+            console.log('[Optimize] Custom endpoint URL:', settings.customEndpointUrl);
+
+            let config: GeminiService.OptimizePromptConfig | undefined;
+
+            if (generalPurposeModel && generalPurposeModel.model) {
+                const isExternal = generalPurposeModel.provider === 'external';
+                const isOther = generalPurposeModel.provider === 'other';
+                let apiKey = '';
+
+                console.log('[Optimize] provider:', generalPurposeModel.provider, 'isExternal:', isExternal, 'isOther:', isOther, 'externalProvider:', generalPurposeModel.externalProvider);
+
+                let externalProvider = generalPurposeModel.externalProvider;
+
+                if (isOther) {
+                    externalProvider = 'other';
+                }
+
+                if (isExternal || isOther) {
+                    apiKey = SettingsService.getApiKey(externalProvider);
+                    console.log('[Optimize] API key for', externalProvider, ':', apiKey ? '***' : '(empty)');
+                } else {
+                    apiKey = SettingsService.getApiKey('gemini');
+                    console.log('[Optimize] Gemini API key:', apiKey ? '***' : '(empty)');
+                }
+
+                const customBaseUrl = SettingsService.getCustomBaseUrl();
+                console.log('[Optimize] Custom base URL:', customBaseUrl);
+
+                if ((isExternal || isOther) && externalProvider && generalPurposeModel.model && apiKey) {
+                    config = {
+                        provider: 'external',
+                        externalProvider: externalProvider,
+                        model: generalPurposeModel.model,
+                        customBaseUrl: customBaseUrl,
+                        apiKey
+                    };
+                    console.log('[Optimize] Config built for external provider:', config);
+                } else if (!isExternal && !isOther && apiKey) {
+                    config = {
+                        provider: 'gemini',
+                        model: generalPurposeModel.model
+                    };
+                    console.log('[Optimize] Config built for Gemini:', config);
+                }
+            }
+
+            if (!config) {
+                console.error('[Optimize] No config built! generalPurposeModel:', generalPurposeModel);
+                throw new Error(generalPurposeModel?.provider === 'external' || generalPurposeModel?.provider === 'other'
+                    ? 'General purpose model is incomplete. Please set: Provider, Model, and API Key in Settings → API Keys.'
+                    : 'No model configured. Please set a model in Settings → Default Models → General purpose model.');
+            }
+
+
+            config.structuredOutput = false
+
+            const refined = await GeminiService.optimizeSystemPrompt(activePrompt, config);
             if (appMode === 'generator') setSystemPrompt(refined);
             else setConverterPrompt(refined);
         } catch (e) {
-            setError("Prompt optimization failed.");
+            setError(`Prompt optimization failed: ${e instanceof Error ? e.message : String(e)}`);
         } finally {
             setIsOptimizing(false);
         }
@@ -715,30 +817,72 @@ export default function App() {
             if (typeof event.target?.result === 'string') {
                 const inputText = event.target.result;
                 setConverterInputText(inputText);
-                setRowsToFetch(inputText.split('\n').filter(l => l.trim()).length);
 
-                // Detect columns from first valid JSON line
-                const lines = inputText.split('\n').filter(l => l.trim());
-                for (const line of lines) {
+                // Detect columns from JSON data (array or JSONL)
+                const trimmedText = inputText.trim();
+                let detectedCols: string[] = [];
+                let rowCount = 0;
+
+                // First try parsing as JSON array
+                if (trimmedText.startsWith('[') && trimmedText.endsWith(']')) {
                     try {
-                        const obj = JSON.parse(line);
-                        if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
-                            const cols = Object.keys(obj);
-                            setAvailableColumns(cols);
-                            const detected = detectColumns(cols);
-                            setDetectedColumns(detected);
-                            // Auto-select first detected input column if none selected
-                            if ((!hfConfig.inputColumns || hfConfig.inputColumns.length === 0) && detected.input.length > 0) {
-                                setHfConfig(prev => ({ ...prev, inputColumns: detected.input.slice(0, 1) }));
+                        const arr = JSON.parse(trimmedText);
+                        if (Array.isArray(arr)) {
+                            rowCount = arr.length;
+                            if (arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
+                                detectedCols = Object.keys(arr[0]);
                             }
-                            // Auto-select detected reasoning columns if none selected
-                            if ((!hfConfig.reasoningColumns || hfConfig.reasoningColumns.length === 0) && detected.reasoning.length > 0) {
-                                setHfConfig(prev => ({ ...prev, reasoningColumns: detected.reasoning }));
-                            }
-                            break;
                         }
-                    } catch {
-                        // Not valid JSON, continue
+                    } catch (error) {
+                        logger.warn('Failed to parse file as JSON array, trying JSONL format:', error);
+                    }
+                }
+
+                // Fallback to JSONL format if no columns detected
+                if (detectedCols.length === 0) {
+                    const lines = inputText.split('\n').filter(l => l.trim());
+                    let validJsonlRows = 0;
+                    for (const line of lines) {
+                        try {
+                            const obj = JSON.parse(line);
+                            if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) {
+                                validJsonlRows++;
+                                // Detect columns from first valid object
+                                if (detectedCols.length === 0) {
+                                    detectedCols = Object.keys(obj);
+                                }
+                            }
+                        } catch (error) {
+                            logger.warn(`Skipping invalid JSONL line: "${line.substring(0, 50)}..."`, error);
+                        }
+                    }
+                    // Use validated JSONL row count if we found valid rows
+                    if (validJsonlRows > 0) {
+                        rowCount = validJsonlRows;
+                    }
+                }
+
+                // Fallback row count for plain text format (if still no valid rows)
+                if (rowCount === 0) {
+                    rowCount = inputText.split('\n').filter(l => l.trim()).length;
+                    logger.warn('Could not parse file as JSON or JSONL, using line count as fallback');
+                }
+
+                // Set the correct row count
+                setRowsToFetch(rowCount);
+
+                // Apply detected columns
+                if (detectedCols.length > 0) {
+                    setAvailableColumns(detectedCols);
+                    const detected = detectColumns(detectedCols);
+                    setDetectedColumns(detected);
+                    // Auto-select first detected input column if none selected
+                    if ((!hfConfig.inputColumns || hfConfig.inputColumns.length === 0) && detected.input.length > 0) {
+                        setHfConfig(prev => ({ ...prev, inputColumns: detected.input.slice(0, 1) }));
+                    }
+                    // Auto-select detected reasoning columns if none selected
+                    if ((!hfConfig.reasoningColumns || hfConfig.reasoningColumns.length === 0) && detected.reasoning.length > 0) {
+                        setHfConfig(prev => ({ ...prev, reasoningColumns: detected.reasoning }));
                     }
                 }
             }
@@ -1057,6 +1201,7 @@ export default function App() {
                         maxRetries,
                         retryDelay,
                         generationParams: genParams,
+                        structuredOutput: true,
                         maxTraces: hfConfig.maxMultiTurnTraces,
                         regularModeConfig: engineMode === 'regular' ? {
                             provider: provider,
@@ -1120,7 +1265,8 @@ export default function App() {
                         signal: abortControllerRef.current?.signal || undefined,
                         maxRetries,
                         retryDelay,
-                        generationParams: genParams
+                        generationParams: genParams,
+                        structuredOutput: true
                     });
                 }
                 const ensureString = (val: any) => {
@@ -1143,7 +1289,7 @@ export default function App() {
                     source: source,
                     seed_preview: safeInput.substring(0, 150) + "...",
                     full_seed: safeInput,
-                    query: appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput, // Clean input for display
+                    query: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
                     reasoning: reasoning,
                     answer: finalAnswer,
                     timestamp: new Date().toISOString(),
@@ -1170,7 +1316,7 @@ export default function App() {
                 // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
-                    originalQuery: appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput, // Clean input for training data (no expected answer)
+                    originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
                     expectedAnswer: expectedAnswer,
                     config: runtimeDeepConfig,
                     signal: abortControllerRef.current?.signal || undefined,
@@ -1208,7 +1354,8 @@ export default function App() {
                         signal: abortControllerRef.current?.signal || undefined,
                         maxRetries,
                         retryDelay,
-                        generationParams: genParams
+                        generationParams: genParams,
+                        structuredOutput: true
                     });
 
                     return {
@@ -1424,16 +1571,42 @@ export default function App() {
                     row: row
                 }));
             } else if (dataSourceMode === 'manual') {
-                const allLines = converterInputText.split('\n').filter(line => line.trim().length > 0);
-                // Apply skip and limit like we do for HuggingFace
-                const linesToProcess = allLines.slice(skipRows, skipRows + rowsToFetch);
-                setProgress({ current: 0, total: linesToProcess.length, activeWorkers: 1 });
-                workItems = linesToProcess.map(line => {
+                let parsedRows: any[] = [];
+                const trimmedInput = converterInputText.trim();
+
+                // First try parsing as JSON array
+                if (trimmedInput.startsWith('[') && trimmedInput.endsWith(']')) {
                     try {
-                        const obj = JSON.parse(line);
-                        return { content: getRowContent(obj), row: obj };
+                        const arr = JSON.parse(trimmedInput);
+                        if (Array.isArray(arr)) {
+                            parsedRows = arr;
+                        }
                     } catch {
-                        return { content: line, row: null }; // fast path for raw strings
+                        // Not valid JSON array, try JSONL
+                    }
+                }
+
+                // Fallback to JSONL format if no rows parsed
+                if (parsedRows.length === 0) {
+                    const allLines = converterInputText.split('\n').filter(line => line.trim().length > 0);
+                    parsedRows = allLines.map(line => {
+                        try {
+                            return JSON.parse(line);
+                        } catch {
+                            return line; // Raw string
+                        }
+                    });
+                }
+
+                // Apply skip and limit
+                const rowsToProcess = parsedRows.slice(skipRows, skipRows + rowsToFetch);
+                setProgress({ current: 0, total: rowsToProcess.length, activeWorkers: 1 });
+
+                workItems = rowsToProcess.map(row => {
+                    if (typeof row === 'object' && row !== null) {
+                        return { content: getRowContent(row), row: row };
+                    } else {
+                        return { content: String(row), row: null }; // Raw string
                     }
                 });
                 if (workItems.length === 0) throw new Error("No rows to process after applying skip/limit. Check your settings.");
@@ -1458,7 +1631,8 @@ export default function App() {
                             apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
                             model: externalModel,
                             customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
-                            signal: abortControllerRef.current?.signal || undefined
+                            signal: abortControllerRef.current?.signal || undefined,
+                            structuredOutput: true,
                         }, geminiTopic, countForBatch);
                     }
                     collectedSeeds = [...collectedSeeds, ...batchSeeds];
@@ -1486,7 +1660,8 @@ export default function App() {
             // This builds a runtime config to avoid React state race conditions
             const settings = SettingsService.getSettings();
             const confidenceThreshold = settings.autoRouteConfidenceThreshold ?? 0.3;
-            const defaultPromptSet = settings.promptSet || 'default';
+            // Session-level prompt set takes priority, then settings, then 'default'
+            const defaultPromptSet = sessionPromptSet || settings.promptSet || 'default';
 
             // Helper to build runtime config for a prompt set
             const buildRuntimeConfig = (promptSet: string): RuntimePromptConfig => ({
@@ -1590,7 +1765,8 @@ export default function App() {
                                 userPrompt: classifierPrompt,
                                 maxRetries: 1,
                                 retryDelay: 1000,
-                                generationParams: {}
+                                generationParams: {},
+                                structuredOutput: true
                             });
                             response = classifyResult?.answer || classifyResult?.reasoning || JSON.stringify(classifyResult) || '';
                         }
@@ -1637,12 +1813,35 @@ export default function App() {
 
                 let question = "";
 
-                // Try common column names
-                const candidates = ['question', 'instruction', 'prompt', 'input', 'query', 'task'];
-                for (const c of candidates) {
-                    if (row[c] && typeof row[c] === 'string' && row[c].length < 2000) {
-                        question = row[c];
-                        break;
+                // PRIORITY 1: Use explicitly selected input columns if available
+                // This ensures we get the RAW value from the dataset exactly as the user selected
+                if (hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
+                    const parts: string[] = [];
+                    for (const col of hfConfig.inputColumns) {
+                        const val = row[col];
+                        if (val !== undefined && val !== null) {
+                            if (typeof val === 'string') {
+                                parts.push(val);
+                            } else if (typeof val === 'object') {
+                                parts.push(JSON.stringify(val));
+                            } else {
+                                parts.push(String(val));
+                            }
+                        }
+                    }
+                    if (parts.length > 0) {
+                        question = parts.join('\n\n');
+                    }
+                }
+
+                // PRIORITY 2: Fallback to auto-detection if no explicit columns selected
+                if (!question) {
+                    const candidates = ['question', 'instruction', 'prompt', 'input', 'query', 'task'];
+                    for (const c of candidates) {
+                        if (row[c] && typeof row[c] === 'string' && row[c].length < 2000) {
+                            question = row[c];
+                            break;
+                        }
                     }
                 }
 
@@ -1687,7 +1886,21 @@ export default function App() {
                     if (myIndex >= workItems.length) break;
 
                     const item = workItems[myIndex];
-                    const originalQuestion = detectOriginalQuestion(item.row);
+
+                    // Get the RAW input from the user's EXPLICITLY SELECTED columns - no detection!
+                    let originalQuestion: string | undefined;
+                    if (item.row && hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
+                        const parts: string[] = [];
+                        for (const col of hfConfig.inputColumns) {
+                            const val = item.row[col];
+                            if (val !== undefined && val !== null) {
+                                parts.push(typeof val === 'string' ? val : JSON.stringify(val));
+                            }
+                        }
+                        if (parts.length > 0) {
+                            originalQuestion = parts.join('\n\n');
+                        }
+                    }
 
                     setProgress(p => ({ ...p, activeWorkers: p.activeWorkers + 1 }));
 
@@ -2234,6 +2447,39 @@ export default function App() {
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Session-level Prompt Set Override */}
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                                    <FileText className="w-3 h-3" /> Prompts (Session)
+                                </label>
+                                <div className="flex gap-1">
+                                    <select
+                                        value={sessionPromptSet || ''}
+                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSessionPromptSet(e.target.value || null)}
+                                        className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                    >
+                                        <option value="">{SettingsService.getSettings().promptSet || 'default'} (your default)</option>
+                                        {availablePromptSets.filter((s: string) => s !== (SettingsService.getSettings().promptSet || 'default')).map((setId: string) => (
+                                            <option key={setId} value={setId}>{setId}</option>
+                                        ))}
+                                    </select>
+                                    {sessionPromptSet && (
+                                        <button
+                                            onClick={() => setSessionPromptSet(null)}
+                                            className="px-2 py-1 text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded border border-slate-700 transition-colors"
+                                            title="Reset to your default prompt set"
+                                        >
+                                            Reset
+                                        </button>
+                                    )}
+                                </div>
+                                {sessionPromptSet && (
+                                    <p className="text-[9px] text-amber-400/70">
+                                        Session override active — will not persist after reload
+                                    </p>
+                                )}
+                            </div>
                             {engineMode === 'regular' ? (
                                 <div className="animate-in fade-in slide-in-from-left-2 duration-300 space-y-4">
                                     <div className="bg-slate-950 p-1 rounded-lg border border-slate-800">
@@ -2303,6 +2549,34 @@ export default function App() {
                                                 )}
                                             </>
                                         )}
+                                    </div>
+
+                                    {/* System Prompt */}
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                                                <Settings className="w-3 h-3" /> System Prompt
+                                            </label>
+                                            <div className="flex items-center gap-1">
+                                                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 text-[9px] px-1.5 py-1 rounded transition-colors">
+                                                    <Upload className="w-2.5 h-2.5" /> Load
+                                                </button>
+                                                <input type="file" ref={fileInputRef} onChange={handleLoadRubric} className="hidden" accept=".txt,.md,.json" />
+                                                <button onClick={handleSaveRubric} className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 text-[9px] px-1.5 py-1 rounded transition-colors">
+                                                    <Save className="w-2.5 h-2.5" /> Save
+                                                </button>
+                                                <button onClick={optimizePrompt} disabled={isOptimizing} className="bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 text-[9px] px-1.5 py-1 rounded flex items-center gap-1 transition-all">
+                                                    {isOptimizing ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />} Optimize
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <textarea
+                                            value={appMode === 'generator' ? systemPrompt : converterPrompt}
+                                            onChange={e => appMode === 'generator' ? setSystemPrompt(e.target.value) : setConverterPrompt(e.target.value)}
+                                            className="w-full h-40 bg-slate-950 border border-slate-700 rounded-lg p-2 text-[9px] font-mono text-slate-400 focus:border-indigo-500 outline-none resize-y leading-relaxed"
+                                            spellCheck={false}
+                                            placeholder={appMode === 'generator' ? "# ROLE..." : "# CONVERTER ROLE..."}
+                                        />
                                     </div>
                                 </div>
                             ) : (
@@ -2774,17 +3048,7 @@ export default function App() {
                         </div>
 
                         {/* Prompt Editor (Same) */}
-                        {engineMode === 'regular' && (
-                            <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5">
-                                <details className="group" open>
-                                    <summary className="flex items-center justify-between cursor-pointer list-none"><h3 className="text-sm font-semibold text-white flex items-center gap-2"><Settings className="w-4 h-4 text-slate-400" /> SYSTEM RUBRIC</h3><ArrowRight className="w-4 h-4 text-slate-500 group-open:rotate-90 transition-transform" /></summary>
-                                    <div className="mt-4">
-                                        <div className="flex gap-2 mb-2"><button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[10px] px-2.5 py-1.5 rounded-md transition-colors"><Upload className="w-3 h-3" /> Load</button><input type="file" ref={fileInputRef} onChange={handleLoadRubric} className="hidden" accept=".txt,.md,.json" /><button onClick={handleSaveRubric} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[10px] px-2.5 py-1.5 rounded-md transition-colors"><Save className="w-3 h-3" /> Save</button><div className="flex-1"></div><button onClick={optimizePrompt} disabled={isOptimizing} className="bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 text-[10px] px-2.5 py-1.5 rounded-md backdrop-blur flex items-center gap-1.5 transition-all">{isOptimizing ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} Optimize</button></div>
-                                        <textarea value={appMode === 'generator' ? systemPrompt : converterPrompt} onChange={e => appMode === 'generator' ? setSystemPrompt(e.target.value) : setConverterPrompt(e.target.value)} className="w-full h-56 bg-slate-950 border border-slate-700 rounded-lg p-3 text-[10px] font-mono text-slate-400 focus:border-indigo-500 outline-none resize-y leading-relaxed" spellCheck={false} placeholder={appMode === 'generator' ? "# ROLE..." : "# CONVERTER ROLE..."} />
-                                    </div>
-                                </details>
-                            </div>
-                        )}
+
                     </div>
 
                     {/* Feed / Analytics (CREATOR MODE) */}

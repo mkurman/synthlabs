@@ -15,6 +15,7 @@ export type TaskType =
     | 'technical'
     | 'reasoning'
     | 'conversation'
+    | 'medical'
     | 'unknown';
 
 export type ClassifierMethod = 'none' | 'heuristic' | 'llm';
@@ -29,6 +30,7 @@ export const TASK_PROMPT_MAPPING: Record<TaskType, string> = {
     technical: 'synth-prose',   // Structured explanations
     reasoning: 'synth-prose',   // Logical sections
     conversation: 'synth-expanded', // Natural flow
+    medical: 'synth-prose',     // Clinical precision with structured explanations
     unknown: 'default'          // Fall back to user's default
 };
 
@@ -123,6 +125,50 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /how are you/i
         ]
     },
+    medical: {
+        keywords: [
+            // Clinical specializations
+            'cardiology', 'neurology', 'oncology', 'pediatrics', 'psychiatry',
+            'dermatology', 'radiology', 'pathology', 'surgery', 'anesthesiology',
+            'endocrinology', 'gastroenterology', 'nephrology', 'pulmonology',
+            'rheumatology', 'immunology', 'hematology', 'ophthalmology',
+            'orthopedics', 'urology', 'gynecology', 'obstetrics', 'geriatrics',
+            // Medical terms
+            'diagnosis', 'treatment', 'symptoms', 'prognosis', 'patient',
+            'clinical', 'therapy', 'medication', 'prescription', 'dosage',
+            'disease', 'disorder', 'syndrome', 'condition', 'pathology',
+            'anatomy', 'physiology', 'pharmacology', 'etiology', 'epidemiology',
+            // Biology
+            'biology', 'cell', 'organism', 'tissue', 'organ', 'molecular',
+            'metabolism', 'mitosis', 'meiosis', 'photosynthesis', 'evolution',
+            'ecology', 'microbiology', 'virology', 'bacteriology', 'immunology',
+            // Chemistry
+            'chemistry', 'molecule', 'compound', 'reaction', 'catalyst',
+            'organic', 'inorganic', 'biochemistry', 'polymer', 'enzyme',
+            'protein', 'lipid', 'carbohydrate', 'nucleotide', 'amino acid',
+            // Genetics
+            'genetics', 'gene', 'dna', 'rna', 'chromosome', 'mutation',
+            'genome', 'allele', 'hereditary', 'inheritance', 'genotype',
+            'phenotype', 'crispr', 'sequencing', 'epigenetics', 'transcription',
+            // Neuroscience
+            'neuroscience', 'neuron', 'synapse', 'neurotransmitter', 'cortex',
+            'hippocampus', 'amygdala', 'cerebellum', 'axon', 'dendrite'
+        ],
+        patterns: [
+            /\b(diagnosis|diagnose|diagnosed)\b/i,
+            /\b(symptom|symptoms)\b.*\b(of|for|include)\b/i,
+            /\b(treat|treatment|treating)\b.*\b(for|of)\b/i,
+            /\b(patient|patients)\b.*\b(with|has|have)\b/i,
+            /\b(mg|mcg|ml|iu)\b.*\b(dose|dosage|daily|twice)\b/i,
+            /\b(gene|genetic|dna|rna)\b.*\b(mutation|expression|sequence)\b/i,
+            /\b(cell|cellular)\b.*\b(function|structure|division)\b/i,
+            /\b(chemical|molecular)\b.*\b(reaction|structure|bond)\b/i,
+            /what causes/i,
+            /how to treat/i,
+            /side effects of/i,
+            /mechanism of action/i
+        ]
+    },
     unknown: {
         keywords: [],
         patterns: []
@@ -143,6 +189,7 @@ export function classifyTaskHeuristic(query: string): { type: TaskType; confiden
         technical: 0,
         reasoning: 0,
         conversation: 0,
+        medical: 0,
         unknown: 0
     };
 
@@ -208,6 +255,7 @@ Categories:
 - technical: how systems work, explanations, mechanisms
 - reasoning: why questions, analysis, comparisons, pros/cons
 - conversation: greetings, thanks, small talk
+- medical: clinical diagnoses, treatments, biology, chemistry, genetics, pharmacology
 - unknown: unclear or ambiguous
 
 Examples:
@@ -218,6 +266,8 @@ Examples:
 "How does TCP/IP work?" → {"type":"technical","confidence":0.85}
 "Should I use React or Vue?" → {"type":"reasoning","confidence":0.8}
 "Hello!" → {"type":"conversation","confidence":0.95}
+"What are the symptoms of diabetes?" → {"type":"medical","confidence":0.9}
+"How does CRISPR gene editing work?" → {"type":"medical","confidence":0.85}
 
 Query:
 \`\`\`
@@ -249,7 +299,7 @@ export function parseClassifierResponse(response: string): LLMClassificationResu
             const parsed = JSON.parse(jsonMatch[0]);
             const validTypes: TaskType[] = [
                 'math', 'coding', 'creative', 'factual',
-                'technical', 'reasoning', 'conversation', 'unknown'
+                'technical', 'reasoning', 'conversation', 'medical', 'unknown'
             ];
             // Type guard: ensure parsed.type is a string before calling toLowerCase()
             const typeValue = typeof parsed.type === 'string' ? parsed.type.toLowerCase() : '';
@@ -269,7 +319,7 @@ export function parseClassifierResponse(response: string): LLMClassificationResu
     const lowerResponse = cleaned.toLowerCase();
     const validTypes: TaskType[] = [
         'math', 'coding', 'creative', 'factual',
-        'technical', 'reasoning', 'conversation', 'unknown'
+        'technical', 'reasoning', 'conversation', 'medical', 'unknown'
     ];
 
     for (const type of validTypes) {
@@ -340,6 +390,6 @@ export const TaskClassifierService = {
     // Get all task types
     getTaskTypes: (): TaskType[] => [
         'math', 'coding', 'creative', 'factual',
-        'technical', 'reasoning', 'conversation'
+        'technical', 'reasoning', 'conversation', 'medical'
     ]
 };

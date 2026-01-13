@@ -14,6 +14,7 @@ export interface ExternalApiConfig {
   maxRetries?: number;
   retryDelay?: number;
   generationParams?: GenerationParams;
+  structuredOutput?: boolean;
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -21,10 +22,21 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 export const callExternalApi = async (config: ExternalApiConfig): Promise<any> => {
   const {
     provider, apiKey, model, customBaseUrl, systemPrompt, userPrompt, signal,
-    maxRetries = 3, retryDelay = 2000, generationParams
+    maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput
   } = config;
 
   let baseUrl = provider === 'other' ? customBaseUrl : PROVIDER_URLS[provider];
+  let responseFormat = structuredOutput ? 'json_object' : 'text';
+
+  // Ensure custom endpoint ends with /chat/completions for 'other' provider
+  if (baseUrl) {
+    const isAnthropicFormat = baseUrl.includes('/messages');
+    const alreadyHasPath = baseUrl.includes('/chat/completions') || baseUrl.includes('/messages');
+
+    if (!alreadyHasPath && !isAnthropicFormat) {
+      baseUrl = `${baseUrl}/chat/completions`;
+    }
+  }
 
   if (!baseUrl) {
     throw new Error(`No base URL found for provider: ${provider}`);
@@ -76,7 +88,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       top_k: cleanGenParams.top_k
     };
   } else {
-    url = `${baseUrl}/chat/completions`;
+    url = baseUrl;
     payload = {
       model,
       messages: [
@@ -84,10 +96,10 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         { role: 'user', content: userPrompt }
       ],
       max_tokens: 8192,
-      response_format: { type: 'json_object' },
+      response_format: { type: responseFormat },
       ...cleanGenParams
     };
-    // If temp was not provided in params, default to 0.8 if strictly needed, 
+    // If temp was not provided in params, default to 0.8 if strictly needed,
     // but usually APIs have defaults. We only set it if explicitly passed or fallback logic.
     if (cleanGenParams.temperature === undefined) payload.temperature = 0.8;
   }
@@ -141,6 +153,10 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           logger.warn("Provider returned empty content", data);
           throw new Error("Provider returned empty content (check console for details)");
         }
+
+        if (!structuredOutput) {
+          return rawContent;
+        }
         return parseJsonContent(rawContent);
       }
 
@@ -186,6 +202,30 @@ export const generateSyntheticSeeds = async (
     if (Array.isArray(result)) return result.map(String);
     if (result && Array.isArray(result.seeds)) return result.seeds.map(String);
     if (result && Array.isArray(result.paragraphs)) return result.paragraphs.map(String);
+
+    // Handle case where model returns an object with string keys and string values
+    // e.g. {"Topic description 1": "Topic description 2", ...}
+    // Extract all unique non-empty strings from both keys and values
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+      const entries = Object.entries(result);
+      if (entries.length > 0) {
+        const allStrings: string[] = [];
+        for (const [key, value] of entries) {
+          // Add key if it's a substantial string (not just a label like "topic1")
+          if (typeof key === 'string' && key.length > 20) {
+            allStrings.push(key);
+          }
+          // Add value if it's a string
+          if (typeof value === 'string' && value.length > 0) {
+            allStrings.push(value);
+          }
+        }
+        // Return unique values
+        if (allStrings.length > 0) {
+          return [...new Set(allStrings)];
+        }
+      }
+    }
 
     return [];
   } catch (e) {

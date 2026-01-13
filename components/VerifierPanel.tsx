@@ -14,6 +14,7 @@ import * as VerifierRewriterService from '../services/verifierRewriterService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
+import { PromptService } from '../services/promptService';
 
 interface VerifierPanelProps {
     onImportFromDb: () => Promise<void>;
@@ -79,7 +80,8 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         model: 'openai/gpt-4o-mini',
         customBaseUrl: '',
         maxRetries: 3,
-        retryDelay: 2000
+        retryDelay: 2000,
+        systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite')
     });
 
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -765,6 +767,24 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                             className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
                                         />
                                     </div>
+                                </div>
+                                <div className="col-span-1 md:col-span-4">
+                                    <details className="group">
+                                        <summary className="flex items-center gap-2 cursor-pointer list-none text-[10px] text-slate-500 font-bold uppercase mb-1 select-none">
+                                            <span>System Prompt (optional)</span>
+                                            <span className="text-slate-600 group-open:rotate-90 transition-transform">▶</span>
+                                        </summary>
+                                        <textarea
+                                            value={rewriterConfig.systemPrompt || ''}
+                                            onChange={e => setRewriterConfig(prev => ({ ...prev, systemPrompt: e.target.value }))}
+                                            placeholder="Leave empty to use default prompt from selected prompt set..."
+                                            className="w-full h-32 bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300 rounded px-2 py-1.5 outline-none focus:border-teal-500 resize-y mt-1"
+                                            spellCheck={false}
+                                        />
+                                        <p className="text-[9px] text-slate-600 mt-1">
+                                            Custom prompt overrides the verifier rewrite prompts from PromptService
+                                        </p>
+                                    </details>
                                 </div>
                             </div>
                         )}

@@ -16,6 +16,7 @@ interface DeepOrchestrationParams {
   retryDelay: number;
   generationParams?: GenerationParams;
   onPhaseComplete?: (phase: string) => void;
+  structuredOutput?: boolean;
 }
 
 const executePhase = async (
@@ -24,7 +25,8 @@ const executePhase = async (
   signal?: AbortSignal,
   maxRetries = 3,
   retryDelay = 2000,
-  generationParams?: GenerationParams
+  generationParams?: GenerationParams,
+  structuredOutput: boolean = true
 ): Promise<{ result: any; model: string; input: string; duration: number; timestamp: string }> => {
   const { id, provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt } = phaseConfig;
   const modelName = provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
@@ -39,7 +41,7 @@ const executePhase = async (
   let result;
   try {
     if (provider === 'gemini') {
-      result = await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams });
+      result = await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams, structuredOutput });
     } else {
       // Resolve API key from phaseConfig first, then fall back to SettingsService
       const resolvedApiKey = apiKey || (externalProvider ? SettingsService.getApiKey(externalProvider) : '');
@@ -55,7 +57,8 @@ const executePhase = async (
         signal: signal,
         maxRetries,
         retryDelay,
-        generationParams
+        generationParams,
+        structuredOutput
       });
     }
 
@@ -87,7 +90,7 @@ const getModelName = (cfg: DeepPhaseConfig) => {
 export const orchestrateDeepReasoning = async (
   params: DeepOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { input, originalQuery, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams } = params;
+  const { input, originalQuery, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams, structuredOutput } = params;
 
   // Use originalQuery for output fields (training data), fall back to input if not provided
   const cleanQuery = originalQuery || input;
@@ -100,21 +103,21 @@ export const orchestrateDeepReasoning = async (
 
   try {
     // 1. Parallel Execution of Phase 0, 1, 2
-    const metaPromise = executePhase(config.phases.meta, input, signal, maxRetries, retryDelay, generationParams)
+    const metaPromise = executePhase(config.phases.meta, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('meta');
         deepTrace.meta = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
         return res.result;
       });
 
-    const retrievalPromise = executePhase(config.phases.retrieval, input, signal, maxRetries, retryDelay, generationParams)
+    const retrievalPromise = executePhase(config.phases.retrieval, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('retrieval');
         deepTrace.retrieval = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
         return res.result;
       });
 
-    const derivationPromise = executePhase(config.phases.derivation, input, signal, maxRetries, retryDelay, generationParams)
+    const derivationPromise = executePhase(config.phases.derivation, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('derivation');
         deepTrace.derivation = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
@@ -295,6 +298,7 @@ interface MultiTurnOrchestrationParams {
   retryDelay: number;
   generationParams?: GenerationParams;
   promptSet?: string; // Optional prompt set for fallback prompt loading (auto-routing)
+  structuredOutput?: boolean
 }
 
 /**
@@ -308,7 +312,7 @@ interface MultiTurnOrchestrationParams {
 export const orchestrateMultiTurnConversation = async (
   params: MultiTurnOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, promptSet } = params;
+  const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, promptSet, structuredOutput } = params;
   const startTime = Date.now();
 
   // Heuristic: Use initialInput (user's selected column content) if the inferred query looks like a database ID/slug or is missing.
@@ -364,7 +368,8 @@ export const orchestrateMultiTurnConversation = async (
         signal,
         maxRetries,
         retryDelay,
-        generationParams
+        generationParams,
+        structuredOutput
       );
       firstResponse = generatedResponse.answer || generatedResponse.reasoning || "No response generated.";
       firstReasoning = generatedResponse.reasoning;
@@ -403,7 +408,8 @@ export const orchestrateMultiTurnConversation = async (
         signal,
         maxRetries,
         retryDelay,
-        generationParams
+        generationParams,
+        structuredOutput
       );
 
       const followUpQuestion = followUpResult.follow_up_question || followUpResult.question || "Could you elaborate further?";
@@ -423,7 +429,8 @@ export const orchestrateMultiTurnConversation = async (
         signal,
         maxRetries,
         retryDelay,
-        generationParams
+        generationParams,
+        structuredOutput
       );
 
       messages.push({
@@ -492,7 +499,8 @@ const callAgent = async (
   signal?: AbortSignal,
   maxRetries = 3,
   retryDelay = 2000,
-  generationParams?: GenerationParams
+  generationParams?: GenerationParams,
+  structuredOutput: boolean = true
 ): Promise<any> => {
   if (config.provider === 'gemini') {
     return await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams });
@@ -507,7 +515,8 @@ const callAgent = async (
       signal,
       maxRetries,
       retryDelay,
-      generationParams
+      generationParams,
+      structuredOutput
     });
   }
 };
@@ -535,7 +544,8 @@ interface ConversationRewriteParams {
     model: string;
     customBaseUrl: string;
   };
-  promptSet?: string;                 // Optional prompt set for fallback prompt loading (auto-routing)
+  promptSet?: string;
+  structuredOutput?: boolean                // Optional prompt set for fallback prompt loading (auto-routing)
 }
 
 /**
@@ -564,7 +574,8 @@ export const orchestrateConversationRewrite = async (
     onMessageRewritten,
     maxTraces,
     regularModeConfig,
-    promptSet
+    promptSet,
+    structuredOutput
   } = params;
 
   const startTime = Date.now();
@@ -646,7 +657,8 @@ ${outsideThinkContent}
           signal: signal,
           maxRetries: maxRetries,
           retryDelay: retryDelay,
-          generationParams: generationParams
+          generationParams: generationParams,
+          structuredOutput: structuredOutput
         });
 
         newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
@@ -672,7 +684,8 @@ ${outsideThinkContent}
             signal,
             maxRetries,
             retryDelay,
-            generationParams
+            generationParams,
+            structuredOutput
           });
           newReasoning = result.reasoning || originalThinking;
         } else {
@@ -683,7 +696,8 @@ ${outsideThinkContent}
             signal,
             maxRetries,
             retryDelay,
-            generationParams
+            generationParams,
+            structuredOutput
           );
           newReasoning = writerRes.result?.reasoning || originalThinking;
         }

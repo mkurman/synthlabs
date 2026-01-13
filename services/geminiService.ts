@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GenerationParams } from "../types";
 import { logger } from '../utils/logger';
+import { callExternalApi, ExternalApiConfig } from './externalApiService';
 
 // Ensure API Key exists
 const API_KEY = process.env.API_KEY || '';
@@ -14,11 +15,12 @@ interface RetryOptions {
   retryDelay?: number;
   generationParams?: GenerationParams;
   model?: string;
+  structuredOutput?: boolean;
 }
 
 const callGeminiWithRetry = async (
   apiCall: () => Promise<any>,
-  options: RetryOptions = { maxRetries: 3, retryDelay: 2000 }
+  options: RetryOptions = { maxRetries: 3, retryDelay: 2000, structuredOutput: true }
 ) => {
   const { maxRetries = 3, retryDelay = 2000 } = options;
 
@@ -101,21 +103,62 @@ export const generateGeminiTopic = async (category: string, model?: string): Pro
   }
 };
 
-export const optimizeSystemPrompt = async (currentPrompt: string): Promise<string> => {
-  if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
+export interface OptimizePromptConfig {
+  provider: 'gemini' | 'external';
+  externalProvider?: string;
+  model?: string;
+  customBaseUrl?: string;
+  apiKey?: string;
+  structuredOutput?: boolean
+}
 
-  const optimizationPrompt = `You are a prompt engineering expert for LLMs. 
-  Refine the following "System Rubric" to be stricter about "Stenographic Reasoning" (using symbols like →, ↺, ∴, ●) and JSON output format.
-  Make the instructions concise but powerful. Ensure the entropy markers <H≈...> are enforced.
-  
+export const optimizeSystemPrompt = async (
+  currentPrompt: string,
+  config?: OptimizePromptConfig
+): Promise<string> => {
+  const optimizationPrompt = `You are a prompt engineering expert for LLMs.
+  Refine following "System Rubric" to be stricter about "Stenographic Reasoning" (using symbols like →, ↺, ∴, ●) and JSON output format.
+  Make instructions concise but powerful. Ensure entropy markers <H≈...> are enforced.`
+
+  const userInput = `Please optimize the system prompt below.
+
+  ----------------------------
   Current Rubric:
   ${currentPrompt}
+
+  ----------------------------
   
-  Output ONLY the refined prompt text.`;
+  Output ONLY refined prompt as a text.`;
+
+  if (config?.provider === 'external') {
+    if (!config.externalProvider || !config.model || !config.apiKey) {
+      throw new Error(`External provider config incomplete. Provider: ${config.externalProvider}, Model: ${config.model}, Has API Key: ${!!config.apiKey}`);
+    }
+    try {
+      const externalConfig: ExternalApiConfig = {
+        provider: config.externalProvider as any,
+        apiKey: config.apiKey,
+        model: config.model,
+        customBaseUrl: config.customBaseUrl,
+        systemPrompt: optimizationPrompt,
+        userPrompt: userInput,
+        maxRetries: 3,
+        retryDelay: 2000,
+        structuredOutput: config?.structuredOutput
+      };
+      const result = await callExternalApi(externalConfig);
+      return result || currentPrompt;
+    } catch (error) {
+      console.error("External API Optimization Error", error);
+      throw error;
+    }
+  }
+
+  if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: config?.model || 'gemini-3-flash-preview',
       contents: optimizationPrompt,
     }));
     return response.text || currentPrompt;
@@ -209,7 +252,7 @@ export const generateReasoningTrace = async (
 export const generateGenericJSON = async (
   input: string,
   systemPrompt: string,
-  retryOptions?: RetryOptions
+  retryOptions?: RetryOptions,
 ): Promise<any> => {
   if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
 
