@@ -14,9 +14,73 @@ const SETTINGS_KEY = 'app_settings';
 // All available external providers from constants
 export const AVAILABLE_PROVIDERS = EXTERNAL_PROVIDERS;
 
+// Model configuration for a single workflow step
+export interface StepModelConfig {
+    provider: 'gemini' | 'external';
+    externalProvider: string;
+    model: string;
+}
+
+// Deep mode step configurations
+export interface DeepModeDefaults {
+    meta: StepModelConfig;
+    retrieval: StepModelConfig;
+    derivation: StepModelConfig;
+    writer: StepModelConfig;
+    rewriter: StepModelConfig;
+    userAgent: StepModelConfig;
+}
+
+// Workflow defaults for generator and converter
+export interface WorkflowDefaults {
+    generator: {
+        regular: StepModelConfig;
+        deep: DeepModeDefaults;
+    };
+    converter: {
+        regular: StepModelConfig;
+        deep: DeepModeDefaults;
+    };
+}
+
+// Default empty step config
+export const EMPTY_STEP_CONFIG: StepModelConfig = {
+    provider: 'gemini',
+    externalProvider: '',
+    model: ''
+};
+
+// Default empty deep mode config
+export const EMPTY_DEEP_DEFAULTS: DeepModeDefaults = {
+    meta: { ...EMPTY_STEP_CONFIG },
+    retrieval: { ...EMPTY_STEP_CONFIG },
+    derivation: { ...EMPTY_STEP_CONFIG },
+    writer: { ...EMPTY_STEP_CONFIG },
+    rewriter: { ...EMPTY_STEP_CONFIG },
+    userAgent: { ...EMPTY_STEP_CONFIG }
+};
+
+// Default workflow configuration
+export const DEFAULT_WORKFLOW_DEFAULTS: WorkflowDefaults = {
+    generator: {
+        regular: { ...EMPTY_STEP_CONFIG },
+        deep: { ...EMPTY_DEEP_DEFAULTS }
+    },
+    converter: {
+        regular: { ...EMPTY_STEP_CONFIG },
+        deep: { ...EMPTY_DEEP_DEFAULTS }
+    }
+};
+
 export interface AppSettings {
     // Provider API Keys - dynamic based on provider
     providerKeys: Record<string, string>;
+
+    // Default models per provider (for quick selection when switching providers)
+    providerDefaultModels?: Record<string, string>;
+
+    // Workflow step default models
+    workflowDefaults?: WorkflowDefaults;
 
     // Custom endpoint for 'other' provider
     customEndpointUrl?: string;
@@ -47,12 +111,19 @@ export interface AppSettings {
     autoRouteEnabled?: boolean;
     autoRouteMethod?: 'heuristic' | 'llm';
     autoRouteConfidenceThreshold?: number;  // 0-1, triggers routing when confidence exceeds this
+    // LLM Classifier model configuration (similar to DeepPhaseConfig)
+    autoRouteLlmProvider?: 'gemini' | 'external';
+    autoRouteLlmExternalProvider?: string;  // ExternalProvider type
+    autoRouteLlmApiKey?: string;
     autoRouteLlmModel?: string;             // Model to use for LLM classification (empty = use current)
+    autoRouteLlmCustomBaseUrl?: string;
     taskPromptMapping?: Record<string, string>;  // Custom task→prompt mappings (overrides defaults)
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
     providerKeys: {},
+    providerDefaultModels: {},
+    workflowDefaults: { ...DEFAULT_WORKFLOW_DEFAULTS },
     defaultConcurrency: 4,
     theme: 'dark',
     promptSet: 'default',
@@ -63,7 +134,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     // For LLM mode: confidence is returned directly by the classifier (0-1)
     // Lower values = more aggressive routing, higher values = more conservative
     autoRouteConfidenceThreshold: 0.3,
-    autoRouteLlmModel: ''
+    autoRouteLlmProvider: 'gemini',
+    autoRouteLlmExternalProvider: '',
+    autoRouteLlmApiKey: '',
+    autoRouteLlmModel: '',
+    autoRouteLlmCustomBaseUrl: ''
 };
 
 // In-memory cache for synchronous access
@@ -311,6 +386,11 @@ export const SettingsService = {
     // Get custom base URL for 'other' provider
     getCustomBaseUrl: (): string => {
         return settingsCache.customEndpointUrl || '';
+    },
+
+    // Get workflow defaults
+    getWorkflowDefaults: (): WorkflowDefaults => {
+        return settingsCache.workflowDefaults || DEFAULT_WORKFLOW_DEFAULTS;
     },
 
     // Get provider URL (from constants, or custom for 'other')

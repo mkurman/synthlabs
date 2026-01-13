@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { GenerationParams } from "../types";
 import { logger } from '../utils/logger';
@@ -14,6 +13,7 @@ interface RetryOptions {
   maxRetries?: number;
   retryDelay?: number;
   generationParams?: GenerationParams;
+  model?: string;
 }
 
 const callGeminiWithRetry = async (
@@ -41,12 +41,6 @@ const callGeminiWithRetry = async (
   }
 };
 
-/**
- * Helper to safely parse JSON from LLM output, handling markdown blocks
- */
-/**
- * Helper to safely parse JSON from LLM output, handling markdown blocks
- */
 function cleanAndParseJSON(text: string | undefined): any {
   if (!text) return {};
 
@@ -85,10 +79,7 @@ function cleanAndParseJSON(text: string | undefined): any {
   }
 }
 
-/**
- * Calls Gemini to generate a single complex topic.
- */
-export const generateGeminiTopic = async (category: string): Promise<string> => {
+export const generateGeminiTopic = async (category: string, model?: string): Promise<string> => {
   if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
 
   const prompt = `Generate a single, specific, complex, and academically rich topic for a research paper in the domain of "${category}".
@@ -100,7 +91,7 @@ export const generateGeminiTopic = async (category: string): Promise<string> => 
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: model || 'gemini-2.0-flash-exp',
       contents: prompt,
     }));
     return response.text?.trim() || "Advanced Artificial Intelligence";
@@ -110,9 +101,6 @@ export const generateGeminiTopic = async (category: string): Promise<string> => 
   }
 };
 
-/**
- * Optimizes a system prompt using a stronger reasoning model.
- */
 export const optimizeSystemPrompt = async (currentPrompt: string): Promise<string> => {
   if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
 
@@ -137,10 +125,7 @@ export const optimizeSystemPrompt = async (currentPrompt: string): Promise<strin
   }
 };
 
-/**
- * Generates synthetic seeds (raw text paragraphs).
- */
-export const generateSyntheticSeeds = async (topic: string, count: number): Promise<string[]> => {
+export const generateSyntheticSeeds = async (topic: string, count: number, model?: string): Promise<string[]> => {
   if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
 
   const seedPrompt = `Generate ${count} DISTINCT, high-quality, factual text paragraphs about: "${topic}". 
@@ -151,7 +136,7 @@ export const generateSyntheticSeeds = async (topic: string, count: number): Prom
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: model || 'gemini-2.0-flash-exp',
       contents: seedPrompt,
       config: {
         responseMimeType: 'application/json',
@@ -170,9 +155,6 @@ export const generateSyntheticSeeds = async (topic: string, count: number): Prom
   }
 };
 
-/**
- * The Core Generator: Takes a seed, applies the system prompt, returns structured data.
- */
 export const generateReasoningTrace = async (
   seedText: string,
   systemPrompt: string,
@@ -206,7 +188,7 @@ export const generateReasoningTrace = async (
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: retryOptions?.model || 'gemini-2.0-flash-exp',
       contents: userMessage,
       config: genConfig
     }), retryOptions);
@@ -224,10 +206,6 @@ export const generateReasoningTrace = async (
   }
 };
 
-/**
- * Generic JSON Generator for Deep Mode intermediate phases.
- * Uses flexible object schema.
- */
 export const generateGenericJSON = async (
   input: string,
   systemPrompt: string,
@@ -250,7 +228,7 @@ export const generateGenericJSON = async (
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: retryOptions?.model || 'gemini-2.0-flash-exp',
       contents: input,
       config: genConfig
     }), retryOptions);
@@ -262,9 +240,6 @@ export const generateGenericJSON = async (
   }
 };
 
-/**
- * The Converter: Takes existing logic (e.g. from <think> tags) and rewrites it.
- */
 export const convertReasoningTrace = async (
   inputText: string,
   systemPrompt: string,
@@ -298,7 +273,7 @@ export const convertReasoningTrace = async (
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: retryOptions?.model || 'gemini-2.0-flash-exp',
       contents: userMessage,
       config: genConfig
     }), retryOptions);

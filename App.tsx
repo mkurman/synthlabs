@@ -663,19 +663,6 @@ export default function App() {
         setHfConfig(prev => ({ ...prev, inputColumns: [], outputColumns: [], reasoningColumns: [] }));
     };
 
-    const handleExternalProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const newProvider = e.target.value as ExternalProvider;
-        setExternalProvider(newProvider);
-
-        // Auto-load API Key and Base URL from saved settings
-        const savedKey = SettingsService.getApiKey(newProvider);
-        setExternalApiKey(savedKey || '');
-
-        if (newProvider === 'other') {
-            const savedBaseUrl = SettingsService.getCustomBaseUrl();
-            setCustomBaseUrl(savedBaseUrl || '');
-        }
-    };
 
     const generateRandomTopic = async () => {
         setIsGeneratingTopic(true);
@@ -920,7 +907,7 @@ export default function App() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `synth_session_${new Date().toISOString().slice(0, 10)}.json`;
+        a.download = `synth_session_${new Date().toISOString()}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1103,10 +1090,10 @@ export default function App() {
                     }
 
                     if (appMode === 'generator') {
-                        result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, retryConfig);
+                        result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, { ...retryConfig, model: externalModel });
                     } else {
                         const contentToConvert = extractInputContent(safeInput);
-                        result = await GeminiService.convertReasoningTrace(contentToConvert, enhancedPrompt, retryConfig);
+                        result = await GeminiService.convertReasoningTrace(contentToConvert, enhancedPrompt, { ...retryConfig, model: externalModel });
                     }
                 } else {
                     let promptInput = "";
@@ -1463,7 +1450,8 @@ export default function App() {
                     const countForBatch = Math.min(MAX_SEEDS_PER_BATCH, totalNeeded - collectedSeeds.length);
                     let batchSeeds: string[] = [];
                     if (provider === 'gemini') {
-                        batchSeeds = await GeminiService.generateSyntheticSeeds(geminiTopic, countForBatch);
+                        // Pass externalModel (which acts as the active model input) to Gemini
+                        batchSeeds = await GeminiService.generateSyntheticSeeds(geminiTopic, countForBatch, externalModel);
                     } else {
                         batchSeeds = await ExternalApiService.generateSyntheticSeeds({
                             provider: externalProvider,
@@ -1572,11 +1560,18 @@ export default function App() {
                     const sampleQuery = workItems[0].content;
                     try {
                         const classifierPrompt = TaskClassifierService.getClassifierPrompt(sampleQuery);
+
+                        // Use classifier-specific settings if configured, otherwise fallback to main provider
+                        const classifierProvider = settings.autoRouteLlmProvider || 'gemini';
+                        const classifierExternalProvider = settings.autoRouteLlmExternalProvider || externalProvider;
                         const classifierModel = settings.autoRouteLlmModel || externalModel;
+                        const classifierApiKey = settings.autoRouteLlmApiKey || SettingsService.getApiKey(classifierExternalProvider);
+                        const classifierBaseUrl = settings.autoRouteLlmCustomBaseUrl || SettingsService.getCustomBaseUrl();
+
                         let response: string;
 
-                        // Use the currently selected provider for classification
-                        if (provider === 'gemini') {
+                        // Use the classifier-configured provider
+                        if (classifierProvider === 'gemini') {
                             // Use Gemini for classification
                             const classifyResult = await GeminiService.generateReasoningTrace(
                                 classifierPrompt,
@@ -1585,12 +1580,12 @@ export default function App() {
                             );
                             response = classifyResult.answer || classifyResult.reasoning || '';
                         } else {
-                            // Use external provider
+                            // Use external provider configured for classifier
                             const classifyResult = await ExternalApiService.callExternalApi({
-                                provider: externalProvider,
-                                apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
+                                provider: classifierExternalProvider as ExternalProvider,
+                                apiKey: classifierApiKey,
                                 model: classifierModel,
-                                customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
+                                customBaseUrl: classifierBaseUrl,
                                 systemPrompt: 'You are a task classifier. Output exactly ONE word.',
                                 userPrompt: classifierPrompt,
                                 maxRetries: 1,
@@ -1806,65 +1801,84 @@ export default function App() {
                 </div>
                 {phase.enabled && (
                     <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                                <label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label>
-                                <select value={phase.provider} onChange={e => updateDeepPhase(phaseId, { provider: e.target.value as ProviderType })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none">
-                                    <option value="gemini">Gemini</option>
-                                    <option value="external">External</option>
-                                </select>
-                            </div>
-                            {phase.provider === 'external' && (
-                                <div className="space-y-1">
-                                    <label className="text-[10px] text-slate-500 font-bold uppercase">Service</label>
-                                    <select value={phase.externalProvider} onChange={e => updateDeepPhase(phaseId, { externalProvider: e.target.value as ExternalProvider })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none">
-                                        {EXTERNAL_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}
-                                    </select>
-                                </div>
-                            )}
-                        </div>
-                        {phase.provider === 'external' && (
-                            <>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
-                                    <input
-                                        type="password"
-                                        value={phase.apiKey}
-                                        onChange={e => updateDeepPhase(phaseId, { apiKey: e.target.value })}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
-                                        placeholder={SettingsService.getApiKey(phase.externalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
-                                    />
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
-                                    <input type="text" value={phase.model} onChange={e => updateDeepPhase(phaseId, { model: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none" />
-                                </div>
-                                {phase.externalProvider === 'other' && (
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
-                                        <input
-                                            type="text"
-                                            value={phase.customBaseUrl}
-                                            onChange={e => updateDeepPhase(phaseId, { customBaseUrl: e.target.value })}
-                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
-                                            placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
-                                        />
-                                    </div>
-                                )}
-                            </>
-                        )}
                         <div className="space-y-1">
-                            <div className="flex justify-between items-center mb-1">
-                                <label className="text-[10px] text-slate-500 font-bold uppercase">Phase System Prompt</label>
-                                <button onClick={() => copyDeepConfigToAll(phaseId)} className="text-[9px] text-indigo-400 hover:text-indigo-300 underline">Apply Config to All Phases</button>
-                            </div>
-                            <textarea value={phase.systemPrompt} onChange={e => updateDeepPhase(phaseId, { systemPrompt: e.target.value })} className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-2 text-[10px] font-mono text-slate-300 focus:border-indigo-500 outline-none resize-y" spellCheck={false} />
+                            <label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label>
+                            <select
+                                value={phase.provider === 'gemini' ? 'gemini' : phase.externalProvider}
+                                onChange={e => {
+                                    const val = e.target.value;
+                                    if (val === 'gemini') {
+                                        updateDeepPhase(phaseId, { provider: 'gemini', model: 'gemini-2.0-flash-exp' });
+                                    } else {
+                                        const newProvider = val as ExternalProvider;
+                                        const settings = SettingsService.getSettings();
+                                        const defaultModel = settings.providerDefaultModels?.[newProvider] || '';
+                                        updateDeepPhase(phaseId, {
+                                            provider: 'external',
+                                            externalProvider: newProvider,
+                                            apiKey: SettingsService.getApiKey(newProvider) || '',
+                                            model: defaultModel
+                                        });
+                                    }
+                                }}
+                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                            >
+                                <option value="gemini">Native Gemini</option>
+                                {EXTERNAL_PROVIDERS.map(ep => (
+                                    <option key={ep} value={ep}>{ep === 'other' ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}</option>
+                                ))}
+                            </select>
                         </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
+                            <input
+                                type="text"
+                                value={phase.model}
+                                onChange={e => updateDeepPhase(phaseId, { model: e.target.value })}
+                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                                placeholder="Model ID (e.g. gemini-2.0-flash-exp)"
+                            />
+                        </div>
+
+                        {phase.provider === 'external' && (
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
+                                <input
+                                    type="password"
+                                    value={phase.apiKey}
+                                    onChange={e => updateDeepPhase(phaseId, { apiKey: e.target.value })}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                                    placeholder={SettingsService.getApiKey(phase.externalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
+                                />
+                            </div>
+                        )}
+
+                        {phase.provider === 'external' && phase.externalProvider === 'other' && (
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
+                                <input
+                                    type="text"
+                                    value={phase.customBaseUrl}
+                                    onChange={e => updateDeepPhase(phaseId, { customBaseUrl: e.target.value })}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                                    placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
+                                />
+                            </div>
+                        )}
                     </div>
                 )}
+                <div className="space-y-1">
+                    <div className="flex justify-between items-center mb-1">
+                        <label className="text-[10px] text-slate-500 font-bold uppercase">Phase System Prompt</label>
+                        <button onClick={() => copyDeepConfigToAll(phaseId)} className="text-[9px] text-indigo-400 hover:text-indigo-300 underline">Apply Config to All Phases</button>
+                    </div>
+                    <textarea value={phase.systemPrompt} onChange={e => updateDeepPhase(phaseId, { systemPrompt: e.target.value })} className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-2 text-[10px] font-mono text-slate-300 focus:border-indigo-500 outline-none resize-y" spellCheck={false} />
+                </div>
             </div>
-        );
-    };
+        )
+    }
+
 
 
 
@@ -2222,23 +2236,74 @@ export default function App() {
                             </div>
                             {engineMode === 'regular' ? (
                                 <div className="animate-in fade-in slide-in-from-left-2 duration-300 space-y-4">
-                                    <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
-                                        <button onClick={() => setProvider('gemini')} className={`flex-1 py-1.5 text-xs font-medium rounded transition-all capitalize ${provider === 'gemini' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Native Gemini</button>
-                                        <button onClick={() => setProvider('external')} className={`flex-1 py-1.5 text-xs font-medium rounded transition-all capitalize ${provider === 'external' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>External</button>
+                                    <div className="bg-slate-950 p-1 rounded-lg border border-slate-800">
+                                        <select
+                                            value={provider === 'gemini' ? 'gemini' : externalProvider}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                const settings = SettingsService.getSettings();
+
+                                                if (val === 'gemini') {
+                                                    setProvider('gemini');
+                                                    // Set default Gemini model if switching to it
+                                                    setExternalModel('gemini-2.0-flash-exp');
+                                                } else {
+                                                    const newProvider = val as ExternalProvider;
+                                                    setProvider('external');
+                                                    setExternalProvider(newProvider);
+
+                                                    // Auto-load API Key and Base URL
+                                                    const savedKey = SettingsService.getApiKey(newProvider);
+                                                    setExternalApiKey(savedKey || '');
+
+                                                    // Auto-load default model
+                                                    const defaultModel = settings.providerDefaultModels?.[newProvider] || '';
+                                                    setExternalModel(defaultModel);
+
+                                                    if (newProvider === 'other') {
+                                                        const savedBaseUrl = SettingsService.getCustomBaseUrl();
+                                                        setCustomBaseUrl(savedBaseUrl || '');
+                                                    }
+                                                }
+                                            }}
+                                            className="w-full bg-transparent text-xs font-bold text-white outline-none px-2 py-1 cursor-pointer"
+                                        >
+                                            <option value="gemini" className="bg-slate-950 text-indigo-400 font-bold">Native Gemini</option>
+                                            {EXTERNAL_PROVIDERS.map(ep => (
+                                                <option key={ep} value={ep} className="bg-slate-950 text-slate-200">
+                                                    {ep === 'other' ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}
+                                                </option>
+                                            ))}
+                                        </select>
                                     </div>
-                                    {provider === 'gemini' ? (
-                                        <div className="p-3 bg-indigo-500/5 border border-indigo-500/10 rounded-lg">
-                                            <div className="flex items-center gap-2 mb-2"><Sparkles className="w-4 h-4 text-indigo-400" /><span className="text-sm font-medium text-indigo-200">Gemini 3 Flash</span></div>
-                                            <p className="text-[10px] text-indigo-300/70">Optimized for high-throughput reasoning tasks using Google's latest preview model.</p>
+
+                                    <div className="space-y-3">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
+                                            <input
+                                                type="text"
+                                                value={externalModel}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalModel(e.target.value)}
+                                                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
+                                                placeholder={provider === 'gemini' ? 'gemini-2.0-flash-exp' : 'Model ID'}
+                                            />
                                         </div>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label><select value={externalProvider} onChange={handleExternalProviderChange} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none">{EXTERNAL_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}</select></div>
-                                            {externalProvider === 'other' && <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label><input type="text" value={customBaseUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>}
-                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label><input type="password" value={externalApiKey} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
-                                            <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label><input type="text" value={externalModel} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalModel(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" /></div>
-                                        </div>
-                                    )}
+
+                                        {provider === 'external' && (
+                                            <>
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
+                                                    <input type="password" value={externalApiKey} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" />
+                                                </div>
+                                                {externalProvider === 'other' && (
+                                                    <div className="space-y-1">
+                                                        <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
+                                                        <input type="text" value={customBaseUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"} />
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="animate-in fade-in slide-in-from-right-2 duration-300">
@@ -2788,6 +2853,6 @@ export default function App() {
                     await refreshLogs();
                 }}
             />
-        </div>
+        </div >
     );
 }

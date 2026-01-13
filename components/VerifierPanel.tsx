@@ -709,8 +709,10 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                         onChange={e => setRewriterConfig(prev => ({ ...prev, externalProvider: e.target.value as ExternalProvider }))}
                                         className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
                                     >
-                                        {AVAILABLE_PROVIDERS.map(p => (
-                                            <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                                        {['gemini', ...AVAILABLE_PROVIDERS].map(p => (
+                                            <option key={p} value={p}>
+                                                {p === 'gemini' ? 'Native Gemini' : p.charAt(0).toUpperCase() + p.slice(1)}
+                                            </option>
                                         ))}
                                     </select>
                                 </div>
