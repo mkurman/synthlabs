@@ -689,7 +689,7 @@ ${outsideThinkContent}
         });
 
         newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
-        outsideThinkContent = deepResult.answer || outsideThinkContent
+        outsideThinkContent = deepResult.answer || outsideThinkContent;
       } else {
         // Use regular converter
         const prompt = converterPrompt || PromptService.getPrompt('converter', 'writer', promptSet);
