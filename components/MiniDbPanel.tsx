@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Database, Activity, Server, Upload } from 'lucide-react';
+import { Database, Upload } from 'lucide-react';
 
 interface MiniDbPanelProps {
   totalRecords: number;
