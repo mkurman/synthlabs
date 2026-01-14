@@ -1501,7 +1501,7 @@ export default function App() {
     // Sync all unsaved items from current session to Firebase
     const syncAllUnsavedToDb = async () => {
         if (!FirebaseService.isFirebaseConfigured()) {
-            alert("Firebase not configured!");
+            alert("Firebase is not configured. Please configure Firebase in Settings to enable cloud sync.");
             return;
         }
 
