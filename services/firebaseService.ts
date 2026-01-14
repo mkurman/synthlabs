@@ -8,7 +8,6 @@ let app: FirebaseApp | null = null;
 let currentConfigStr: string | null = null;
 
 // Recursively remove undefined values from objects/arrays (Firestore doesn't support undefined)
-// Recursively remove undefined values from objects/arrays (Firestore doesn't support undefined)
 const sanitizeForFirestore = (obj: any, seen = new WeakSet()): any => {
     if (obj === undefined) return null;
     if (obj === null || typeof obj !== 'object') return obj;
