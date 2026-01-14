@@ -41,6 +41,7 @@ export interface SynthLogItem {
     duration: number;
   }>;
   storageError?: string;
+  savedToDb?: boolean; // Track if this item has been synced to Firebase
 }
 
 export interface VerifierItem extends SynthLogItem {

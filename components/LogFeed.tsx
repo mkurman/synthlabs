@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle } from 'lucide-react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import { SynthLogItem } from '../types';
@@ -13,12 +13,15 @@ interface LogFeedProps {
   onPageChange: (page: number) => void;
   onRetry?: (id: string) => void;
   onRetrySave?: (id: string) => void;
+  onSaveToDb?: (id: string) => void;
   retryingIds?: Set<string>;
+  savingIds?: Set<string>;
+  isProdMode?: boolean;
 }
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
-  onRetry, onRetrySave, retryingIds
+  onRetry, onRetrySave, onSaveToDb, retryingIds, savingIds, isProdMode
 }) => {
   const [showLatestOnly, setShowLatestOnly] = useState(false);
 
@@ -143,6 +146,19 @@ const LogFeed: React.FC<LogFeedProps> = ({
                   <Database className="w-3 h-3" />
                   <AlertTriangle className="w-3 h-3" />
                   <span className="hidden sm:inline">Retry Save</span>
+                </button>
+              )}
+
+              {/* Save to DB Button - for unsaved items in prod mode */}
+              {isProdMode && !item.savedToDb && !item.isError && !item.storageError && onSaveToDb && (
+                <button
+                  onClick={() => onSaveToDb(item.id)}
+                  disabled={savingIds?.has(item.id)}
+                  className="flex items-center gap-1.5 bg-emerald-950/50 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-500/20 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Save to Firebase"
+                >
+                  <Upload className={`w-3 h-3 ${savingIds?.has(item.id) ? 'animate-pulse' : ''}`} />
+                  <span className="hidden sm:inline">Save to DB</span>
                 </button>
               )}
             </div>

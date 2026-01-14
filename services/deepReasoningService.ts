@@ -193,6 +193,7 @@ ${writerResult.query}
 ${writerResult.reasoning}
 
 Instructions: Based on the reasoning trace above, write the final high-quality response.
+CRITICAL: Output valid JSON only. Format: { "answer": "Your final refined answer string here" }
 `;
       const rewriterRes = await executePhase(
         config.phases.rewriter,
@@ -206,12 +207,38 @@ Instructions: Based on the reasoning trace above, write the final high-quality r
       deepTrace.rewriter = { model: rewriterRes.model, input: rewriterRes.input, output: rewriterRes.result, timestamp: rewriterRes.timestamp, duration: rewriterRes.duration };
       onPhaseComplete?.('rewriter');
 
-      if (rewriterRes.result && rewriterRes.result.answer) {
-        // Overwrite the original answer with the rewritten one
-        writerResult.answer = rewriterRes.result.answer.trim();
-      } else if (typeof rewriterRes.result === 'string') {
-        // Fallback if rewriter output string directly
-        writerResult.answer = rewriterRes.result.trim();
+      // Robustly extract answer from various possible keys (case-insensitive)
+      let newAnswer = "";
+      if (rewriterRes.result) {
+        if (typeof rewriterRes.result === 'string') {
+          newAnswer = rewriterRes.result;
+        } else if (typeof rewriterRes.result === 'object') {
+          // Flatten keys to lowercase
+          const normalized = Object.keys(rewriterRes.result).reduce((acc, key) => {
+            acc[key.toLowerCase()] = rewriterRes.result[key];
+            return acc;
+          }, {} as Record<string, any>);
+
+          newAnswer = normalized.answer ||
+            normalized.response ||
+            normalized.content ||
+            normalized.text ||
+            normalized.res ||
+            normalized.output ||
+            "";
+        }
+      }
+
+      if (newAnswer && newAnswer.trim().length > 0) {
+        // Explicitly set the answer on the writerResult object
+        writerResult.answer = newAnswer.trim();
+        logger.log("✅ Rewriter successfully refined the answer", newAnswer.substring(0, 50) + "...");
+      } else {
+        logger.warn("⚠️ Rewriter returned empty or invalid format, keeping original answer.", {
+          result: rewriterRes.result,
+          keys: typeof rewriterRes.result === 'object' ? Object.keys(rewriterRes.result) : 'not-object',
+          normalizedKeys: typeof rewriterRes.result === 'object' ? Object.keys(rewriterRes.result).map(k => k.toLowerCase()) : []
+        });
       }
     } else {
       // Use Derivation result as the answer if Rewriter is disabled
@@ -662,6 +689,7 @@ ${outsideThinkContent}
         });
 
         newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
+        outsideThinkContent = deepResult.answer || outsideThinkContent
       } else {
         // Use regular converter
         const prompt = converterPrompt || PromptService.getPrompt('converter', 'writer', promptSet);

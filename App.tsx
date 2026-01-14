@@ -253,6 +253,8 @@ export default function App() {
 
     // Retry State
     const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+    // DB save tracking state
+    const [savingToDbIds, setSavingToDbIds] = useState<Set<string>>(new Set());
 
     // UI State for Deep Config
     const [activeDeepTab, setActiveDeepTab] = useState<'meta' | 'retrieval' | 'derivation' | 'writer' | 'rewriter'>('meta');
@@ -1117,7 +1119,7 @@ export default function App() {
         setSessionName(session.name);
         // Pass sessionUid from the saved session to restore it
         const savedSessionUid = (session as any).sessionUid;
-        restoreSession(session.config, savedSessionUid);
+        restoreSession(session.config || {}, savedSessionUid);
         setShowCloudLoadModal(false);
 
         // Sync existing log count from Firestore for this session
@@ -1462,9 +1464,9 @@ export default function App() {
     };
 
     const retryAllFailed = async () => {
-        const failedItems = visibleLogs.filter(l => l.isError);
+        const failedItems = visibleLogs.filter((l: SynthLogItem) => l.isError);
         if (failedItems.length === 0) return;
-        const failedIds = failedItems.map(l => l.id);
+        const failedIds = failedItems.map((l: SynthLogItem) => l.id);
         setRetryingIds(prev => new Set([...prev, ...failedIds]));
         const queue = [...failedItems];
         let activeWorkers = 0;
@@ -1482,7 +1484,10 @@ export default function App() {
                     activeWorkers--;
                     if (result) {
                         if (environment === 'production' && !result.isError) {
-                            try { await FirebaseService.saveLogToFirebase(result); } catch (e) { }
+                            try {
+                                await FirebaseService.saveLogToFirebase(result);
+                                result.savedToDb = true;
+                            } catch (e) { }
                         }
                         LogStorageService.updateLog(sessionUid, result);
                         refreshLogs();
@@ -1491,6 +1496,84 @@ export default function App() {
             }
         };
         processQueue();
+    };
+
+    // Sync all unsaved items from current session to Firebase
+    const syncAllUnsavedToDb = async () => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            alert("Firebase not configured!");
+            return;
+        }
+
+        const allLogs = await LogStorageService.getAllLogs(sessionUid);
+        const unsavedLogs = allLogs.filter((l: SynthLogItem) => !l.savedToDb && !l.isError);
+
+        if (unsavedLogs.length === 0) {
+            alert("No unsaved items to sync.");
+            return;
+        }
+
+        const confirm = window.confirm(`Sync ${unsavedLogs.length} unsaved items to Firebase?`);
+        if (!confirm) return;
+
+        let synced = 0;
+        let failed = 0;
+
+        for (const log of unsavedLogs) {
+            try {
+                // Update sessionUid to current Firebase session for proper association
+                const logToSave = { ...log, sessionUid: sessionUid };
+                await FirebaseService.saveLogToFirebase(logToSave);
+                log.savedToDb = true;
+                log.sessionUid = sessionUid; // Also update local copy
+                await LogStorageService.updateLog(sessionUid, log);
+                synced++;
+            } catch (e: any) {
+                logger.warn(`Failed to sync item ${log.id}:`, e);
+                failed++;
+            }
+        }
+
+        updateDbStats();
+        refreshLogs();
+        alert(`Synced ${synced} items to Firebase.${failed > 0 ? ` ${failed} failed.` : ''}`);
+    };
+
+    // Count unsaved items in current session
+    const getUnsavedCount = (): number => {
+        return visibleLogs.filter((l: SynthLogItem) => !l.savedToDb && !l.isError).length;
+    };
+
+    // Save a single item to Firebase
+    const saveItemToDb = async (id: string) => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            alert("Firebase not configured!");
+            return;
+        }
+
+        const log = visibleLogs.find((l: SynthLogItem) => l.id === id);
+        if (!log || log.savedToDb || log.isError) return;
+
+        setSavingToDbIds((prev: Set<string>) => new Set([...prev, id]));
+
+        try {
+            const logToSave = { ...log, sessionUid: sessionUid };
+            await FirebaseService.saveLogToFirebase(logToSave);
+            log.savedToDb = true;
+            log.sessionUid = sessionUid;
+            await LogStorageService.updateLog(sessionUid, log);
+            updateDbStats();
+            refreshLogs();
+        } catch (e: any) {
+            logger.warn(`Failed to save item ${id}:`, e);
+            alert(`Failed to save: ${e.message}`);
+        } finally {
+            setSavingToDbIds((prev: Set<string>) => {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+            });
+        }
     };
 
     const startGeneration = async (append = false) => {
@@ -1512,14 +1595,16 @@ export default function App() {
             if (environment === 'production' && FirebaseService.isFirebaseConfigured()) {
                 try {
                     const sessionName = `${appMode === 'generator' ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
-                    newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel);
+                    const sessionConfig = getSessionData(); // Include config so session can be restored
+                    newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel, sessionConfig);
                     logger.log(`Created Firebase session: ${newUid}`);
                 } catch (e) {
                     logger.warn("Failed to create Firebase session, using local UUID", e);
-                    newUid = crypto.randomUUID();
+                    // Safe UUID fallback
+                    newUid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
                 }
             } else {
-                newUid = crypto.randomUUID();
+                newUid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
             }
 
             setSessionUid(newUid);
@@ -1555,6 +1640,7 @@ export default function App() {
         setError(null);
         setIsRunning(true);
         abortControllerRef.current = new AbortController();
+
         try {
             // Updated item structure to preserve original row context
             interface WorkItem {
@@ -1929,6 +2015,9 @@ export default function App() {
                         if (currentEnv === 'production' && !result.isError && FirebaseService.isFirebaseConfigured()) {
                             try {
                                 await FirebaseService.saveLogToFirebase(result);
+                                // Mark as saved to DB and update local storage
+                                result.savedToDb = true;
+                                await LogStorageService.updateLog(sessionUidRef.current, result);
                                 updateDbStats();
                             } catch (saveErr: any) {
                                 console.error("Firebase Sync Error", saveErr);
@@ -2059,7 +2148,7 @@ export default function App() {
                                 <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
                                 <input
                                     type="password"
-                                    value={phase.apiKey}
+                                    value={phase.apiKey || ''}
                                     onChange={e => updateDeepPhase(phaseId, { apiKey: e.target.value })}
                                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
                                     placeholder={SettingsService.getApiKey(phase.externalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
@@ -2072,7 +2161,7 @@ export default function App() {
                                 <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
                                 <input
                                     type="text"
-                                    value={phase.customBaseUrl}
+                                    value={phase.customBaseUrl || ''}
                                     onChange={e => updateDeepPhase(phaseId, { customBaseUrl: e.target.value })}
                                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
                                     placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
@@ -2086,7 +2175,7 @@ export default function App() {
                         <label className="text-[10px] text-slate-500 font-bold uppercase">Phase System Prompt</label>
                         <button onClick={() => copyDeepConfigToAll(phaseId)} className="text-[9px] text-indigo-400 hover:text-indigo-300 underline">Apply Config to All Phases</button>
                     </div>
-                    <textarea value={phase.systemPrompt} onChange={e => updateDeepPhase(phaseId, { systemPrompt: e.target.value })} className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-2 text-[10px] font-mono text-slate-300 focus:border-indigo-500 outline-none resize-y" spellCheck={false} />
+                    <textarea value={phase.systemPrompt || ''} onChange={e => updateDeepPhase(phaseId, { systemPrompt: e.target.value })} className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-2 text-[10px] font-mono text-slate-300 focus:border-indigo-500 outline-none resize-y" spellCheck={false} />
                 </div>
             </div>
         )
@@ -2161,9 +2250,9 @@ export default function App() {
                                                     <Calendar className="w-3 h-3" /> {new Date(session.createdAt).toLocaleString()}
                                                 </span>
                                                 <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">
-                                                    {session.config.appMode === 'generator' ? 'GEN' : 'CONV'}
+                                                    {session.config?.appMode === 'generator' ? 'GEN' : 'CONV'}
                                                 </span>
-                                                {session.config.engineMode === 'deep' && (
+                                                {session.config?.engineMode === 'deep' && (
                                                     <span className="text-[10px] bg-indigo-900/30 text-indigo-400 px-1.5 py-0.5 rounded">
                                                         DEEP
                                                     </span>
@@ -2427,6 +2516,8 @@ export default function App() {
                                         totalRecords={dbStats.total}
                                         sessionRecords={dbStats.session}
                                         recentHistory={sparklineHistory}
+                                        unsavedCount={getUnsavedCount()}
+                                        onSyncAll={syncAllUnsavedToDb}
                                     />
                                 </div>
                             )}
@@ -2539,12 +2630,12 @@ export default function App() {
                                             <>
                                                 <div className="space-y-1">
                                                     <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
-                                                    <input type="password" value={externalApiKey} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" />
+                                                    <input type="password" value={externalApiKey || ''} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" />
                                                 </div>
                                                 {externalProvider === 'other' && (
                                                     <div className="space-y-1">
                                                         <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
-                                                        <input type="text" value={customBaseUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"} />
+                                                        <input type="text" value={customBaseUrl || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"} />
                                                     </div>
                                                 )}
                                             </>
@@ -2775,7 +2866,7 @@ export default function App() {
                                         <select value={topicCategory} onChange={e => setTopicCategory(e.target.value)} className="bg-slate-950 border border-slate-700 text-[10px] text-slate-300 rounded px-2 py-1 flex-1 outline-none">{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select>
                                         <button onClick={generateRandomTopic} disabled={isGeneratingTopic} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded p-1.5 text-slate-300 transition-colors disabled:opacity-50"><Dice5 className={`w-3.5 h-3.5 ${isGeneratingTopic ? 'animate-spin' : ''}`} /></button>
                                     </div>
-                                    <textarea value={geminiTopic} onChange={e => setGeminiTopic(e.target.value)} className="w-full h-20 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 outline-none resize-none" placeholder="Enter topic..." />
+                                    <textarea value={geminiTopic || ''} onChange={e => setGeminiTopic(e.target.value)} className="w-full h-20 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 outline-none resize-none" placeholder="Enter topic..." />
                                     <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Items to Generate</label><input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none" /></div>
                                 </div>
                             )}
@@ -2784,13 +2875,13 @@ export default function App() {
                                     <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-200">Fetches rows from a public HF dataset.</div>
                                     <div className="space-y-1 relative" onBlur={() => setTimeout(() => setShowHFResults(false), 200)}>
                                         <label className="text-[10px] text-slate-500 font-bold uppercase">Dataset ID</label>
-                                        <div className="relative"><input type="text" value={hfConfig.dataset} onChange={e => handleHFSearch(e.target.value)} onFocus={() => hfSearchResults.length > 0 && setShowHFResults(true)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none pr-8" placeholder="Search e.g. fka/awesome-chatgpt-prompts" /><div className="absolute right-2 top-1.5 text-slate-500 pointer-events-none">{isSearchingHF ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}</div></div>
+                                        <div className="relative"><input type="text" value={hfConfig.dataset || ''} onChange={e => handleHFSearch(e.target.value)} onFocus={() => hfSearchResults.length > 0 && setShowHFResults(true)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none pr-8" placeholder="Search e.g. fka/awesome-chatgpt-prompts" /><div className="absolute right-2 top-1.5 text-slate-500 pointer-events-none">{isSearchingHF ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}</div></div>
                                         {showHFResults && hfSearchResults.length > 0 && (<div className="absolute z-10 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-48 overflow-y-auto mt-1">{hfSearchResults.map(result => (<button key={result} onClick={() => handleSelectHFDataset(result)} className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition-colors border-b border-slate-800 last:border-0">{result}</button>))}</div>)}
                                     </div>
                                     {/* ... (HF Config Inputs) ... */}
                                     <div className="flex gap-2">
-                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Config</label>{hfStructure.configs.length > 0 ? (<select value={hfConfig.config} onChange={e => handleConfigChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.configs.map(c => <option key={c} value={c}>{c}</option>)}</select>) : (<input type="text" value={hfConfig.config} onChange={e => setHfConfig({ ...hfConfig, config: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
-                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Split</label>{hfStructure.splits[hfConfig.config]?.length > 0 ? (<select value={hfConfig.split} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.splits[hfConfig.config].map(s => <option key={s} value={s}>{s}</option>)}</select>) : (<input type="text" value={hfConfig.split} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
+                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Config</label>{hfStructure.configs.length > 0 ? (<select value={hfConfig.config || ''} onChange={e => handleConfigChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.configs.map(c => <option key={c} value={c}>{c}</option>)}</select>) : (<input type="text" value={hfConfig.config || ''} onChange={e => setHfConfig({ ...hfConfig, config: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
+                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Split</label>{hfStructure.splits[hfConfig.config]?.length > 0 ? (<select value={hfConfig.split || ''} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.splits[hfConfig.config].map(s => <option key={s} value={s}>{s}</option>)}</select>) : (<input type="text" value={hfConfig.split || ''} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
                                     </div>
                                     <div className="flex gap-2">
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Rows to Fetch</label><input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" /></div>
@@ -3098,7 +3189,10 @@ export default function App() {
                                 onPageChange={handlePageChange}
                                 onRetry={retryItem}
                                 onRetrySave={retrySave}
+                                onSaveToDb={saveItemToDb}
                                 retryingIds={retryingIds}
+                                savingIds={savingToDbIds}
+                                isProdMode={environment === 'production'}
                             />
                         ) : (
                             <AnalyticsDashboard logs={visibleLogs} />

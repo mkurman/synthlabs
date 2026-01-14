@@ -8,17 +8,25 @@ let app: FirebaseApp | null = null;
 let currentConfigStr: string | null = null;
 
 // Recursively remove undefined values from objects/arrays (Firestore doesn't support undefined)
-const sanitizeForFirestore = (obj: any): any => {
+// Recursively remove undefined values from objects/arrays (Firestore doesn't support undefined)
+const sanitizeForFirestore = (obj: any, seen = new WeakSet()): any => {
     if (obj === undefined) return null;
     if (obj === null || typeof obj !== 'object') return obj;
+
+    // Detect circular references
+    if (seen.has(obj)) {
+        return null; // or '[Circular]' but null is safer for Firestore
+    }
+    seen.add(obj);
+
     if (Array.isArray(obj)) {
-        return obj.map(item => sanitizeForFirestore(item));
+        return obj.map(item => sanitizeForFirestore(item, seen));
     }
     const cleaned: any = {};
     for (const key of Object.keys(obj)) {
         const value = obj[key];
         if (value !== undefined) {
-            cleaned[key] = sanitizeForFirestore(value);
+            cleaned[key] = sanitizeForFirestore(value, seen);
         }
     }
     return cleaned;
@@ -231,15 +239,22 @@ export const saveSessionToFirebase = async (sessionData: any, name: string) => {
 
 // Create a new session in Firebase and return its ID for use as sessionUid
 // This ensures synth_sessions and synth_logs are always in sync
-export const createSessionInFirebase = async (name?: string, source?: string): Promise<string> => {
+export const createSessionInFirebase = async (name?: string, source?: string, config?: any): Promise<string> => {
     if (!db) throw new Error("Firebase not initialized");
     try {
-        const docRef = await addDoc(collection(db, 'synth_sessions'), {
+        const docData: any = {
             name: name || `Auto Session ${new Date().toLocaleString()}`,
             source: source,
             createdAt: new Date().toISOString(),
             isAutoCreated: true
-        });
+        };
+
+        // Save config if provided (ensures sessions can be restored)
+        if (config) {
+            docData.config = sanitizeForFirestore(config);
+        }
+
+        const docRef = await addDoc(collection(db, 'synth_sessions'), docData);
         return docRef.id;
     } catch (e) {
         console.error("Error creating session", e);
