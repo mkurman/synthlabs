@@ -6,7 +6,7 @@ export const PROVIDER_URLS: Record<string, string> = {
   "qwen": "https://api.qwen.com/v1",
   "qwen-deepinfra": "https://api.deepinfra.com/v1/openai",
   "kimi": "https://api.moonshot.ai/v1",
-  "z.ai": "https://api.z.ai/v1",
+  "z.ai": "https://api.z.ai/api/paas/v4",
   "openrouter": "https://openrouter.ai/api/v1",
   "cerebras": "https://api.cerebras.ai/v1",
   "together": "https://api.together.xyz/v1",

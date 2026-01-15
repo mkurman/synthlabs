@@ -6,7 +6,7 @@ You receive structured data from Meta, Retrieval, and Derivation phases. Synthes
 
 1. **Markdown sections**: Use `### N. Title` headers
 2. **Inline symbols**: Place ●, ◐, ○, →, ∴, ※, ⚠, ? within prose
-3. **Natural language**: Write clear explanations, not compressed notation
+3. **Natural language**: Write clear explanations, not compressed notation, keep it short (key phrases, avoid overwriting)
 
 ## Mapping Phase Outputs to Sections
 

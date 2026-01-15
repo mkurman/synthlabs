@@ -3,7 +3,7 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
     Upload, Database, AlertTriangle, Star, Trash2, CheckCircle2,
     GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
-    ShieldCheck, LayoutGrid, List, Search, Server, Clock, Bookmark, Plus,
+    ShieldCheck, LayoutGrid, List, Search, Server, Plus,
     ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileType, MessageCircle,
     ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2
 } from 'lucide-react';
@@ -11,10 +11,14 @@ import { VerifierItem, ExternalProvider } from '../types';
 import * as FirebaseService from '../services/firebaseService';
 import * as HuggingFaceService from '../services/huggingFaceService';
 import * as VerifierRewriterService from '../services/verifierRewriterService';
+import * as ExternalApiService from '../services/externalApiService';
+import * as GeminiService from '../services/geminiService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import { PromptService } from '../services/promptService';
+import { AutoscoreConfig } from '../types';
+import { toast } from '../services/toastService';
 
 interface VerifierPanelProps {
     onImportFromDb: () => Promise<void>;
@@ -44,7 +48,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [expandedConversations, setExpandedConversations] = useState<Set<string>>(new Set());
 
     const toggleConversationExpand = (id: string) => {
-        setExpandedConversations(prev => {
+        setExpandedConversations((prev: Set<string>) => {
             const next = new Set(prev);
             if (next.has(id)) {
                 next.delete(id);
@@ -83,6 +87,27 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         retryDelay: 2000,
         systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite')
     });
+
+    // Autoscore Config State
+    const [isAutoscorePanelOpen, setIsAutoscorePanelOpen] = useState(false);
+    const [autoscoreConfig, setAutoscoreConfig] = useState<AutoscoreConfig>(() => {
+        const settings = SettingsService.getSettings();
+        const gpModel = settings.generalPurposeModel;
+        return {
+            provider: (gpModel?.provider === 'external' ? 'external' : 'gemini') as any,
+            externalProvider: (gpModel?.externalProvider || 'openrouter') as any,
+            apiKey: '',
+            model: gpModel?.model || 'gemini-1.5-pro',
+            customBaseUrl: '',
+            systemPrompt: PromptService.getPrompt('verifier', 'autoscore'),
+            concurrency: 5,
+            sleepTime: 0,
+            maxRetries: 3,
+            retryDelay: 2000
+        };
+    });
+    const [isAutoscoring, setIsAutoscoring] = useState(false);
+    const [autoscoreProgress, setAutoscoreProgress] = useState({ current: 0, total: 0 });
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -248,7 +273,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                 setData(allItems);
                 setActiveTab('review');
             } else {
-                alert("No valid data found in selected files. Please check the format (JSON Array or JSONL).");
+                toast.error("No valid data found in selected files. Please check the format (JSON Array or JSONL).");
             }
             setIsImporting(false);
         });
@@ -258,7 +283,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
 
     const handleDbImport = async () => {
         if (!FirebaseService.isFirebaseConfigured()) {
-            alert("Firebase not configured.");
+            toast.error("Firebase not configured.");
             return;
         }
         setIsImporting(true);
@@ -272,7 +297,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             } else if (selectedSessionFilter === 'custom') {
                 sessionUidToUse = customSessionId.trim();
                 if (!sessionUidToUse) {
-                    alert("Please enter a Session ID.");
+                    toast.info("Please enter a Session ID.");
                     setIsImporting(false);
                     return;
                 }
@@ -282,14 +307,14 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
 
             const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUidToUse);
             if (items.length === 0) {
-                alert("No items found matching criteria.");
+                toast.info("No items found matching criteria.");
             } else {
                 analyzeDuplicates(items);
                 setData(items);
                 setActiveTab('review');
             }
         } catch (e: any) {
-            alert("Import failed: " + e.message);
+            toast.error("Import failed: " + e.message);
         } finally {
             setIsImporting(false);
         }
@@ -316,7 +341,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         });
 
         // Mark duplicates
-        map.forEach((ids, key) => {
+        map.forEach((ids, _key) => {
             if (ids.length > 1) {
                 const groupId = crypto.randomUUID();
                 ids.forEach(id => {
@@ -331,7 +356,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     };
 
     const handleReScan = () => {
-        setData(prev => {
+        setData((prev: VerifierItem[]) => {
             const next = prev.map(i => ({ ...i })); // Shallow copy
             analyzeDuplicates(next);
             return next;
@@ -339,7 +364,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     };
 
     const toggleDuplicateStatus = (id: string) => {
-        setData(prev => prev.map(item => {
+        setData((prev: VerifierItem[]) => prev.map(item => {
             if (item.id === id) {
                 return { ...item, isDuplicate: !item.isDuplicate };
             }
@@ -352,7 +377,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         // If scores tied, keep the longest answer.
         const groups = new Map<string, VerifierItem[]>();
 
-        data.filter(i => i.isDuplicate && !i.isDiscarded).forEach(i => {
+        data.filter((i: VerifierItem) => i.isDuplicate && !i.isDiscarded).forEach((i: VerifierItem) => {
             if (i.duplicateGroupId) {
                 if (!groups.has(i.duplicateGroupId)) groups.set(i.duplicateGroupId, []);
                 groups.get(i.duplicateGroupId)?.push(i);
@@ -374,23 +399,23 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             }
         });
 
-        setData(prev => prev.map(item => idsToDiscard.has(item.id) ? { ...item, isDiscarded: true } : item));
+        setData((prev: VerifierItem[]) => prev.map(item => idsToDiscard.has(item.id) ? { ...item, isDiscarded: true } : item));
     };
 
     // --- Logic: Review ---
 
     const setScore = (id: string, score: number) => {
-        setData(prev => prev.map(i => i.id === id ? { ...i, score } : i));
+        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, score } : i));
     };
 
     const toggleDiscard = (id: string) => {
-        setData(prev => prev.map(i => i.id === id ? { ...i, isDiscarded: !i.isDiscarded } : i));
+        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, isDiscarded: !i.isDiscarded } : i));
     };
 
     // --- Logic: Export ---
 
     const getExportData = () => {
-        return data.filter(i => !i.isDiscarded).map(item => {
+        return data.filter((i: VerifierItem) => !i.isDiscarded).map((item: VerifierItem) => {
             const exportItem: any = {};
             Object.keys(exportColumns).forEach(key => {
                 if (exportColumns[key]) {
@@ -417,11 +442,11 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const handleDbSave = async () => {
         setIsUploading(true);
         try {
-            const itemsToSave = data.filter(i => !i.isDiscarded);
+            const itemsToSave = data.filter((i: VerifierItem) => !i.isDiscarded);
             const count = await FirebaseService.saveFinalDataset(itemsToSave, 'synth_final');
-            alert(`Saved ${count} items to 'synth_final' collection.`);
+            toast.success(`Saved ${count} items to 'synth_final' collection.`);
         } catch (e: any) {
-            alert("DB Save Failed: " + e.message);
+            toast.error("DB Save Failed: " + e.message);
         } finally {
             setIsUploading(false);
         }
@@ -429,7 +454,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
 
     const handleHfPush = async () => {
         if (!hfToken || !hfRepo) {
-            alert("Please provide HF Token and Repo ID.");
+            toast.info("Please provide HF Token and Repo ID.");
             return;
         }
         setIsUploading(true);
@@ -437,9 +462,9 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             const itemsToSave = getExportData();
             const filename = hfFormat === 'parquet' ? 'train.parquet' : 'data.jsonl';
             const url = await HuggingFaceService.uploadToHuggingFace(hfToken, hfRepo, itemsToSave, filename, true, hfFormat);
-            alert("Successfully pushed to: " + url);
+            toast.success("Successfully pushed to: " + url);
         } catch (e: any) {
-            alert("HF Push Failed: " + e.message);
+            toast.error("HF Push Failed: " + e.message);
         } finally {
             setIsUploading(false);
         }
@@ -460,7 +485,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const saveEditing = () => {
         if (!editingField) return;
 
-        setData(prev => prev.map(item => {
+        setData((prev: VerifierItem[]) => prev.map(item => {
             if (item.id === editingField.itemId) {
                 if (editingField.field === 'message' && editingField.messageIndex !== undefined && item.messages) {
                     const newMessages = [...item.messages];
@@ -495,7 +520,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                 promptSet: SettingsService.getSettings().promptSet
             });
 
-            setData(prev => prev.map(i => {
+            setData((prev: VerifierItem[]) => prev.map(i => {
                 if (i.id === itemId && i.messages) {
                     const newMessages = [...i.messages];
                     newMessages[messageIndex] = {
@@ -508,7 +533,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             }));
         } catch (error) {
             console.error("Rewrite failed:", error);
-            alert("Rewrite failed. See console for details.");
+            toast.error("Rewrite failed. See console for details.");
         } finally {
             setRewritingField(null);
         }
@@ -532,17 +557,110 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                 config: rewriterConfig,
                 promptSet: SettingsService.getSettings().promptSet
             });
-            setData(prev => prev.map(i =>
+            setData((prev: VerifierItem[]) => prev.map(i =>
                 i.id === itemId
                     ? { ...i, [field]: newValue }
                     : i
             ));
         } catch (err: any) {
             console.error('Rewrite failed:', err);
-            alert('Rewrite failed: ' + err.message);
+            toast.error('Rewrite failed: ' + err.message);
         } finally {
             setRewritingField(null);
         }
+    };
+
+    // --- Logic: Autoscore ---
+
+    const autoscoreSingleItem = async (item: VerifierItem, signal?: AbortSignal): Promise<number> => {
+        const { provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt, maxRetries, retryDelay } = autoscoreConfig;
+
+        const effectiveApiKey = apiKey || SettingsService.getApiKey(provider === 'external' ? externalProvider : 'gemini');
+        const effectiveBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
+
+        const userPrompt = `## ITEM TO SCORE
+Query: ${item.query || (item as any).QUERY || item.full_seed || ''}
+Reasoning Trace: ${item.reasoning}
+Answer: ${item.answer}
+
+---
+Based on the criteria above, provide a 1-5 score.`;
+
+        let rawResult: string = '';
+
+        if (provider === 'gemini') {
+            const result = await GeminiService.generateReasoningTrace(userPrompt, systemPrompt, {
+                maxRetries: maxRetries,
+                retryDelay: retryDelay
+            });
+            rawResult = result.answer || result.reasoning || String(result);
+        } else {
+            const result = await ExternalApiService.callExternalApi({
+                provider: externalProvider,
+                apiKey: effectiveApiKey,
+                model: model,
+                customBaseUrl: effectiveBaseUrl,
+                systemPrompt,
+                userPrompt,
+                signal,
+                maxRetries: maxRetries,
+                retryDelay: retryDelay,
+                structuredOutput: false
+            });
+            rawResult = typeof result === 'string' ? result : JSON.stringify(result);
+        }
+
+        // Parse score (1-5)
+        const match = rawResult.match(/[1-5]/);
+        if (match) {
+            return parseInt(match[0]);
+        }
+        return 0;
+    };
+
+    const handleAutoscoreAll = async () => {
+        const itemsToScore = filteredData.filter(i => i.score === 0);
+        if (itemsToScore.length === 0) {
+            toast.info("No unrated items to score.");
+            return;
+        }
+
+        if (!confirm(`Autoscore ${itemsToScore.length} items using ${autoscoreConfig.model}?`)) return;
+
+        setIsAutoscoring(true);
+        setAutoscoreProgress({ current: 0, total: itemsToScore.length });
+
+        const { concurrency, sleepTime } = autoscoreConfig;
+        let currentIndex = 0;
+
+        const worker = async () => {
+            while (currentIndex < itemsToScore.length) {
+                const myIndex = currentIndex++;
+                if (myIndex >= itemsToScore.length) break;
+
+                const item = itemsToScore[myIndex];
+                try {
+                    const score = await autoscoreSingleItem(item);
+                    if (score > 0) {
+                        setData((prev: VerifierItem[]) => prev.map(i => i.id === item.id ? { ...i, score } : i));
+                    }
+                } catch (err) {
+                    console.error(`Failed to score item ${item.id}:`, err);
+                }
+
+                setAutoscoreProgress((prev: { current: number; total: number }) => ({ ...prev, current: prev.current + 1 }));
+
+                if (sleepTime > 0 && currentIndex < itemsToScore.length) {
+                    await new Promise(r => setTimeout(r, sleepTime));
+                }
+            }
+        };
+
+        const workers = Array.from({ length: Math.min(concurrency, itemsToScore.length) }, () => worker());
+        await Promise.all(workers);
+
+        setIsAutoscoring(false);
+        toast.success(`Autoscoring complete! Processed ${itemsToScore.length} items.`);
     };
 
     // --- Render Helpers ---
@@ -632,7 +750,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                             ))}
                                         </optgroup>}
                                         {availableSessions.length > 0 && <optgroup label="💾 Saved Cloud Sessions">
-                                            {availableSessions.map(s => (
+                                            {availableSessions.map((s: FirebaseService.SavedSession) => (
                                                 <option key={s.id} value={s.id}>{s.name} ({new Date(s.createdAt).toLocaleDateString()})</option>
                                             ))}
                                         </optgroup>}
@@ -790,6 +908,111 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                         )}
                     </div>
 
+                    {/* Autoscore Settings Panel */}
+                    <div className="bg-slate-950/50 rounded-xl border border-slate-800 overflow-hidden mb-4">
+                        <button
+                            onClick={() => setIsAutoscorePanelOpen(!isAutoscorePanelOpen)}
+                            className="w-full flex items-center justify-between px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
+                        >
+                            <span className="flex items-center gap-2 text-emerald-400">
+                                <Star className="w-4 h-4" />
+                                AUTOSCORE CONFIG
+                            </span>
+                            {isAutoscorePanelOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </button>
+                        {isAutoscorePanelOpen && (
+                            <div className="px-4 pb-4 grid grid-cols-1 md:grid-cols-4 gap-4 border-t border-slate-800 pt-4">
+                                <div>
+                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Provider</label>
+                                    <select
+                                        value={autoscoreConfig.provider === 'external' ? autoscoreConfig.externalProvider : 'gemini'}
+                                        onChange={e => {
+                                            const val = e.target.value;
+                                            const isExt = val !== 'gemini';
+                                            setAutoscoreConfig(prev => ({
+                                                ...prev,
+                                                provider: isExt ? 'external' : 'gemini',
+                                                externalProvider: isExt ? val as ExternalProvider : prev.externalProvider
+                                            }));
+                                        }}
+                                        className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
+                                    >
+                                        <option value="gemini">Gemini</option>
+                                        {AVAILABLE_PROVIDERS.map(p => (
+                                            <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Model</label>
+                                    <input
+                                        type="text"
+                                        value={autoscoreConfig.model}
+                                        onChange={e => setAutoscoreConfig(prev => ({ ...prev, model: e.target.value }))}
+                                        placeholder="Model name"
+                                        className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Concurrency</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="50"
+                                        value={autoscoreConfig.concurrency}
+                                        onChange={e => setAutoscoreConfig(prev => ({ ...prev, concurrency: Math.max(1, parseInt(e.target.value) || 1) }))}
+                                        className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Sleep (ms)</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="100"
+                                        value={autoscoreConfig.sleepTime}
+                                        onChange={e => setAutoscoreConfig(prev => ({ ...prev, sleepTime: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                        className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+                                <div className="col-span-1 md:col-span-2 flex gap-4">
+                                    <div className="flex-1">
+                                        <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Max Retries</label>
+                                        <input
+                                            type="number"
+                                            value={autoscoreConfig.maxRetries}
+                                            onChange={e => setAutoscoreConfig(prev => ({ ...prev, maxRetries: parseInt(e.target.value) || 0 }))}
+                                            className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
+                                        />
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Retry Delay (ms)</label>
+                                        <input
+                                            type="number"
+                                            value={autoscoreConfig.retryDelay}
+                                            onChange={e => setAutoscoreConfig(prev => ({ ...prev, retryDelay: parseInt(e.target.value) || 0 }))}
+                                            className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="col-span-1 md:col-span-4">
+                                    <details className="group">
+                                        <summary className="flex items-center gap-2 cursor-pointer list-none text-[10px] text-slate-500 font-bold uppercase mb-1 select-none">
+                                            <span>Scoring Prompt</span>
+                                            <span className="text-slate-600 group-open:rotate-90 transition-transform">▶</span>
+                                        </summary>
+                                        <textarea
+                                            value={autoscoreConfig.systemPrompt}
+                                            onChange={e => setAutoscoreConfig(prev => ({ ...prev, systemPrompt: e.target.value }))}
+                                            className="w-full h-32 bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300 rounded px-2 py-1.5 outline-none focus:border-emerald-500 resize-y mt-1"
+                                            spellCheck={false}
+                                        />
+                                    </details>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     {/* Toolbar */}
                     <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-950/50 p-3 rounded-xl border border-slate-800">
                         <div className="flex items-center gap-4">
@@ -811,6 +1034,24 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                                     <option value="5">5 Stars</option>
                                 </select>
                             </div>
+
+                            <button
+                                onClick={handleAutoscoreAll}
+                                disabled={isAutoscoring || filteredData.length === 0}
+                                className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${isAutoscoring ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 text-emerald-500 hover:bg-emerald-600/20'}`}
+                            >
+                                {isAutoscoring ? (
+                                    <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        Scoring {autoscoreProgress.current}/{autoscoreProgress.total}
+                                    </>
+                                ) : (
+                                    <>
+                                        <Star className="w-3.5 h-3.5" />
+                                        Autoscore All
+                                    </>
+                                )}
+                            </button>
                         </div>
 
                         <div className="flex items-center gap-2">

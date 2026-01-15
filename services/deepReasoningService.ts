@@ -103,21 +103,21 @@ export const orchestrateDeepReasoning = async (
 
   try {
     // 1. Parallel Execution of Phase 0, 1, 2
-    const metaPromise = executePhase(config.phases.meta, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
+    const metaPromise = executePhase(config.phases.meta, input, signal, maxRetries, retryDelay, config.phases.meta.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('meta');
         deepTrace.meta = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
         return res.result;
       });
 
-    const retrievalPromise = executePhase(config.phases.retrieval, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
+    const retrievalPromise = executePhase(config.phases.retrieval, input, signal, maxRetries, retryDelay, config.phases.retrieval.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('retrieval');
         deepTrace.retrieval = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
         return res.result;
       });
 
-    const derivationPromise = executePhase(config.phases.derivation, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
+    const derivationPromise = executePhase(config.phases.derivation, input, signal, maxRetries, retryDelay, config.phases.derivation.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('derivation');
         deepTrace.derivation = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
@@ -168,7 +168,7 @@ You must output a single valid JSON object. Do NOT wrap it in markdown code bloc
       signal,
       maxRetries,
       retryDelay,
-      generationParams
+      config.phases.writer.generationParams || generationParams
     );
 
     deepTrace.writer = { model: writerRes.model, input: writerRes.input, output: writerRes.result, timestamp: writerRes.timestamp, duration: writerRes.duration };
@@ -201,7 +201,7 @@ CRITICAL: Output valid JSON only. Format: { "answer": "Your final refined answer
         signal,
         maxRetries,
         retryDelay,
-        generationParams
+        config.phases.rewriter.generationParams || generationParams
       );
 
       deepTrace.rewriter = { model: rewriterRes.model, input: rewriterRes.input, output: rewriterRes.result, timestamp: rewriterRes.timestamp, duration: rewriterRes.duration };
@@ -319,6 +319,7 @@ interface MultiTurnOrchestrationParams {
     model: string;
     customBaseUrl: string;
     systemPrompt: string;
+    generationParams?: GenerationParams;
   };
   signal?: AbortSignal;
   maxRetries: number;
@@ -395,7 +396,7 @@ export const orchestrateMultiTurnConversation = async (
         signal,
         maxRetries,
         retryDelay,
-        generationParams,
+        responderConfig.generationParams || generationParams,
         structuredOutput
       );
       firstResponse = generatedResponse.answer || generatedResponse.reasoning || "No response generated.";
@@ -428,14 +429,15 @@ export const orchestrateMultiTurnConversation = async (
           apiKey: userAgentConfig.apiKey,
           model: userAgentConfig.model,
           customBaseUrl: userAgentConfig.customBaseUrl,
-          systemPrompt: userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent', promptSet)
+          systemPrompt: userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent', promptSet),
+          generationParams: userAgentConfig.generationParams
         },
         userAgentInput,
         userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent', promptSet),
         signal,
         maxRetries,
         retryDelay,
-        generationParams,
+        userAgentConfig.generationParams || generationParams,
         structuredOutput
       );
 
@@ -456,7 +458,7 @@ export const orchestrateMultiTurnConversation = async (
         signal,
         maxRetries,
         retryDelay,
-        generationParams,
+        responderConfig.generationParams || generationParams,
         structuredOutput
       );
 
@@ -520,6 +522,7 @@ const callAgent = async (
     model: string;
     customBaseUrl: string;
     systemPrompt: string;
+    generationParams?: GenerationParams;
   },
   userContent: string,
   systemPrompt: string,
@@ -529,8 +532,9 @@ const callAgent = async (
   generationParams?: GenerationParams,
   structuredOutput: boolean = true
 ): Promise<any> => {
+  const effectiveParams = config.generationParams || generationParams;
   if (config.provider === 'gemini') {
-    return await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams });
+    return await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams: effectiveParams });
   } else {
     return await ExternalApiService.callExternalApi({
       provider: config.externalProvider as any,
@@ -542,7 +546,7 @@ const callAgent = async (
       signal,
       maxRetries,
       retryDelay,
-      generationParams,
+      generationParams: effectiveParams,
       structuredOutput
     });
   }
@@ -570,6 +574,7 @@ interface ConversationRewriteParams {
     apiKey: string;
     model: string;
     customBaseUrl: string;
+    generationParams?: GenerationParams;
   };
   promptSet?: string;
   structuredOutput?: boolean                // Optional prompt set for fallback prompt loading (auto-routing)
@@ -685,7 +690,8 @@ ${outsideThinkContent}
           maxRetries: maxRetries,
           retryDelay: retryDelay,
           generationParams: generationParams,
-          structuredOutput: structuredOutput
+          structuredOutput: structuredOutput,
+          expectedAnswer: outsideThinkContent
         });
 
         newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
@@ -698,7 +704,7 @@ ${outsideThinkContent}
           const result = await GeminiService.generateGenericJSON(
             rewriteInput,
             prompt,
-            { maxRetries, retryDelay, generationParams }
+            { maxRetries, retryDelay, generationParams: regularModeConfig.generationParams || generationParams }
           );
           newReasoning = result.reasoning || originalThinking;
         } else if (regularModeConfig) {
@@ -724,7 +730,7 @@ ${outsideThinkContent}
             signal,
             maxRetries,
             retryDelay,
-            generationParams,
+            config.phases.writer.generationParams || generationParams,
             structuredOutput
           );
           newReasoning = writerRes.result?.reasoning || originalThinking;

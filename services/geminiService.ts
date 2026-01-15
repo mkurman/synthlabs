@@ -8,6 +8,12 @@ const API_KEY = process.env.API_KEY || '';
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
+// Update to allow runtime key injection
+export const getGeminiClient = (overrideKey?: string) => {
+  if (overrideKey) return new GoogleGenAI({ apiKey: overrideKey });
+  return ai;
+}
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 interface RetryOptions {
@@ -168,8 +174,8 @@ export const optimizeSystemPrompt = async (
   }
 };
 
-export const generateSyntheticSeeds = async (topic: string, count: number, model?: string): Promise<string[]> => {
-  if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
+export const generateSyntheticSeeds = async (topic: string, count: number, model?: string, apiKey?: string): Promise<string[]> => {
+  if (!API_KEY && !apiKey) throw new Error("Missing Gemini API Key in environment or settings.");
 
   const seedPrompt = `Generate ${count} DISTINCT, high-quality, factual text paragraphs about: "${topic}". 
   They should be suitable for testing an AI's reasoning capabilities. 
@@ -178,7 +184,8 @@ export const generateSyntheticSeeds = async (topic: string, count: number, model
   Style: Encyclopedia or Academic Abstract.`;
 
   try {
-    const response = await callGeminiWithRetry(() => ai.models.generateContent({
+    const client = getGeminiClient(apiKey);
+    const response = await callGeminiWithRetry(() => client.models.generateContent({
       model: model || 'gemini-2.0-flash-exp',
       contents: seedPrompt,
       config: {

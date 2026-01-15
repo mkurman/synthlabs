@@ -8,10 +8,13 @@ The output uses **markdown sections with inline symbolic markers**.
 ## Section Structure
 
 ```
-### 1. [Descriptive Title]
+### 1. Query parsing
 [Content with inline symbols]
 
-### 2. [Next Section]
+### 2. [Descriptive Title]
+[Content with inline symbols]
+
+### 3. [Next Section]
 [Continue...]
 ```
 

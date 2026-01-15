@@ -1179,7 +1179,13 @@ export default function App() {
 
             // --- Conversation Trace Rewriting Mode ---
             // When enabled, extract messages from row and rewrite/generate <think> content
-            if (conversationRewriteMode && row) {
+            // Also auto-detect messages columns even when toggle is not explicitly set
+            const potentialMessagesArray = row?.messages || row?.conversation || row?.conversations;
+            const hasMessagesColumn = Array.isArray(potentialMessagesArray) && potentialMessagesArray.length > 0 &&
+                potentialMessagesArray[0] && typeof potentialMessagesArray[0] === 'object' &&
+                ('role' in potentialMessagesArray[0] || 'from' in potentialMessagesArray[0]);
+
+            if ((conversationRewriteMode || hasMessagesColumn) && row) {
                 const messagesArray = row.messages || row.conversation || row.conversations;
                 if (Array.isArray(messagesArray) && messagesArray.length > 0) {
                     // Convert to ChatMessage format if needed, filtering out empty messages
@@ -2669,6 +2675,29 @@ export default function App() {
                                             placeholder={appMode === 'generator' ? "# ROLE..." : "# CONVERTER ROLE..."}
                                         />
                                     </div>
+
+                                    {/* Max Traces for messages columns - visible in regular mode for HF/manual sources */}
+                                    {(dataSourceMode === 'huggingface' || dataSourceMode === 'manual') && (
+                                        <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg space-y-2">
+                                            <p className="text-[10px] text-slate-400">
+                                                When processing messages/conversation columns, limit the number of turns to rewrite:
+                                            </p>
+                                            <div className="flex items-center gap-3">
+                                                <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                                                    <Layers className="w-3 h-3" /> Max Traces
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    value={hfConfig.maxMultiTurnTraces || ''}
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHfConfig({ ...hfConfig, maxMultiTurnTraces: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
+                                                    className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                    placeholder="All"
+                                                />
+                                                <span className="text-[10px] text-slate-500">Empty = process all traces</span>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="animate-in fade-in slide-in-from-right-2 duration-300">

@@ -111,6 +111,7 @@ export interface DeepPhaseConfig {
   customBaseUrl: string;
   systemPrompt: string;
   structuredOutput: boolean;
+  generationParams?: GenerationParams;
 }
 
 export interface DeepConfig {
@@ -135,6 +136,26 @@ export interface UserAgentConfig {
   customBaseUrl: string;
   systemPrompt: string;
   structuredOutput: boolean;
+  generationParams?: GenerationParams;
+}
+
+export interface StepModelConfig {
+  provider: 'gemini' | 'external' | 'other';
+  externalProvider: string;
+  model: string;
+}
+
+export interface AutoscoreConfig {
+  provider: ProviderType;
+  externalProvider: ExternalProvider;
+  apiKey: string;
+  model: string;
+  customBaseUrl: string;
+  systemPrompt: string;
+  concurrency: number;
+  sleepTime: number;
+  maxRetries: number;
+  retryDelay: number;
 }
 
 export interface HuggingFaceConfig {

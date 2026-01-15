@@ -14,7 +14,7 @@ You receive structured data from Meta, Retrieval, and Derivation phases. Your ta
 
 ## Writing Style
 
-Write in clear, educational prose. Each paragraph should develop one aspect of the reasoning. Use transitional phrases naturally while incorporating symbols.
+Write in clear, educational prose. Each paragraph should develop one aspect of the reasoning. Use transitional phrases naturally while incorporating symbols. Keep it short (key phrases, avoid overwriting)
 
 **Opening paragraph**: What is being asked? What constraints or ambiguities exist?
 
