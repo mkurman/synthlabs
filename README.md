@@ -6,6 +6,7 @@
 **Create high-quality synthetic reasoning datasets for training AI models**
 
 [![Node.js](https://img.shields.io/badge/Node.js-18+-43853D?style=flat&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Bun](https://img.shields.io/badge/Bun-1.0+-fbf0df?style=flat&logo=bun&logoColor=black)](https://bun.sh/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Firebase](https://img.shields.io/badge/Firebase-Firestore-FFCA28?style=flat&logo=firebase&logoColor=black)](https://firebase.google.com/)
 
@@ -124,7 +125,7 @@ Seamless Firebase/Firestore support:
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 18+ **OR** Bun 1.0+
 - API keys for your preferred provider(s)
 
 ### Installation
@@ -133,7 +134,12 @@ Seamless Firebase/Firestore support:
    ```bash
    git clone <repository-url>
    cd synthlabs-reasoning-generator
+   
+   # Using npm
    npm install
+   
+   # OR using Bun (faster)
+   bun install
    ```
 
 2. **Configure API keys:**
@@ -153,11 +159,25 @@ Seamless Firebase/Firestore support:
 
 3. **Run the app:**
    ```bash
+   # Using npm
    npm run dev
+   
+   # OR using Bun (standalone)
+   bun run bun:dev
    ```
 
 4. **Open in browser:**
    Navigate to `http://localhost:3000`
+
+### Bun Commands
+
+| Command | Description |
+|---------|-------------|
+| `bun install` | Install dependencies |
+| `bun run bun:dev` | Start dev server with Bun runtime |
+| `bun run bun:build` | Build for production |
+| `bun run bun:preview` | Preview production build |
+
 
 ---
 

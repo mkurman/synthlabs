@@ -1,0 +1,5 @@
+# Bun configuration for synthlabs-reasoning-generator
+
+[install]
+# Use bun lockfile
+lockfile = "bun.lock"

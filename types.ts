@@ -15,7 +15,9 @@ export interface SynthLogItem {
   full_seed: string;
   query: string;
   reasoning: string;
+  original_reasoning?: string;
   answer: string;
+  original_answer?: string;
   timestamp: string;
   duration?: number; // New: generation time in ms
   tokenCount?: number; // New: estimated output tokens

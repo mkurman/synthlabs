@@ -154,6 +154,7 @@ export default function App() {
 
     // 3. Manual Input
     const [converterInputText, setConverterInputText] = useState('');
+    const [manualFileName, setManualFileName] = useState('');
 
     // --- State: Firebase Config UI ---
     const [firebaseConfigInput, setFirebaseConfigInput] = useState<FirebaseConfig>({
@@ -484,6 +485,13 @@ export default function App() {
                 }
             }
 
+            let outputContent = null;
+
+            if (hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
+                outputContent = hfConfig.outputColumns?.map((col: string) => getColumnContent(col))
+                    .filter((c: string) => c.trim() !== '')
+                    .join(COLUMN_SEPARATOR);
+            }
             // Append reasoning if reasoningColumns are configured
             if (hfConfig.reasoningColumns && hfConfig.reasoningColumns.length > 0) {
                 const reasoning = hfConfig.reasoningColumns
@@ -494,8 +502,13 @@ export default function App() {
                 if (reasoning) {
                     // If we have input content (query), we wrap both for extractInputContent
                     const inputQuery = contents.join(COLUMN_SEPARATOR);
-                    return `<input_query>${inputQuery}</input_query><model_response><think>${reasoning}</think></model_response>`;
+                    const outputQuery = outputContent ? `<output>${outputContent}</output>` : '';
+                    return `<input_query>${inputQuery}</input_query><model_response><think>${reasoning}</think>${outputQuery}</model_response>`;
                 }
+            }
+
+            if (outputContent) {
+                return "<input_query>" + contents.join(COLUMN_SEPARATOR) + "</input_query><model_response>" + outputContent + "</model_response>";
             }
 
             if (contents.length > 0) {
@@ -814,6 +827,8 @@ export default function App() {
     const handleLoadSourceFile = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+        // Store the file name for source tracking
+        setManualFileName(file.name);
         const reader = new FileReader();
         reader.onload = (event) => {
             if (typeof event.target?.result === 'string') {
@@ -954,19 +969,6 @@ export default function App() {
         return hasParams ? params : undefined;
     };
 
-    const handleSaveFirebaseConfig = async () => {
-        const success = await FirebaseService.initializeFirebase(firebaseConfigInput);
-        if (success) {
-            localStorage.setItem('synth_firebase_config', JSON.stringify(firebaseConfigInput));
-            setError(null);
-            updateDbStats();
-        } else {
-            setError("Failed to initialize Firebase with these settings. Check console.");
-        }
-    };
-
-    // --- Session Management ---
-
     const getSessionData = () => {
         return {
             version: 2,
@@ -976,7 +978,8 @@ export default function App() {
                 appMode, engineMode, environment, provider, externalProvider, externalApiKey, externalModel,
                 customBaseUrl, deepConfig, userAgentConfig, concurrency, rowsToFetch, skipRows, sleepTime, maxRetries, retryDelay,
                 feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt, conversationRewriteMode,
-                converterInputText, generationParams: { temperature, topP, topK, frequencyPenalty, presencePenalty }
+                // NOTE: converterInputText excluded - it can be very large (entire uploaded files)
+                generationParams: { temperature, topP, topK, frequencyPenalty, presencePenalty }
             }
         };
     };
@@ -1157,14 +1160,14 @@ export default function App() {
         promptSet: string;
     }
 
-    const generateSingleItem = async (inputText: string, workerId: number, opts: { retryId?: string, originalQuestion?: string, row?: any, runtimeConfig?: RuntimePromptConfig } = {}): Promise<SynthLogItem | null> => {
-        const { retryId, originalQuestion, row, runtimeConfig } = opts;
+    const generateSingleItem = async (inputText: string, workerId: number, opts: { retryId?: string, originalQuestion?: string, originalAnswer?: string, originalReasoning?: string, row?: any, runtimeConfig?: RuntimePromptConfig } = {}): Promise<SynthLogItem | null> => {
+        const { retryId, originalQuestion, originalAnswer, originalReasoning, row, runtimeConfig } = opts;
         const startTime = Date.now();
         // Determine source for tracking (outside try for catch access)
         const source = dataSourceMode === 'huggingface'
             ? `hf:${hfConfig.dataset}`
             : dataSourceMode === 'manual'
-                ? 'manual'
+                ? `manual:${manualFileName || 'unknown'}`
                 : 'synthetic';
         try {
             const safeInput = typeof inputText === 'string' ? inputText : String(inputText);
@@ -1230,10 +1233,6 @@ export default function App() {
             }
 
 
-
-            // Extract expected answer from dataset row - available for both regular and deep modes
-            const expectedAnswer = opts.row ? getRowExpectedOutput(opts.row) : undefined;
-
             if (engineMode === 'regular') {
                 if (provider === 'gemini') {
                     // Reinforce JSON structure for regular mode to ensure service parsing works
@@ -1289,7 +1288,7 @@ export default function App() {
                 // Actually, if the user is RUNNING a converter, they might want to see the CONVERTED answer.
                 // However, the user said "no answer from ground truth", implying they WANT the ground truth preserved.
                 // In converter mode, usually the "answer" field in the dataset is the ground truth.
-                const finalAnswer = (appMode === 'converter' && expectedAnswer) ? expectedAnswer : answer;
+                const finalAnswer = (appMode === 'converter' && originalAnswer) ? originalAnswer : answer;
 
                 return {
                     id: retryId || crypto.randomUUID(),
@@ -1299,7 +1298,9 @@ export default function App() {
                     full_seed: safeInput,
                     query: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
                     reasoning: reasoning,
+                    original_reasoning: originalReasoning,
                     answer: finalAnswer,
+                    original_answer: originalAnswer,
                     timestamp: new Date().toISOString(),
                     duration: Date.now() - startTime,
                     tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4), // Rough estimate
@@ -1313,8 +1314,8 @@ export default function App() {
                 }
 
                 // In generator mode, append the gold answer to the seed so all agents see it
-                if (appMode === 'generator' && expectedAnswer && expectedAnswer.trim().length > 0) {
-                    inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${expectedAnswer.trim()}`;
+                if (appMode === 'generator' && originalAnswer && originalAnswer.trim().length > 0) {
+                    inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${originalAnswer.trim()}`;
                 }
 
                 // Deep copy to prevent mutation of state (use effectiveDeepConfig for auto-routing)
@@ -1325,7 +1326,7 @@ export default function App() {
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
                     originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
-                    expectedAnswer: expectedAnswer,
+                    expectedAnswer: originalAnswer,
                     config: runtimeDeepConfig,
                     signal: abortControllerRef.current?.signal || undefined,
                     maxRetries,
@@ -1380,6 +1381,8 @@ export default function App() {
                 const reasoning = deepResult.reasoning || "";
                 return {
                     ...deepResult,
+                    original_reasoning: originalReasoning,
+                    original_answer: originalAnswer,
                     sessionUid: sessionUid,
                     source: source,
                     duration: Date.now() - startTime,
@@ -1396,9 +1399,11 @@ export default function App() {
                 source: source,
                 seed_preview: safeErrInput.substring(0, 50),
                 full_seed: safeErrInput,
-                query: "ERROR",
+                query: originalQuestion || 'ERROR',
                 reasoning: "",
                 answer: "Failed",
+                original_reasoning: originalReasoning,
+                original_answer: originalAnswer,
                 timestamp: new Date().toISOString(),
                 duration: Date.now() - startTime,
                 modelUsed: engineMode === 'deep' ? 'DEEP ENGINE' : "System",
@@ -1592,7 +1597,7 @@ export default function App() {
             const sourceLabel = dataSourceMode === 'huggingface'
                 ? `hf:${hfConfig.dataset}`
                 : dataSourceMode === 'manual'
-                    ? 'manual'
+                    ? `manual:${manualFileName || 'unknown'}`
                     : 'synthetic';
 
             let newUid: string;
@@ -1900,77 +1905,6 @@ export default function App() {
             setProgress({ current: 0, total: workItems.length, activeWorkers: 0 });
             let currentIndex = 0;
 
-            const detectOriginalQuestion = (row: any): string | undefined => {
-                if (!row) return undefined;
-
-                let question = "";
-
-                // PRIORITY 1: Use explicitly selected input columns if available
-                // This ensures we get the RAW value from the dataset exactly as the user selected
-                if (hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
-                    const parts: string[] = [];
-                    for (const col of hfConfig.inputColumns) {
-                        const val = row[col];
-                        if (val !== undefined && val !== null) {
-                            if (typeof val === 'string') {
-                                parts.push(val);
-                            } else if (typeof val === 'object') {
-                                parts.push(JSON.stringify(val));
-                            } else {
-                                parts.push(String(val));
-                            }
-                        }
-                    }
-                    if (parts.length > 0) {
-                        question = parts.join('\n\n');
-                    }
-                }
-
-                // PRIORITY 2: Fallback to auto-detection if no explicit columns selected
-                if (!question) {
-                    const candidates = ['question', 'instruction', 'prompt', 'input', 'query', 'task'];
-                    for (const c of candidates) {
-                        if (row[c] && typeof row[c] === 'string' && row[c].length < 2000) {
-                            question = row[c];
-                            break;
-                        }
-                    }
-                }
-
-                // Try array formats (ShareGPT/ChatML) if no simple column found
-                if (!question) {
-                    const msgs = row.messages || row.conversation || row.conversations;
-                    if (Array.isArray(msgs)) {
-                        const firstUser = msgs.find((m: any) => m.role === 'user' || m.from === 'human');
-                        if (firstUser) question = firstUser.content || firstUser.value;
-                    }
-                }
-
-                if (!question) return undefined;
-
-                // Append Options if available (for multiple choice datasets)
-                // Check for 'options', 'choices'
-                // Format: Map/Object {"A": "...", "B": "..."} or Array ["...", "..."]
-                const optionsField = row['options'] || row['choices'];
-                if (optionsField) {
-                    let formattedOptions = "";
-                    if (typeof optionsField === 'string') {
-                        formattedOptions = "\n\nOptions:\n" + optionsField;
-                    } else if (Array.isArray(optionsField)) {
-                        formattedOptions = "\n\nOptions:\n" + optionsField.map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`).join('\n');
-                    } else if (typeof optionsField === 'object') {
-                        // entries [key, value]
-                        const entries = Object.entries(optionsField);
-                        if (entries.length > 0) {
-                            formattedOptions = "\n\nOptions:\n" + entries.map(([k, v]) => `${k}: ${v}`).join('\n');
-                        }
-                    }
-                    if (formattedOptions) question += formattedOptions;
-                }
-
-                return question;
-            };
-
             const worker = async (id: number) => {
                 while (currentIndex < workItems.length) {
                     if (abortControllerRef.current?.signal.aborted) break;
@@ -1994,9 +1928,37 @@ export default function App() {
                         }
                     }
 
+                    let originalAnswer: string | undefined;
+                    if (item.row && hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
+                        const parts: string[] = [];
+                        for (const col of hfConfig.outputColumns) {
+                            const val = item.row[col];
+                            if (val !== undefined && val !== null) {
+                                parts.push(typeof val === 'string' ? val : JSON.stringify(val));
+                            }
+                        }
+                        if (parts.length > 0) {
+                            originalAnswer = parts.join('\n\n');
+                        }
+                    }
+
+                    let originalReasoning: string | undefined;
+                    if (item.row && hfConfig.reasoningColumns && hfConfig.reasoningColumns.length > 0) {
+                        const parts: string[] = [];
+                        for (const col of hfConfig.reasoningColumns) {
+                            const val = item.row[col];
+                            if (val !== undefined && val !== null) {
+                                parts.push(typeof val === 'string' ? val : JSON.stringify(val));
+                            }
+                        }
+                        if (parts.length > 0) {
+                            originalReasoning = parts.join('\n\n');
+                        }
+                    }
+
                     setProgress(p => ({ ...p, activeWorkers: p.activeWorkers + 1 }));
 
-                    const result = await generateSingleItem(item.content, id, { originalQuestion, row: item.row, runtimeConfig });
+                    const result = await generateSingleItem(item.content, id, { originalQuestion, originalAnswer, originalReasoning, row: item.row, runtimeConfig });
 
 
                     setProgress(p => ({
@@ -3240,6 +3202,6 @@ export default function App() {
                     await refreshLogs();
                 }}
             />
-        </div >
+        </div>
     );
 }

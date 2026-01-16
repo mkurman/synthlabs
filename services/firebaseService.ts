@@ -50,7 +50,12 @@ const getEnvConfig = (): FirebaseConfig => {
     };
 };
 
-export const initializeFirebase = async (config: FirebaseConfig): Promise<boolean> => {
+// Track ongoing initialization to prevent race conditions
+let initPromise: Promise<boolean> | null = null;
+let initConfigStr: string | null = null; // Track which config is being initialized
+
+// Internal implementation - does the actual Firebase init
+const initializeFirebaseInternal = async (config: FirebaseConfig): Promise<boolean> => {
     try {
         if (!config.apiKey || !config.projectId) {
             logger.warn("Invalid Firebase Config Provided");
@@ -84,6 +89,11 @@ export const initializeFirebase = async (config: FirebaseConfig): Promise<boolea
         db = getFirestore(app);
         currentConfigStr = configStr;
         logger.log("Firebase Initialized Successfully via dynamic config");
+
+        // Warmup: trigger Firestore connection establishment with a background read
+        // This ensures the WebSocket connection is ready before actual operations
+        warmupFirestoreConnection();
+
         return true;
     } catch (e) {
         console.error("Firebase Initialization Failed:", e);
@@ -91,22 +101,62 @@ export const initializeFirebase = async (config: FirebaseConfig): Promise<boolea
     }
 };
 
-// Track ongoing initialization to prevent race conditions
-let initPromise: Promise<boolean> | null = null;
+// Non-blocking warmup to establish Firestore connection
+const warmupFirestoreConnection = () => {
+    if (!db) return;
+    // Do a simple metadata read to force connection establishment
+    // This runs in the background and doesn't block initialization
+    getCountFromServer(collection(db, 'synth_logs'))
+        .then(() => logger.log("Firestore connection warmed up"))
+        .catch((e) => logger.warn("Firestore warmup failed (non-blocking):", e));
+};
+
+// Public wrapper - handles concurrency to prevent AbortError
+export const initializeFirebase = async (config: FirebaseConfig): Promise<boolean> => {
+    const configStr = JSON.stringify(config);
+
+    // If already initialized with this exact config, return immediately
+    if (db && currentConfigStr === configStr) {
+        return true;
+    }
+
+    // If currently initializing with the SAME config, just wait for it
+    if (initPromise && initConfigStr === configStr) {
+        return initPromise;
+    }
+
+    // If initializing with DIFFERENT config, wait for current init to complete first
+    if (initPromise) {
+        try {
+            await initPromise;
+        } catch {
+            // Ignore errors from previous init
+        }
+    }
+
+    // Now start the new initialization
+    initConfigStr = configStr;
+    initPromise = initializeFirebaseInternal(config);
+
+    return initPromise;
+}
 
 // Auto-init on load if env vars exist
 const envConfig = getEnvConfig();
 if (envConfig.apiKey) {
-    initPromise = initializeFirebase(envConfig);
-    initPromise.catch(console.error);
+    initializeFirebase(envConfig);
 }
 
 export const isFirebaseConfigured = () => !!db;
 
-// Wait for any pending initialization before saving
+// Wait for any pending initialization before saving (with timeout)
 const ensureInitialized = async (): Promise<boolean> => {
     if (initPromise) {
-        await initPromise;
+        // Add timeout to prevent indefinite hanging
+        const timeoutPromise = new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), 5000) // 5 second timeout
+        );
+        await Promise.race([initPromise, timeoutPromise]);
     }
     return !!db;
 };
@@ -197,6 +247,7 @@ export const saveLogToFirebase = async (log: SynthLogItem, collectionName: strin
 };
 
 export const getDbStats = async (currentSessionUid?: string): Promise<{ total: number, session: number }> => {
+    await ensureInitialized();
     if (!db) return { total: 0, session: 0 };
     try {
         const coll = collection(db, 'synth_logs');
@@ -223,6 +274,7 @@ export const getDbStats = async (currentSessionUid?: string): Promise<{ total: n
 };
 
 export const saveSessionToFirebase = async (sessionData: any, name: string) => {
+    await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
         await addDoc(collection(db, 'synth_sessions'), {
@@ -239,6 +291,7 @@ export const saveSessionToFirebase = async (sessionData: any, name: string) => {
 // Create a new session in Firebase and return its ID for use as sessionUid
 // This ensures synth_sessions and synth_logs are always in sync
 export const createSessionInFirebase = async (name?: string, source?: string, config?: any): Promise<string> => {
+    await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
         const docData: any = {
@@ -253,7 +306,14 @@ export const createSessionInFirebase = async (name?: string, source?: string, co
             docData.config = sanitizeForFirestore(config);
         }
 
-        const docRef = await addDoc(collection(db, 'synth_sessions'), docData);
+        // Add timeout to prevent indefinite hanging on Firestore connection issues
+        const timeoutMs = 10000; // 10 seconds
+        const addDocPromise = addDoc(collection(db, 'synth_sessions'), docData);
+        const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Firebase session creation timed out')), timeoutMs)
+        );
+
+        const docRef = await Promise.race([addDocPromise, timeoutPromise]);
         return docRef.id;
     } catch (e) {
         console.error("Error creating session", e);
@@ -262,6 +322,7 @@ export const createSessionInFirebase = async (name?: string, source?: string, co
 };
 
 export const getSessionsFromFirebase = async (): Promise<SavedSession[]> => {
+    await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
         const q = query(collection(db, 'synth_sessions'), orderBy('createdAt', 'desc'));
@@ -277,6 +338,7 @@ export const getSessionsFromFirebase = async (): Promise<SavedSession[]> => {
 };
 
 export const deleteSessionFromFirebase = async (id: string) => {
+    await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
         await deleteDoc(doc(db, 'synth_sessions', id));
@@ -289,6 +351,7 @@ export const deleteSessionFromFirebase = async (id: string) => {
 // --- Verifier Functions ---
 
 export const fetchAllLogs = async (limitCount?: number, sessionUid?: string): Promise<VerifierItem[]> => {
+    await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
         const constraints: any[] = [];
@@ -339,6 +402,7 @@ export const fetchAllLogs = async (limitCount?: number, sessionUid?: string): Pr
 };
 
 export const saveFinalDataset = async (items: VerifierItem[], collectionName = 'synth_final') => {
+    await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
         const batch = writeBatch(db);
@@ -372,6 +436,7 @@ export interface DiscoveredSession {
 }
 
 export const getUniqueSessionUidsFromLogs = async (): Promise<DiscoveredSession[]> => {
+    await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
         // Fetch all logs to get complete session discovery

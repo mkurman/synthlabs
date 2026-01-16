@@ -6,18 +6,30 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bun:dev": "bun vite",
+    "bun:build": "bun vite build",
+    "bun:preview": "bun vite preview",
+    "bun:compile": "bun vite build && bun build --compile --minify server.ts --outfile synthlabs",
+    "bun:compile:win": "bun vite build && bun build --compile --minify --target=bun-windows-x64 server.ts --outfile synthlabs.exe",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@google/genai": "^1.33.0",
     "@huggingface/hub": "0.15.1",
+    "@tauri-apps/api": "^2.9.1",
     "firebase": "^12.7.0",
     "hyparquet": "1.24.0",
+    "json-repair-js": "^1.0.0",
     "lucide-react": "^0.561.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.9.6",
+    "@types/bun": "^1.2.4",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",

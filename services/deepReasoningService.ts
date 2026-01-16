@@ -139,6 +139,9 @@ You are the [FINAL SYNTHESIS AGENT]. Your inputs are the reports from three spec
 [ORIGINAL SEED]
 ${input}
 
+[FINAL ANSWER]
+${expectedAnswer}
+
 ## 2. AGENT REPORTS
 ### PHASE 1: META-ANALYSIS (Intent & Traps)
 ${JSON.stringify(metaResult, null, 2)}
