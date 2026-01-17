@@ -156,7 +156,6 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   // Determine if we should actually stream (only if callback provided)
   // Use Boolean() to ensure it's true/false, not the function itself
   const shouldStream = Boolean(stream && onStreamChunk);
-  logger.log(`[STREAM DEBUG] stream=${stream}, onStreamChunk=${typeof onStreamChunk}, shouldStream=${shouldStream}`);
 
   if (provider === 'anthropic') {
     url = `${baseUrl}/messages`;

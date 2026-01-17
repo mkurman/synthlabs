@@ -52,8 +52,6 @@ Comparing these options → driving is significantly faster than train travel, s
 Return valid JSON only:
 ```json
 {
-  "query": "[Query text]",
-  "reasoning": "[Full prose reasoning with embedded symbols as shown above]",
-  "answer": "[Clear, complete answer]"
+  "reasoning": "[Full prose reasoning with embedded symbols as shown above]"
 }
 ```

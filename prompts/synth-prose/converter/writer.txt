@@ -45,6 +45,5 @@ You receive structured data from Meta, Retrieval, and Derivation phases. Synthes
 
 Output valid JSON only:
 {
-  "reasoning": "[Full reasoning trace with sections and symbols]",
-  "answer": "[Concise final answer]"
+  "reasoning": "[Full reasoning trace with sections and symbols]"
 }

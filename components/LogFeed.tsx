@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload, Loader } from 'lucide-react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
-import { SynthLogItem } from '../types';
+import StreamingConversationCard from './StreamingConversationCard';
+import { SynthLogItem, StreamingConversationState } from '../types';
 
 interface LogFeedProps {
   logs: SynthLogItem[];
@@ -17,14 +18,14 @@ interface LogFeedProps {
   retryingIds?: Set<string>;
   savingIds?: Set<string>;
   isProdMode?: boolean;
-  // Streaming content for real-time display
-  streamingContent?: Map<string, string>;
+  // Map of concurrent streaming conversations
+  streamingConversations?: Map<string, StreamingConversationState>;
 }
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
   onRetry, onRetrySave, onSaveToDb, retryingIds, savingIds, isProdMode,
-  streamingContent
+  streamingConversations
 }) => {
   const [showLatestOnly, setShowLatestOnly] = useState(false);
 
@@ -36,12 +37,26 @@ const LogFeed: React.FC<LogFeedProps> = ({
     }
   }, [pageSize]);
 
-  if (totalLogCount === 0 && logs.length === 0) {
+  const hasActiveStreams = streamingConversations && streamingConversations.size > 0;
+
+  // Show empty state only if no logs AND no active streaming
+  if (totalLogCount === 0 && logs.length === 0 && !hasActiveStreams) {
     return (
       <div className="flex flex-col items-center justify-center h-96 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/30">
         <Terminal className="w-12 h-12 text-slate-700 mb-4" />
         <p className="text-slate-500 font-medium">No data generated yet.</p>
         <p className="text-sm text-slate-600 mt-1">Configure the engine and press Start.</p>
+      </div>
+    );
+  }
+
+  // If only streaming (no logs yet), render just the streaming cards
+  if (totalLogCount === 0 && logs.length === 0 && hasActiveStreams) {
+    return (
+      <div className="space-y-4">
+        {Array.from(streamingConversations.values()).map(streamState => (
+          <StreamingConversationCard key={streamState.id} streamState={streamState} />
+        ))}
       </div>
     );
   }
@@ -81,23 +96,15 @@ const LogFeed: React.FC<LogFeedProps> = ({
         </button>
       </div>
 
-      {/* Streaming Content Cards - Show active generations */}
-      {streamingContent && streamingContent.size > 0 && (
-        Array.from(streamingContent.entries()).map(([id, content]) => (
-          <div key={`streaming-${id}`} className="bg-gradient-to-br from-indigo-950/40 to-slate-900/80 backdrop-blur-sm rounded-xl border border-indigo-500/30 overflow-hidden shadow-lg shadow-indigo-500/5 mb-4">
-            <div className="bg-slate-950/50 p-3 border-b border-indigo-500/20 flex items-center gap-3">
-              <Loader className="w-4 h-4 text-indigo-400 animate-spin" />
-              <span className="text-xs font-medium text-indigo-300">Streaming Generation...</span>
-              <span className="text-[10px] text-slate-500 ml-auto font-mono">{content.length.toLocaleString()} chars</span>
-            </div>
-            <div className="p-4 max-h-48 overflow-y-auto">
-              <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
-                {content || <span className="text-slate-500 italic">Waiting for content...</span>}
-                <span className="inline-block w-2 h-4 bg-indigo-400/60 ml-0.5 animate-pulse" />
-              </pre>
-            </div>
-          </div>
-        ))
+      {/* Streaming Conversation Cards - Show active generations */}
+      {hasActiveStreams && (
+        <div className="space-y-4 mb-4">
+          {Array.from(streamingConversations!.values())
+            .filter(s => s.phase !== 'idle')
+            .map(streamState => (
+              <StreamingConversationCard key={streamState.id} streamState={streamState} />
+            ))}
+        </div>
       )}
 
       {visibleLogs.map((item) => (

@@ -203,6 +203,32 @@ export type StreamChunkCallback = (
   phase?: StreamPhase
 ) => void;
 
+// Progressive conversation streaming state
+export type StreamingConversationPhase =
+  | 'idle'
+  | 'waiting_for_response'  // Spinner while waiting for first content  
+  | 'extracting_reasoning'  // Streaming reasoning field from JSON
+  | 'extracting_answer'     // Streaming answer field from JSON
+  | 'message_complete';     // Current message done, ready for next
+
+export interface StreamingConversationState {
+  id: string;
+  phase: StreamingConversationPhase;
+  currentMessageIndex: number;
+  totalMessages: number;
+  // Completed messages with full content
+  completedMessages: ChatMessage[];
+  // Current message being processed
+  currentUserMessage?: string;
+  currentReasoning: string;
+  currentAnswer: string;
+  // Config
+  useOriginalAnswer: boolean;
+  originalAnswer?: string;
+  // Raw accumulated JSON for parsing
+  rawAccumulated: string;
+}
+
 export const CATEGORIES = [
   "Random (Any)",
   "Medicine & Health",

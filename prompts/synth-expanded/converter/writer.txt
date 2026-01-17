@@ -31,6 +31,5 @@ Place symbols inline with the prose:
 
 Output valid JSON only:
 {
-  "reasoning": "[Flowing prose paragraphs with embedded symbols]",
-  "answer": "[Clear, comprehensive answer]"
+  "reasoning": "[Flowing prose paragraphs with embedded symbols]"
 }

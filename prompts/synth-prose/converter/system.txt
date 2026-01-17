@@ -47,6 +47,5 @@ Choose section titles appropriate to the domain (e.g., "Query Decomposition", "F
 
 Output valid JSON:
 {
-  "reasoning": "[Converted reasoning trace with sections and symbols]",
-  "answer": "[Preserved or refined answer]"
+  "reasoning": "[Converted reasoning trace with sections and symbols]"
 }

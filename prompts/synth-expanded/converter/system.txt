@@ -37,6 +37,5 @@ Generate reasoning as **coherent prose paragraphs** with symbolic markers woven 
 
 Output valid JSON:
 {
-  "reasoning": "[Flowing prose with symbols]",
-  "answer": "[Clear answer]"
+  "reasoning": "[Flowing prose with symbols]"
 }

@@ -782,8 +782,9 @@ ${outsideThinkContent}
         reasoning: newReasoning
       });
 
-      onMessageRewritten?.(assistantIndex, totalAssistants);
-      logger.log(`Message ${i}: Rewritten successfully`);
+      // Report progress (use 0-indexed for UI display)
+      onMessageRewritten?.(assistantIndex - 1, totalAssistants);
+      logger.log(`Message ${i}: Rewritten successfully (${assistantIndex}/${totalAssistants})`);
     }
 
     logger.log("✅ Conversation rewrite complete");

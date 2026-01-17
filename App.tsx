@@ -13,7 +13,7 @@ import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider,
     GenerationConfig, ProgressStats, HuggingFaceConfig, DetectedColumns,
     CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig, ChatMessage,
-    StreamChunkCallback
+    StreamChunkCallback, StreamingConversationState
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
 import { logger, setVerbose } from './utils/logger';
@@ -189,9 +189,9 @@ export default function App() {
     const [hfTotalRows, setHfTotalRows] = useState<number>(0);
     const [isLoadingHfPreview, setIsLoadingHfPreview] = useState(false);
 
-    // --- State: Streaming content for live updates ---
-    const [streamingContent, setStreamingContent] = useState<Map<string, string>>(new Map());
-    const streamingContentRef = useRef<Map<string, string>>(new Map());
+    // --- State: Progressive conversation streaming (supports concurrent requests) ---
+    const [streamingConversations, setStreamingConversations] = useState<Map<string, StreamingConversationState>>(new Map());
+    const streamingConversationsRef = useRef<Map<string, StreamingConversationState>>(new Map());
 
     // Column detection utility with expanded patterns
     const detectColumns = (columns: string[]): DetectedColumns => {
@@ -1133,17 +1133,55 @@ export default function App() {
             // Create a unique ID for this generation (for streaming state)
             const generationId = retryId || crypto.randomUUID();
 
-            // Streaming callback for real-time updates
+            // Import JSON field extractor dynamically
+            const { extractJsonFields } = await import('./utils/jsonFieldExtractor');
+
+            // Initialize streaming conversation state
+            const initStreamingState = (totalMessages: number, userMessage?: string): StreamingConversationState => ({
+                id: generationId,
+                phase: 'waiting_for_response',
+                currentMessageIndex: 0,
+                totalMessages,
+                completedMessages: [],
+                currentUserMessage: userMessage,
+                currentReasoning: '',
+                currentAnswer: '',
+                useOriginalAnswer: false,
+                rawAccumulated: ''
+            });
+
+            // Progressive streaming callback that parses JSON fields
             const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase) => {
-                streamingContentRef.current.set(generationId, accumulated);
-                // Throttle React state updates to avoid excessive re-renders
-                setStreamingContent(new Map(streamingContentRef.current));
+                // Parse accumulated JSON for reasoning/answer fields
+                const extracted = extractJsonFields(accumulated);
+
+                const current = streamingConversationsRef.current.get(generationId);
+                if (!current) return;
+
+                // Determine phase based on what we've extracted
+                let newPhase = current.phase;
+                if (extracted.hasReasoningStart && !extracted.hasReasoningEnd) {
+                    newPhase = 'extracting_reasoning';
+                } else if (extracted.hasReasoningEnd && (!extracted.hasAnswerEnd || !current.useOriginalAnswer)) {
+                    newPhase = 'extracting_answer';
+                }
+
+                // Update the ref and trigger React state update
+                const updated: StreamingConversationState = {
+                    ...current,
+                    phase: newPhase,
+                    currentReasoning: extracted.reasoning || current.currentReasoning,
+                    currentAnswer: extracted.answer || current.currentAnswer,
+                    rawAccumulated: accumulated
+                };
+                streamingConversationsRef.current.set(generationId, updated);
+                setStreamingConversations(new Map(streamingConversationsRef.current));
             };
 
             // Helper to clear streaming state after completion
             const clearStreamingState = () => {
-                streamingContentRef.current.delete(generationId);
-                setStreamingContent(new Map(streamingContentRef.current));
+                streamingConversationsRef.current.delete(generationId);
+                setStreamingConversations(new Map(streamingConversationsRef.current));
             };
 
             // --- Conversation Trace Rewriting Mode ---
@@ -1169,6 +1207,24 @@ export default function App() {
                         })
                         .filter((m: ChatMessage) => m.content.trim().length > 0); // Skip empty messages
 
+                    // Initialize streaming state for conversation
+                    const firstUserMsg = chatMessages.find(m => m.role === 'user');
+                    // Count message pairs (or assistant messages) that need processing
+                    const assistantCount = chatMessages.filter(m => m.role === 'assistant').length;
+                    const newStreamState = initStreamingState(
+                        assistantCount,
+                        firstUserMsg?.content
+                    );
+                    logger.log('[STREAMING] Initializing streaming state:', {
+                        generationId,
+                        totalMessages: chatMessages.length,
+                        assistantCount,
+                        phase: newStreamState.phase,
+                        currentUserMessage: newStreamState.currentUserMessage?.substring(0, 50)
+                    });
+                    streamingConversationsRef.current.set(generationId, newStreamState);
+                    setStreamingConversations(new Map(streamingConversationsRef.current));
+
                     const rewriteResult = await DeepReasoningService.orchestrateConversationRewrite({
                         messages: chatMessages,
                         config: effectiveDeepConfig,
@@ -1189,7 +1245,65 @@ export default function App() {
                         } : undefined,
                         // Streaming for real-time updates
                         stream: true,
-                        onStreamChunk: handleStreamChunk
+                        onStreamChunk: handleStreamChunk,
+                        // Message progression callback
+                        onMessageRewritten: (index: number, total: number) => {
+                            const current = streamingConversationsRef.current.get(generationId);
+                            if (!current) return;
+
+                            // Get the user message for this index (find next user after current position)
+                            const userMsgs = chatMessages.filter(m => m.role === 'user');
+                            const assistantMsgs = chatMessages.filter(m => m.role === 'assistant');
+
+                            // Add current pair to completed messages
+                            const completedUser = userMsgs[index];
+                            const completedAssistant = assistantMsgs[index];
+
+                            // Helper to clean empty think tags from content
+                            const cleanEmptyThinkTags = (text: string) =>
+                                text?.replace(/<think>\s*<\/think>\s*/gi, '').trim();
+
+                            const newCompleted = [...current.completedMessages];
+                            if (completedUser) {
+                                newCompleted.push({ ...completedUser });
+                            }
+                            if (completedAssistant) {
+                                // Clean content and use streamed reasoning/answer for this message
+                                const cleanContent = cleanEmptyThinkTags(
+                                    current.currentAnswer || completedAssistant.content || ''
+                                );
+                                newCompleted.push({
+                                    role: 'assistant',
+                                    content: cleanContent,
+                                    reasoning: current.currentReasoning || completedAssistant.reasoning
+                                });
+                            }
+
+                            // Get next user message if there is one
+                            const nextUserMsg = userMsgs[index + 1];
+
+                            logger.log('[STREAMING] Message rewritten:', {
+                                generationId,
+                                index,
+                                total,
+                                completedCount: newCompleted.length,
+                                nextUser: nextUserMsg?.content?.substring(0, 30)
+                            });
+
+                            // Update state for next message
+                            const updatedState: StreamingConversationState = {
+                                ...current,
+                                phase: index + 1 < total ? 'waiting_for_response' : 'message_complete',
+                                currentMessageIndex: index + 1,
+                                completedMessages: newCompleted,
+                                currentUserMessage: nextUserMsg?.content,
+                                currentReasoning: '',
+                                currentAnswer: '',
+                                rawAccumulated: ''
+                            };
+                            streamingConversationsRef.current.set(generationId, updatedState);
+                            setStreamingConversations(new Map(streamingConversationsRef.current));
+                        }
                     });
 
                     clearStreamingState(); // Clear streaming after completion
@@ -3212,7 +3326,7 @@ export default function App() {
                                 retryingIds={retryingIds}
                                 savingIds={savingToDbIds}
                                 isProdMode={environment === 'production'}
-                                streamingContent={streamingContent}
+                                streamingConversations={streamingConversations}
                             />
                         ) : (
                             <AnalyticsDashboard logs={visibleLogs} />
