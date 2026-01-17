@@ -1,5 +1,5 @@
 
-import { ExternalProvider, GenerationParams } from '../types';
+import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase } from '../types';
 import { PROVIDER_URLS } from '../constants';
 import { logger } from '../utils/logger';
 import { jsonrepair } from 'json-repair-js';
@@ -16,14 +16,90 @@ export interface ExternalApiConfig {
   retryDelay?: number;
   generationParams?: GenerationParams;
   structuredOutput?: boolean;
+  // Streaming support
+  stream?: boolean;
+  onStreamChunk?: StreamChunkCallback;
+  streamPhase?: StreamPhase;
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Helper to parse SSE stream and extract content chunks
+async function processStreamResponse(
+  response: Response,
+  provider: ExternalProvider,
+  onChunk: (chunk: string, accumulated: string) => void,
+  signal?: AbortSignal
+): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body for streaming');
+
+  const decoder = new TextDecoder();
+  let accumulated = '';
+  let buffer = '';
+
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        reader.cancel();
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === 'data: [DONE]') continue;
+
+        if (trimmed.startsWith('data: ')) {
+          try {
+            const json = JSON.parse(trimmed.slice(6));
+            let chunk = '';
+
+            if (provider === 'anthropic') {
+              // Anthropic format: delta.text or content_block_delta
+              if (json.type === 'content_block_delta') {
+                chunk = json.delta?.text || '';
+              } else if (json.delta?.text) {
+                chunk = json.delta.text;
+              }
+            } else {
+              // OpenAI-compatible format
+              chunk = json.choices?.[0]?.delta?.content || '';
+              // Also handle reasoning_content for reasoning models
+              if (!chunk) {
+                chunk = json.choices?.[0]?.delta?.reasoning_content || '';
+              }
+            }
+
+            if (chunk) {
+              accumulated += chunk;
+              onChunk(chunk, accumulated);
+            }
+          } catch (e) {
+            // Skip malformed JSON lines
+            logger.warn('Failed to parse SSE chunk:', trimmed);
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return accumulated;
+}
+
 export const callExternalApi = async (config: ExternalApiConfig): Promise<any> => {
   const {
     provider, apiKey, model, customBaseUrl, systemPrompt, userPrompt, signal,
-    maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput
+    maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
+    stream = false, onStreamChunk, streamPhase
   } = config;
 
   let baseUrl = provider === 'other' ? customBaseUrl : PROVIDER_URLS[provider];
@@ -77,6 +153,11 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   let url = '';
   let payload: any = {};
 
+  // Determine if we should actually stream (only if callback provided)
+  // Use Boolean() to ensure it's true/false, not the function itself
+  const shouldStream = Boolean(stream && onStreamChunk);
+  logger.log(`[STREAM DEBUG] stream=${stream}, onStreamChunk=${typeof onStreamChunk}, shouldStream=${shouldStream}`);
+
   if (provider === 'anthropic') {
     url = `${baseUrl}/messages`;
     payload = {
@@ -86,7 +167,8 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       messages: [{ role: 'user', content: userPrompt }],
       temperature: cleanGenParams.temperature ?? 0.8,
       top_p: cleanGenParams.top_p,
-      top_k: cleanGenParams.top_k
+      top_k: cleanGenParams.top_k,
+      stream: shouldStream
     };
   } else {
     url = baseUrl;
@@ -98,6 +180,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       ],
       max_tokens: 8192,
       response_format: { type: responseFormat },
+      stream: shouldStream,
       ...cleanGenParams
     };
     // If temp was not provided in params, default to 0.8 if strictly needed,
@@ -135,7 +218,27 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         throw new Error(`${provider} API Error: ${response.status} - ${err}`);
       }
 
-      // Success Logic
+      // STREAMING PATH: process SSE stream
+      if (shouldStream) {
+        const rawContent = await processStreamResponse(
+          response,
+          provider,
+          (chunk, accumulated) => onStreamChunk!(chunk, accumulated, streamPhase),
+          signal
+        );
+
+        if (!rawContent) {
+          logger.warn("Streaming returned empty content");
+          throw new Error("Streaming returned empty content");
+        }
+
+        if (!structuredOutput) {
+          return rawContent;
+        }
+        return parseJsonContent(rawContent);
+      }
+
+      // NON-STREAMING PATH: parse JSON response
       const data = await response.json();
 
       if (provider === 'anthropic') {

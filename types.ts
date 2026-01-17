@@ -195,6 +195,14 @@ export interface FirebaseConfig {
   appId: string;
 }
 
+// Streaming callback for real-time generation updates
+export type StreamPhase = 'writer' | 'rewriter' | 'user_followup' | 'regular';
+export type StreamChunkCallback = (
+  chunk: string,
+  accumulated: string,
+  phase?: StreamPhase
+) => void;
+
 export const CATEGORIES = [
   "Random (Any)",
   "Medicine & Health",

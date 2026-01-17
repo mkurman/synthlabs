@@ -12,7 +12,8 @@ import {
 import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider,
     GenerationConfig, ProgressStats, HuggingFaceConfig, DetectedColumns,
-    CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig, ChatMessage
+    CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig, ChatMessage,
+    StreamChunkCallback
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
 import { logger, setVerbose } from './utils/logger';
@@ -187,6 +188,10 @@ export default function App() {
     const [hfPreviewData, setHfPreviewData] = useState<any[]>([]);
     const [hfTotalRows, setHfTotalRows] = useState<number>(0);
     const [isLoadingHfPreview, setIsLoadingHfPreview] = useState(false);
+
+    // --- State: Streaming content for live updates ---
+    const [streamingContent, setStreamingContent] = useState<Map<string, string>>(new Map());
+    const streamingContentRef = useRef<Map<string, string>>(new Map());
 
     // Column detection utility with expanded patterns
     const detectColumns = (columns: string[]): DetectedColumns => {
@@ -1125,6 +1130,22 @@ export default function App() {
             const genParams = getGenerationParams();
             const retryConfig = { maxRetries, retryDelay, generationParams: genParams };
 
+            // Create a unique ID for this generation (for streaming state)
+            const generationId = retryId || crypto.randomUUID();
+
+            // Streaming callback for real-time updates
+            const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase) => {
+                streamingContentRef.current.set(generationId, accumulated);
+                // Throttle React state updates to avoid excessive re-renders
+                setStreamingContent(new Map(streamingContentRef.current));
+            };
+
+            // Helper to clear streaming state after completion
+            const clearStreamingState = () => {
+                streamingContentRef.current.delete(generationId);
+                setStreamingContent(new Map(streamingContentRef.current));
+            };
+
             // --- Conversation Trace Rewriting Mode ---
             // When enabled, extract messages from row and rewrite/generate <think> content
             // Also auto-detect messages columns even when toggle is not explicitly set
@@ -1165,9 +1186,13 @@ export default function App() {
                             apiKey: externalApiKey,
                             model: externalModel,
                             customBaseUrl: customBaseUrl
-                        } : undefined
+                        } : undefined,
+                        // Streaming for real-time updates
+                        stream: true,
+                        onStreamChunk: handleStreamChunk
                     });
 
+                    clearStreamingState(); // Clear streaming after completion
                     return {
                         ...rewriteResult,
                         id: retryId || rewriteResult.id,
@@ -1218,8 +1243,13 @@ export default function App() {
                         maxRetries,
                         retryDelay,
                         generationParams: genParams,
-                        structuredOutput: true
+                        structuredOutput: true,
+                        // Enable streaming for regular mode
+                        stream: true,
+                        onStreamChunk: handleStreamChunk,
+                        streamPhase: 'regular'
                     });
+                    clearStreamingState();
                 }
                 const ensureString = (val: any) => {
                     if (val === null || val === undefined) return "";
@@ -1276,8 +1306,14 @@ export default function App() {
                     signal: abortControllerRef.current?.signal || undefined,
                     maxRetries,
                     retryDelay,
-                    generationParams: genParams
+                    generationParams: genParams,
+                    // Enable streaming for writer/rewriter phases
+                    stream: true,
+                    onStreamChunk: handleStreamChunk
                 });
+
+                // Clear streaming content after completion
+                clearStreamingState();
 
                 // If User Agent is enabled, run multi-turn conversation
                 if (userAgentConfig.enabled && userAgentConfig.followUpCount > 0) {
@@ -3176,6 +3212,7 @@ export default function App() {
                                 retryingIds={retryingIds}
                                 savingIds={savingToDbIds}
                                 isProdMode={environment === 'production'}
+                                streamingContent={streamingContent}
                             />
                         ) : (
                             <AnalyticsDashboard logs={visibleLogs} />

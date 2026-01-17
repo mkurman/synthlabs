@@ -1,5 +1,5 @@
 
-import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig } from '../types';
+import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, StreamChunkCallback, StreamPhase } from '../types';
 import * as GeminiService from './geminiService';
 import * as ExternalApiService from './externalApiService';
 import { SettingsService } from './settingsService';
@@ -17,6 +17,9 @@ interface DeepOrchestrationParams {
   generationParams?: GenerationParams;
   onPhaseComplete?: (phase: string) => void;
   structuredOutput?: boolean;
+  // Streaming support - only for writer/rewriter phases
+  stream?: boolean;
+  onStreamChunk?: StreamChunkCallback;
 }
 
 const executePhase = async (
@@ -26,7 +29,8 @@ const executePhase = async (
   maxRetries = 3,
   retryDelay = 2000,
   generationParams?: GenerationParams,
-  structuredOutput: boolean = true
+  structuredOutput: boolean = true,
+  streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<{ result: any; model: string; input: string; duration: number; timestamp: string }> => {
   const { id, provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt } = phaseConfig;
   const modelName = provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
@@ -58,7 +62,11 @@ const executePhase = async (
         maxRetries,
         retryDelay,
         generationParams,
-        structuredOutput
+        structuredOutput,
+        // Streaming: only enable if streamOptions provided with callback
+        stream: streamOptions?.stream,
+        onStreamChunk: streamOptions?.onStreamChunk,
+        streamPhase: streamOptions?.streamPhase
       });
     }
 
@@ -90,7 +98,7 @@ const getModelName = (cfg: DeepPhaseConfig) => {
 export const orchestrateDeepReasoning = async (
   params: DeepOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { input, originalQuery, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams, structuredOutput } = params;
+  const { input, originalQuery, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams, structuredOutput, stream, onStreamChunk } = params;
 
   // Use originalQuery for output fields (training data), fall back to input if not provided
   const cleanQuery = originalQuery || input;
@@ -164,14 +172,16 @@ You must output a single valid JSON object. Do NOT wrap it in markdown code bloc
 
     logger.log("📝 Constructed Aggregated Context for Writer:", aggregatedContext);
 
-    // 3. Execute Writer Phase
+    // 3. Execute Writer Phase (with optional streaming)
     const writerRes = await executePhase(
       config.phases.writer,
       aggregatedContext,
       signal,
       maxRetries,
       retryDelay,
-      config.phases.writer.generationParams || generationParams
+      config.phases.writer.generationParams || generationParams,
+      true, // structuredOutput
+      stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'writer' } : undefined
     );
 
     deepTrace.writer = { model: writerRes.model, input: writerRes.input, output: writerRes.result, timestamp: writerRes.timestamp, duration: writerRes.duration };
@@ -204,7 +214,9 @@ CRITICAL: Output valid JSON only. Format: { "answer": "Your final refined answer
         signal,
         maxRetries,
         retryDelay,
-        config.phases.rewriter.generationParams || generationParams
+        config.phases.rewriter.generationParams || generationParams,
+        true, // structuredOutput
+        stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'rewriter' } : undefined
       );
 
       deepTrace.rewriter = { model: rewriterRes.model, input: rewriterRes.input, output: rewriterRes.result, timestamp: rewriterRes.timestamp, duration: rewriterRes.duration };
@@ -329,7 +341,10 @@ interface MultiTurnOrchestrationParams {
   retryDelay: number;
   generationParams?: GenerationParams;
   promptSet?: string; // Optional prompt set for fallback prompt loading (auto-routing)
-  structuredOutput?: boolean
+  structuredOutput?: boolean;
+  // Streaming for responder (user follow-up responses)
+  stream?: boolean;
+  onStreamChunk?: StreamChunkCallback;
 }
 
 /**
@@ -343,7 +358,7 @@ interface MultiTurnOrchestrationParams {
 export const orchestrateMultiTurnConversation = async (
   params: MultiTurnOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, promptSet, structuredOutput } = params;
+  const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, promptSet, structuredOutput, stream, onStreamChunk } = params;
   const startTime = Date.now();
 
   // Heuristic: Use initialInput (user's selected column content) if the inferred query looks like a database ID/slug or is missing.
@@ -400,7 +415,8 @@ export const orchestrateMultiTurnConversation = async (
         maxRetries,
         retryDelay,
         responderConfig.generationParams || generationParams,
-        structuredOutput
+        structuredOutput,
+        stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'user_followup' } : undefined
       );
       firstResponse = generatedResponse.answer || generatedResponse.reasoning || "No response generated.";
       firstReasoning = generatedResponse.reasoning;
@@ -462,7 +478,8 @@ export const orchestrateMultiTurnConversation = async (
         maxRetries,
         retryDelay,
         responderConfig.generationParams || generationParams,
-        structuredOutput
+        structuredOutput,
+        stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'user_followup' } : undefined
       );
 
       messages.push({
@@ -533,7 +550,8 @@ const callAgent = async (
   maxRetries = 3,
   retryDelay = 2000,
   generationParams?: GenerationParams,
-  structuredOutput: boolean = true
+  structuredOutput: boolean = true,
+  streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<any> => {
   const effectiveParams = config.generationParams || generationParams;
   if (config.provider === 'gemini') {
@@ -550,7 +568,10 @@ const callAgent = async (
       maxRetries,
       retryDelay,
       generationParams: effectiveParams,
-      structuredOutput
+      structuredOutput,
+      stream: streamOptions?.stream,
+      onStreamChunk: streamOptions?.onStreamChunk,
+      streamPhase: streamOptions?.streamPhase
     });
   }
 };
@@ -580,7 +601,10 @@ interface ConversationRewriteParams {
     generationParams?: GenerationParams;
   };
   promptSet?: string;
-  structuredOutput?: boolean                // Optional prompt set for fallback prompt loading (auto-routing)
+  structuredOutput?: boolean;                // Optional prompt set for fallback prompt loading (auto-routing)
+  // Streaming support
+  stream?: boolean;
+  onStreamChunk?: StreamChunkCallback;
 }
 
 /**
@@ -610,7 +634,9 @@ export const orchestrateConversationRewrite = async (
     maxTraces,
     regularModeConfig,
     promptSet,
-    structuredOutput
+    structuredOutput,
+    stream,
+    onStreamChunk
   } = params;
 
   const startTime = Date.now();
@@ -694,7 +720,10 @@ ${outsideThinkContent}
           retryDelay: retryDelay,
           generationParams: generationParams,
           structuredOutput: structuredOutput,
-          expectedAnswer: outsideThinkContent
+          expectedAnswer: outsideThinkContent,
+          // Streaming for writer/rewriter phases
+          stream: stream,
+          onStreamChunk: onStreamChunk
         });
 
         newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
@@ -722,7 +751,11 @@ ${outsideThinkContent}
             maxRetries,
             retryDelay,
             generationParams,
-            structuredOutput
+            structuredOutput,
+            // Streaming for regular mode
+            stream: stream,
+            onStreamChunk: onStreamChunk,
+            streamPhase: 'regular'
           });
           newReasoning = result.reasoning || originalThinking;
         } else {

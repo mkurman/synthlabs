@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload } from 'lucide-react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload, Loader } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import { SynthLogItem } from '../types';
@@ -17,11 +17,14 @@ interface LogFeedProps {
   retryingIds?: Set<string>;
   savingIds?: Set<string>;
   isProdMode?: boolean;
+  // Streaming content for real-time display
+  streamingContent?: Map<string, string>;
 }
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
-  onRetry, onRetrySave, onSaveToDb, retryingIds, savingIds, isProdMode
+  onRetry, onRetrySave, onSaveToDb, retryingIds, savingIds, isProdMode,
+  streamingContent
 }) => {
   const [showLatestOnly, setShowLatestOnly] = useState(false);
 
@@ -77,6 +80,25 @@ const LogFeed: React.FC<LogFeedProps> = ({
           <Eye className="w-3 h-3" /> Show Latest Only
         </button>
       </div>
+
+      {/* Streaming Content Cards - Show active generations */}
+      {streamingContent && streamingContent.size > 0 && (
+        Array.from(streamingContent.entries()).map(([id, content]) => (
+          <div key={`streaming-${id}`} className="bg-gradient-to-br from-indigo-950/40 to-slate-900/80 backdrop-blur-sm rounded-xl border border-indigo-500/30 overflow-hidden shadow-lg shadow-indigo-500/5 mb-4">
+            <div className="bg-slate-950/50 p-3 border-b border-indigo-500/20 flex items-center gap-3">
+              <Loader className="w-4 h-4 text-indigo-400 animate-spin" />
+              <span className="text-xs font-medium text-indigo-300">Streaming Generation...</span>
+              <span className="text-[10px] text-slate-500 ml-auto font-mono">{content.length.toLocaleString()} chars</span>
+            </div>
+            <div className="p-4 max-h-48 overflow-y-auto">
+              <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
+                {content || <span className="text-slate-500 italic">Waiting for content...</span>}
+                <span className="inline-block w-2 h-4 bg-indigo-400/60 ml-0.5 animate-pulse" />
+              </pre>
+            </div>
+          </div>
+        ))
+      )}
 
       {visibleLogs.map((item) => (
         <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
