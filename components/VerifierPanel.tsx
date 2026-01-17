@@ -5,7 +5,8 @@ import {
     GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
     ShieldCheck, LayoutGrid, List, Search, Server, Plus,
     ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileType, MessageCircle,
-    ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2
+    ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2,
+    Sparkles
 } from 'lucide-react';
 import { VerifierItem, ExternalProvider } from '../types';
 import * as FirebaseService from '../services/firebaseService';
@@ -75,17 +76,24 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [editValue, setEditValue] = useState('');
     const [rewritingField, setRewritingField] = useState<{ itemId: string; field: string; messageIndex?: number } | null>(null);
 
+    // Regenerate Dropdown State
+    const [showRegenerateDropdown, setShowRegenerateDropdown] = useState<string | null>(null);
+
     // Rewriter Config State
     const [isRewriterPanelOpen, setIsRewriterPanelOpen] = useState(false);
-    const [rewriterConfig, setRewriterConfig] = useState<VerifierRewriterService.RewriterConfig>({
-        provider: 'external',
-        externalProvider: 'openrouter',
-        apiKey: '',
-        model: 'openai/gpt-4o-mini',
-        customBaseUrl: '',
-        maxRetries: 3,
-        retryDelay: 2000,
-        systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite')
+    const [rewriterConfig, setRewriterConfig] = useState<VerifierRewriterService.RewriterConfig>(() => {
+        const settings = SettingsService.getSettings();
+        const externalProvider = settings.defaultProvider || 'openrouter';
+        return {
+            provider: 'external',
+            externalProvider: externalProvider as any,
+            apiKey: '',
+            model: SettingsService.getDefaultModel(externalProvider) || '',
+            customBaseUrl: '',
+            maxRetries: 3,
+            retryDelay: 2000,
+            systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite')
+        };
     });
 
     // Autoscore Config State
@@ -490,9 +498,15 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                 if (editingField.field === 'message' && editingField.messageIndex !== undefined && item.messages) {
                     const newMessages = [...item.messages];
                     if (newMessages[editingField.messageIndex]) {
+                        // Parse <think> tags to update reasoning field as well
+                        const thinkMatch = editValue.match(/<think>([\s\S]*?)<\/think>/);
+                        const newReasoning = thinkMatch ? thinkMatch[1].trim() : undefined;
+
                         newMessages[editingField.messageIndex] = {
                             ...newMessages[editingField.messageIndex],
-                            content: editValue
+                            content: editValue,
+                            // Update reasoning field to match <think> content, or clear it if no <think> tags
+                            reasoning: newReasoning
                         };
                     }
                     return { ...item, messages: newMessages };
@@ -508,31 +522,151 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     };
 
     const handleMessageRewrite = async (itemId: string, messageIndex: number) => {
+        console.log('handleMessageRewrite called:', { itemId, messageIndex });
         const item = data.find(i => i.id === itemId);
-        if (!item || !item.messages || !item.messages[messageIndex]) return;
+        if (!item || !item.messages || !item.messages[messageIndex]) {
+            console.log('Early return: item or message not found');
+            return;
+        }
+
+        if (!rewriterConfig.model || rewriterConfig.model.trim() === '') {
+            toast.error('Please set a default model for ' + rewriterConfig.externalProvider + ' in Settings');
+            return;
+        }
 
         setRewritingField({ itemId, field: 'message', messageIndex });
         try {
+            console.log('Calling rewriteMessage...');
             const newValue = await VerifierRewriterService.rewriteMessage({
                 item,
                 messageIndex,
                 config: rewriterConfig,
                 promptSet: SettingsService.getSettings().promptSet
             });
+            console.log('rewriteMessage result:', newValue);
 
-            setData((prev: VerifierItem[]) => prev.map(i => {
-                if (i.id === itemId && i.messages) {
-                    const newMessages = [...i.messages];
-                    newMessages[messageIndex] = {
-                        ...newMessages[messageIndex],
-                        content: newValue
-                    };
-                    return { ...i, messages: newMessages };
-                }
-                return i;
-            }));
+            setData((prev: VerifierItem[]) => {
+                console.log('Updating data...');
+                return prev.map(i => {
+                    if (i.id === itemId && i.messages) {
+                        console.log('Found target item, updating message:', messageIndex);
+                        const newMessages = [...i.messages];
+                        newMessages[messageIndex] = {
+                            ...newMessages[messageIndex],
+                            content: newValue
+                        };
+                        console.log('Updated message:', newMessages[messageIndex]);
+                        return { ...i, messages: newMessages };
+                    }
+                    return i;
+                });
+            });
+            console.log('Data updated successfully');
         } catch (error) {
             console.error("Rewrite failed:", error);
+            toast.error("Rewrite failed. See console for details.");
+        } finally {
+            setRewritingField(null);
+        }
+    };
+
+    const handleMessageReasoningRewrite = async (itemId: string, messageIndex: number) => {
+        console.log('handleMessageReasoningRewrite called:', { itemId, messageIndex });
+        const item = data.find(i => i.id === itemId);
+        console.log('Found item:', item?.id, item?.messages?.length);
+        if (!item || !item.messages || !item.messages[messageIndex]) {
+            console.log('Early return: item or message not found');
+            return;
+        }
+
+        if (!rewriterConfig.model || rewriterConfig.model.trim() === '') {
+            toast.error('Please set a default model for ' + rewriterConfig.externalProvider + ' in Settings');
+            return;
+        }
+
+        setRewritingField({ itemId, field: 'message_reasoning', messageIndex });
+        try {
+            console.log('Calling rewriteMessageReasoning...');
+            const result = await VerifierRewriterService.rewriteMessageReasoning({
+                item,
+                messageIndex,
+                config: rewriterConfig,
+                promptSet: SettingsService.getSettings().promptSet
+            });
+            console.log('rewriteMessageReasoning result:', result);
+
+            setData((prev: VerifierItem[]) => {
+                console.log('Updating data...');
+                const updated = prev.map(i => {
+                    if (i.id === itemId && i.messages) {
+                        console.log('Found target item, updating message:', messageIndex);
+                        const newMessages = [...i.messages];
+                        const thinkTag = result.reasoning ? `<think>${result.reasoning}</think>\n` : '';
+                        newMessages[messageIndex] = {
+                            ...newMessages[messageIndex],
+                            content: thinkTag + result.answer,
+                            reasoning: result.reasoning
+                        };
+                        console.log('Updated message:', newMessages[messageIndex]);
+                        return { ...i, messages: newMessages };
+                    }
+                    return i;
+                });
+                return updated;
+            });
+            console.log('Data updated successfully');
+        } catch (error) {
+            console.error("Reasoning rewrite failed:", error);
+            toast.error("Rewrite failed. See console for details.");
+        } finally {
+            setRewritingField(null);
+        }
+    };
+
+    const handleMessageBothRewrite = async (itemId: string, messageIndex: number) => {
+        console.log('handleMessageBothRewrite called:', { itemId, messageIndex });
+        const item = data.find(i => i.id === itemId);
+        if (!item || !item.messages || !item.messages[messageIndex]) {
+            console.error('Item or message not found:', { itemId, messageIndex });
+            return;
+        }
+
+        if (!rewriterConfig.model || rewriterConfig.model.trim() === '') {
+            toast.error('Please set a default model for ' + rewriterConfig.externalProvider + ' in Settings');
+            return;
+        }
+
+        setRewritingField({ itemId, field: 'message_both', messageIndex });
+        try {
+            const result = await VerifierRewriterService.rewriteMessageBoth({
+                item,
+                messageIndex,
+                config: rewriterConfig,
+                promptSet: SettingsService.getSettings().promptSet
+            });
+
+            console.log('handleMessageBothRewrite result:', result);
+
+            setData((prev: VerifierItem[]) => {
+                const updated = prev.map(i => {
+                    if (i.id === itemId && i.messages) {
+                        const newMessages = [...i.messages];
+                        const thinkTag = result.reasoning ? `<think>${result.reasoning}</think>\n` : '';
+                        newMessages[messageIndex] = {
+                            ...newMessages[messageIndex],
+                            content: thinkTag + result.answer,
+                            reasoning: result.reasoning
+                        };
+                        return { ...i, messages: newMessages };
+                    }
+                    return i;
+                });
+                console.log('Updated data:', updated.find(x => x.id === itemId)?.messages?.[messageIndex]);
+                return updated;
+            });
+            toast.success('Regenerated message reasoning and answer');
+        } catch (error) {
+            console.error("Both rewrite failed:", error);
             toast.error("Rewrite failed. See console for details.");
         } finally {
             setRewritingField(null);
@@ -542,6 +676,11 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const handleFieldRewrite = async (itemId: string, field: 'query' | 'reasoning' | 'answer') => {
         const item = data.find(i => i.id === itemId);
         if (!item) return;
+
+        if (!rewriterConfig.model || rewriterConfig.model.trim() === '') {
+            toast.error('Please set a default model for ' + rewriterConfig.externalProvider + ' in Settings');
+            return;
+        }
 
         // Ensure query is populated with fallback if empty, to match display logic
         const itemForRewrite = {
@@ -564,6 +703,41 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             ));
         } catch (err: any) {
             console.error('Rewrite failed:', err);
+            toast.error('Rewrite failed: ' + err.message);
+        } finally {
+            setRewritingField(null);
+        }
+    };
+
+    const handleBothRewrite = async (itemId: string) => {
+        const item = data.find(i => i.id === itemId);
+        if (!item) return;
+
+        if (!rewriterConfig.model || rewriterConfig.model.trim() === '') {
+            toast.error('Please set a default model for ' + rewriterConfig.externalProvider + ' in Settings');
+            return;
+        }
+
+        const itemForRewrite = {
+            ...item,
+            query: item.query || (item as any).QUERY || item.full_seed || ''
+        };
+
+        setRewritingField({ itemId, field: 'both' });
+        try {
+            const result = await VerifierRewriterService.rewriteBoth({
+                item: itemForRewrite,
+                config: rewriterConfig,
+                promptSet: SettingsService.getSettings().promptSet
+            });
+            setData((prev: VerifierItem[]) => prev.map(i =>
+                i.id === itemId
+                    ? { ...i, reasoning: result.reasoning, answer: result.answer }
+                    : i
+            ));
+            toast.success('Regenerated reasoning and answer');
+        } catch (err: any) {
+            console.error('Rewrite both failed:', err);
             toast.error('Rewrite failed: ' + err.message);
         } finally {
             setRewritingField(null);
@@ -826,7 +1000,14 @@ Based on the criteria above, provide a 1-5 score.`;
                                     <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Provider</label>
                                     <select
                                         value={rewriterConfig.externalProvider}
-                                        onChange={e => setRewriterConfig(prev => ({ ...prev, externalProvider: e.target.value as ExternalProvider }))}
+                                        onChange={e => {
+                                            const newProvider = e.target.value as ExternalProvider;
+                                            setRewriterConfig(prev => ({
+                                                ...prev,
+                                                externalProvider: newProvider,
+                                                model: prev.model || SettingsService.getDefaultModel(newProvider) || prev.model
+                                            }));
+                                        }}
                                         className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
                                     >
                                         {['gemini', ...AVAILABLE_PROVIDERS].map(p => (
@@ -1182,6 +1363,8 @@ Based on the criteria above, provide a 1-5 score.`;
                                                 onEditCancel={cancelEditing}
                                                 onEditChange={setEditValue}
                                                 onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
+                                                onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
+                                                onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
                                                 editingIndex={editingField?.itemId === item.id && editingField.field === 'message' ? editingField.messageIndex : undefined}
                                                 editValue={editValue}
                                                 rewritingIndex={rewritingField?.itemId === item.id && rewritingField.field === 'message' ? rewritingField.messageIndex : undefined}
@@ -1194,7 +1377,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                         <div className="bg-slate-950/30 p-2 rounded border border-slate-800/50 my-2">
                                             <div className="flex items-center justify-between mb-1">
                                                 <h4 className="text-[10px] uppercase font-bold text-slate-500">Reasoning Trace</h4>
-                                                <div className="flex items-center gap-1">
+                                                <div className="flex items-center gap-1 relative">
                                                     {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
                                                         <>
                                                             <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
@@ -1209,18 +1392,48 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             <button onClick={() => startEditing(item.id, 'reasoning', item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
                                                                 <Edit3 className="w-3 h-3" />
                                                             </button>
-                                                            <button
-                                                                onClick={() => handleFieldRewrite(item.id, 'reasoning')}
-                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === 'reasoning'}
-                                                                className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
-                                                                title="AI Rewrite"
-                                                            >
-                                                                {rewritingField?.itemId === item.id && rewritingField.field === 'reasoning' ? (
-                                                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                                                ) : (
-                                                                    <RotateCcw className="w-3 h-3" />
+                                                            <div className="relative">
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(showRegenerateDropdown === item.id ? null : item.id); }}
+                                                                    disabled={rewritingField?.itemId === item.id}
+                                                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                                    title="AI Regenerate"
+                                                                >
+                                                                    {rewritingField?.itemId === item.id ? (
+                                                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                                                    ) : (
+                                                                        <Sparkles className="w-3 h-3" />
+                                                                    )}
+                                                                </button>
+                                                                {showRegenerateDropdown === item.id && (
+                                                                    <div
+                                                                        className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 py-1 min-w-[140px]"
+                                                                        onClick={(e) => e.stopPropagation()}
+                                                                    >
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'reasoning'); }}
+                                                                            className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                        >
+                                                                            <RotateCcw className="w-3 h-3" /> Reasoning Only
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'answer'); }}
+                                                                            className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                        >
+                                                                            <RotateCcw className="w-3 h-3" /> Answer Only
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleBothRewrite(item.id); }}
+                                                                            className="w-full px-3 py-2 text-left text-xs text-teal-400 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700"
+                                                                        >
+                                                                            <Sparkles className="w-3 h-3" /> Both Together
+                                                                        </button>
+                                                                    </div>
                                                                 )}
-                                                            </button>
+                                                            </div>
+                                                            {showRegenerateDropdown === item.id && (
+                                                                <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
+                                                            )}
                                                         </>
                                                     )}
                                                 </div>
@@ -1255,23 +1468,9 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             </button>
                                                         </>
                                                     ) : (
-                                                        <>
-                                                            <button onClick={() => startEditing(item.id, 'answer', item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
-                                                                <Edit3 className="w-3 h-3" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleFieldRewrite(item.id, 'answer')}
-                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === 'answer'}
-                                                                className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
-                                                                title="AI Rewrite"
-                                                            >
-                                                                {rewritingField?.itemId === item.id && rewritingField.field === 'answer' ? (
-                                                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                                                ) : (
-                                                                    <RotateCcw className="w-3 h-3" />
-                                                                )}
-                                                            </button>
-                                                        </>
+                                                        <button onClick={() => startEditing(item.id, 'answer', item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                            <Edit3 className="w-3 h-3" />
+                                                        </button>
                                                     )}
                                                 </div>
                                             </div>

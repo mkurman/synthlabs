@@ -5,7 +5,7 @@ import {
     Sparkles, Wand2, Dice5, Trash2, Upload, Save, FileJson, ArrowLeftRight,
     Cloud, Laptop, ShieldCheck, Globe, Archive, FileText, Server, BrainCircuit,
     Timer, RotateCcw, MessageSquare, Table, Layers, Search, PenTool, GitBranch,
-    PlusCircle, FileX, RefreshCcw, Copy, X, FileEdit, CloudUpload, CloudDownload, Calendar,
+    PlusCircle, Plus, FileX, RefreshCcw, Copy, X, FileEdit, CloudUpload, CloudDownload, Calendar,
     LayoutDashboard, Bookmark, Beaker, List, Info
 } from 'lucide-react';
 
@@ -33,6 +33,7 @@ import VerifierPanel from './components/VerifierPanel';
 import DataPreviewTable from './components/DataPreviewTable';
 import SettingsPanel from './components/SettingsPanel';
 import ColumnSelector from './components/ColumnSelector';
+import { ToastContainer } from './components/Toast';
 
 export default function App() {
     // --- State: Modes ---
@@ -550,62 +551,6 @@ export default function App() {
         }
         if (typeof autoContent === 'object') return JSON.stringify(autoContent);
         return String(autoContent);
-    };
-
-    const getRowExpectedOutput = (row: any): string => {
-        if (!row) return "";
-
-        const getText = (node: any): string => {
-            if (!node) return "";
-            if (typeof node === 'string') return node;
-            if (Array.isArray(node)) return node.map(getText).join('\n');
-            return node.content || node.value || node.text || JSON.stringify(node);
-        };
-
-        const getColumnContent = (columnName: string): string => {
-            const value = row[columnName];
-            if (value === undefined || value === null) return '';
-
-            if (Array.isArray(value)) {
-                const turnIndex = hfConfig.messageTurnIndex || 0;
-                const firstItem = value[0];
-                const isChat = firstItem && typeof firstItem === 'object' && ('role' in firstItem || 'from' in firstItem);
-                if (isChat) {
-                    // For output, we usually want the assistant response if it's chat
-                    return getText(value[turnIndex * 2 + 1] || value[turnIndex * 2]);
-                }
-                return getText(value[turnIndex]);
-            }
-
-            if (typeof value === 'object') return JSON.stringify(value);
-            return String(value);
-        };
-
-        // Try outputColumns if configured
-        if (hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
-            return hfConfig.outputColumns
-                .map((col: string) => getColumnContent(col))
-                .filter((c: string) => c.trim() !== '')
-                .join('\n\n');
-        }
-
-        // Auto-detect fallback for answer
-        const candidates = ['answer', 'output', 'response', 'target', 'label', 'gpt', 'assistant'];
-        for (const c of candidates) {
-            if (row[c]) return getColumnContent(c);
-        }
-
-        // Try messages/conversation format
-        const msgs = row.messages || row.conversation || row.conversations;
-        if (Array.isArray(msgs)) {
-            const turnIndex = hfConfig.messageTurnIndex || 0;
-            const assistantMsg = msgs.find((m: any, idx: number) =>
-                (m.role === 'assistant' || m.from === 'gpt') && idx >= turnIndex * 2
-            );
-            if (assistantMsg) return getText(assistantMsg);
-        }
-
-        return "";
     };
 
     const prefetchColumns = async (overrideConfig?: HuggingFaceConfig) => {
@@ -1587,6 +1532,38 @@ export default function App() {
         }
     };
 
+    const startNewSession = async () => {
+        const sourceLabel = dataSourceMode === 'huggingface'
+            ? `hf:${hfConfig.dataset}`
+            : dataSourceMode === 'manual'
+                ? `manual:${manualFileName || 'unknown'}`
+                : 'synthetic';
+
+        let newUid: string;
+
+        if (environment === 'production' && FirebaseService.isFirebaseConfigured()) {
+            try {
+                const sessionName = `${appMode === 'generator' ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
+                const sessionConfig = getSessionData();
+                newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel, sessionConfig);
+                logger.log(`Created new Firebase session: ${newUid}`);
+            } catch (e) {
+                logger.warn("Failed to create Firebase session, using local UUID", e);
+                newUid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
+            }
+        } else {
+            newUid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
+        }
+
+        setSessionUid(newUid);
+        sessionUidRef.current = newUid;
+        setSessionName(null);
+        setVisibleLogs([]);
+        setTotalLogCount(0);
+        setSparklineHistory([]);
+        setDbStats({ total: 0, session: 0 });
+    };
+
     const startGeneration = async (append = false) => {
         if (environment === 'production' && !FirebaseService.isFirebaseConfigured()) {
             const confirm = window.confirm("Firebase is not configured. Production mode will not save data remotely. Continue anyway?");
@@ -1602,8 +1579,12 @@ export default function App() {
 
             let newUid: string;
 
+            // Check if current session is already a Firebase session (Firestore IDs are 20 chars, alphanumeric)
+            const isCurrentSessionFirebase = sessionUidRef.current.length === 20 && /^[a-zA-Z0-9]+$/.test(sessionUidRef.current);
+
             // In production mode with Firebase, create session first and use its ID
-            if (environment === 'production' && FirebaseService.isFirebaseConfigured()) {
+            // BUT only if we're not already in a Firebase session
+            if (environment === 'production' && FirebaseService.isFirebaseConfigured() && !isCurrentSessionFirebase) {
                 try {
                     const sessionName = `${appMode === 'generator' ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
                     const sessionConfig = getSessionData(); // Include config so session can be restored
@@ -2463,6 +2444,17 @@ export default function App() {
                                 </button>
                             )}
 
+                            {/* New Session Button - visible when items exist */}
+                            {!isRunning && totalLogCount > 0 && (
+                                <button onClick={() => {
+                                    if (window.confirm("This will clear the feed and analytics, and start a new session. Continue?")) {
+                                        startNewSession();
+                                    }
+                                }} className="w-full mt-2 bg-pink-600/20 hover:bg-pink-600/30 text-pink-400 border border-pink-600/30 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all">
+                                    <Plus className="w-3.5 h-3.5" />New Session
+                                </button>
+                            )}
+
                             <div className="mt-4 flex justify-between text-xs text-slate-500 font-mono">
                                 <span>Completed: {progress.current}</span>
                                 <span>Target: {progress.total}</span>
@@ -3202,6 +3194,9 @@ export default function App() {
                     await refreshLogs();
                 }}
             />
+
+            {/* Toast Notifications */}
+            <ToastContainer />
         </div>
     );
 }
