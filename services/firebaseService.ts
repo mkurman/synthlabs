@@ -1,5 +1,5 @@
 import { initializeApp, getApps, deleteApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, updateDoc, increment } from 'firebase/firestore';
 import { SynthLogItem, FirebaseConfig, VerifierItem } from '../types';
 import { logger } from '../utils/logger';
 
@@ -36,6 +36,10 @@ export interface SavedSession {
     name: string;
     createdAt: string;
     config: any;
+    logCount?: number;      // Number of logs connected to this session
+    sessionUid?: string;    // The session UID used in synth_logs (matches doc ID)
+    isAutoRecovered?: boolean; // True if session was auto-created from orphaned logs
+    source?: string;
 }
 
 const getEnvConfig = (): FirebaseConfig => {
@@ -221,6 +225,21 @@ export const saveLogToFirebase = async (log: SynthLogItem, collectionName: strin
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
                 await addDoc(collection(db, collectionName), sanitizedDocData);
+
+                // Successfully saved - now increment the session's log count
+                if (log.sessionUid && log.sessionUid !== 'unknown') {
+                    try {
+                        // Find session by sessionUid (the session's doc ID)
+                        const sessionRef = doc(db!, 'synth_sessions', log.sessionUid);
+                        await updateDoc(sessionRef, {
+                            logCount: increment(1)
+                        });
+                    } catch (countErr) {
+                        // Log count increment failure shouldn't break the save
+                        logger.warn("Failed to increment session log count", countErr);
+                    }
+                }
+
                 return; // Success, exit
             } catch (retryErr: any) {
                 lastError = retryErr;
@@ -294,11 +313,13 @@ export const createSessionInFirebase = async (name?: string, source?: string, co
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
+        const createdAt = new Date().toISOString();
         const docData: any = {
             name: name || `Auto Session ${new Date().toLocaleString()}`,
             source: source,
-            createdAt: new Date().toISOString(),
-            isAutoCreated: true
+            createdAt: createdAt,
+            isAutoCreated: true,
+            logCount: 0  // Initialize log count
         };
 
         // Save config if provided (ensures sessions can be restored)
@@ -314,6 +335,16 @@ export const createSessionInFirebase = async (name?: string, source?: string, co
         );
 
         const docRef = await Promise.race([addDocPromise, timeoutPromise]);
+
+        // Update the document to include its own ID as sessionUid for easier querying
+        try {
+            await updateDoc(doc(db!, 'synth_sessions', docRef.id), {
+                sessionUid: docRef.id
+            });
+        } catch (updateErr) {
+            logger.warn("Failed to set sessionUid on session document", updateErr);
+        }
+
         return docRef.id;
     } catch (e) {
         console.error("Error creating session", e);
@@ -327,10 +358,20 @@ export const getSessionsFromFirebase = async (): Promise<SavedSession[]> => {
     try {
         const q = query(collection(db, 'synth_sessions'), orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(d => ({
-            id: d.id,
-            ...d.data()
-        } as SavedSession));
+        // Only extract minimal fields - avoid spreading large config objects
+        return snapshot.docs.map(d => {
+            const data = d.data();
+            return {
+                id: d.id,
+                name: data.name || 'Unknown Session',
+                createdAt: data.createdAt || '',
+                logCount: data.logCount,
+                sessionUid: data.sessionUid || d.id,
+                isAutoRecovered: data.isAutoRecovered,
+                source: data.source,
+                config: undefined  // Don't load full config - too large
+            } as SavedSession;
+        });
     } catch (e) {
         console.error("Error fetching sessions", e);
         throw e;
@@ -428,57 +469,276 @@ export const saveFinalDataset = async (items: VerifierItem[], collectionName = '
     }
 };
 
-// Get unique session UIDs from synth_logs with count of logs per session
-export interface DiscoveredSession {
-    uid: string;
-    count: number;
-    latestTimestamp?: string;
+
+// Orphaned logs information interface
+export interface OrphanedLogsInfo {
+    hasOrphanedLogs: boolean;
+    orphanedSessionCount: number;
+    totalOrphanedLogs: number;
+    orphanedUids: string[];
+    isPartialScan?: boolean;  // True if we stopped early after finding orphans
+    scannedCount?: number;    // How many logs we scanned
 }
 
-export const getUniqueSessionUidsFromLogs = async (): Promise<DiscoveredSession[]> => {
+// Check if there are orphaned logs (logs with sessionUids not in synth_sessions)
+// Uses chunked scanning to avoid OOM - stops early when orphans are found
+const ORPHAN_SCAN_CHUNK_SIZE = 100;
+
+export const getOrphanedLogsInfo = async (): Promise<OrphanedLogsInfo> => {
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
+
     try {
-        // Fetch all logs to get complete session discovery
-        // Note: For very large collections, consider pagination or aggregation
-        const q = query(
-            collection(db, 'synth_logs'),
-            orderBy('createdAt', 'desc')
-        );
-        const snapshot = await getDocs(q);
+        // 1. Get all session IDs from synth_sessions (lightweight - just IDs)
+        const sessionsSnapshot = await getDocs(collection(db, 'synth_sessions'));
+        const existingSessionUids = new Set<string>();
 
-        // Aggregate by sessionUid
-        const sessionMap = new Map<string, { count: number; latestTimestamp: string }>();
-
-        snapshot.docs.forEach(d => {
+        sessionsSnapshot.docs.forEach(d => {
+            existingSessionUids.add(d.id);
             const data = d.data();
-            const uid = data.sessionUid || 'unknown';
-            const timestamp = data.createdAt || data.timestamp || '';
-
-            if (sessionMap.has(uid)) {
-                const existing = sessionMap.get(uid)!;
-                existing.count++;
-                if (timestamp && timestamp > existing.latestTimestamp) {
-                    existing.latestTimestamp = timestamp;
-                }
-            } else {
-                sessionMap.set(uid, { count: 1, latestTimestamp: timestamp });
+            if (data.sessionUid) {
+                existingSessionUids.add(data.sessionUid);
             }
         });
 
-        // Convert to array and sort by count descending
-        const results: DiscoveredSession[] = [];
-        sessionMap.forEach((value, uid) => {
-            results.push({
-                uid,
-                count: value.count,
-                latestTimestamp: value.latestTimestamp
+        logger.log(`Found ${existingSessionUids.size} existing sessions for orphan check`);
+
+        // 2. Scan logs in chunks, stop early if orphans found
+        const orphanedUids = new Set<string>();
+        const logCounts = new Map<string, number>();  // Track count per orphaned UID
+        let scannedCount = 0;
+        let lastDoc: any = null;
+        let hasMore = true;
+
+        while (hasMore) {
+            // Build query with pagination
+            let q;
+            if (lastDoc) {
+                const { startAfter: startAfterFn } = await import('firebase/firestore');
+                q = query(
+                    collection(db!, 'synth_logs'),
+                    orderBy('createdAt', 'desc'),
+                    startAfterFn(lastDoc),
+                    limit(ORPHAN_SCAN_CHUNK_SIZE)
+                );
+            } else {
+                q = query(
+                    collection(db!, 'synth_logs'),
+                    orderBy('createdAt', 'desc'),
+                    limit(ORPHAN_SCAN_CHUNK_SIZE)
+                );
+            }
+
+            const snapshot = await getDocs(q);
+            scannedCount += snapshot.docs.length;
+
+            // Process this chunk
+            snapshot.docs.forEach(d => {
+                const data = d.data();
+                const uid = data.sessionUid || 'unknown';
+
+                if (uid !== 'unknown' && !existingSessionUids.has(uid)) {
+                    orphanedUids.add(uid);
+                    logCounts.set(uid, (logCounts.get(uid) || 0) + 1);
+                }
             });
+
+            // Check if we should continue
+            if (snapshot.docs.length < ORPHAN_SCAN_CHUNK_SIZE) {
+                hasMore = false;
+            } else if (orphanedUids.size > 0) {
+                // Found orphans - stop early to save memory
+                logger.log(`Found orphans after scanning ${scannedCount} logs, stopping early`);
+                hasMore = false;
+            } else {
+                lastDoc = snapshot.docs[snapshot.docs.length - 1];
+            }
+        }
+
+        // Calculate totals
+        let totalOrphanedLogs = 0;
+        logCounts.forEach(count => {
+            totalOrphanedLogs += count;
         });
 
-        return results.sort((a, b) => b.count - a.count);
+        return {
+            hasOrphanedLogs: orphanedUids.size > 0,
+            orphanedSessionCount: orphanedUids.size,
+            totalOrphanedLogs,
+            orphanedUids: Array.from(orphanedUids),
+            isPartialScan: orphanedUids.size > 0,  // We stopped early
+            scannedCount
+        };
     } catch (e) {
-        console.error("Error getting unique session UIDs from logs", e);
-        return [];
+        console.error("Error checking for orphaned logs", e);
+        return {
+            hasOrphanedLogs: false,
+            orphanedSessionCount: 0,
+            totalOrphanedLogs: 0,
+            orphanedUids: []
+        };
+    }
+};
+
+// Sync result interface
+export interface SyncResult {
+    sessionsCreated: number;
+    logsAssigned: number;
+    orphanedUids: string[];
+}
+
+// Chunk size for sync operation
+const SYNC_CHUNK_SIZE = 100;
+const BATCH_WRITE_LIMIT = 450;  // Firestore limit is 500, leave some margin
+
+// Find orphaned synth_logs (logs with sessionUids not in synth_sessions) and create sessions for them
+// Uses chunked scanning to avoid OOM
+export const syncOrphanedLogsToSessions = async (): Promise<SyncResult> => {
+    await ensureInitialized();
+    if (!db) throw new Error("Firebase not initialized");
+
+    const result: SyncResult = {
+        sessionsCreated: 0,
+        logsAssigned: 0,
+        orphanedUids: []
+    };
+
+    try {
+        // 1. Fetch all session UIDs from synth_sessions
+        const sessionsSnapshot = await getDocs(collection(db, 'synth_sessions'));
+        const existingSessionUids = new Set<string>();
+
+        sessionsSnapshot.docs.forEach(d => {
+            existingSessionUids.add(d.id);
+            const data = d.data();
+            if (data.sessionUid) {
+                existingSessionUids.add(data.sessionUid);
+            }
+        });
+
+        logger.log(`Found ${existingSessionUids.size} existing sessions`);
+
+        // 2. Scan logs in chunks and collect orphaned session info
+        const logGroups = new Map<string, {
+            count: number;
+            earliestTimestamp: string;
+            source?: string;
+            sessionName?: string;
+        }>();
+
+        let lastDoc: any = null;
+        let hasMore = true;
+        let scannedCount = 0;
+
+        while (hasMore) {
+            // Build query with pagination
+            let q;
+            if (lastDoc) {
+                const { startAfter: startAfterFn } = await import('firebase/firestore');
+                q = query(
+                    collection(db!, 'synth_logs'),
+                    orderBy('createdAt', 'asc'),  // Ascending to find earliest timestamp
+                    startAfterFn(lastDoc),
+                    limit(SYNC_CHUNK_SIZE)
+                );
+            } else {
+                q = query(
+                    collection(db!, 'synth_logs'),
+                    orderBy('createdAt', 'asc'),
+                    limit(SYNC_CHUNK_SIZE)
+                );
+            }
+
+            const snapshot = await getDocs(q);
+            scannedCount += snapshot.docs.length;
+
+            // Process this chunk - only track orphaned UIDs
+            snapshot.docs.forEach(d => {
+                const data = d.data();
+                const uid = data.sessionUid || 'unknown';
+                const timestamp = data.createdAt || data.timestamp || new Date().toISOString();
+
+                // Only track if it's a potential orphan
+                if (uid !== 'unknown' && !existingSessionUids.has(uid)) {
+                    if (logGroups.has(uid)) {
+                        const group = logGroups.get(uid)!;
+                        group.count++;
+                        if (timestamp < group.earliestTimestamp) {
+                            group.earliestTimestamp = timestamp;
+                        }
+                    } else {
+                        logGroups.set(uid, {
+                            count: 1,
+                            earliestTimestamp: timestamp,
+                            source: data.source,
+                            sessionName: data.sessionName
+                        });
+                    }
+                }
+            });
+
+            // Check if we should continue
+            if (snapshot.docs.length < SYNC_CHUNK_SIZE) {
+                hasMore = false;
+            } else {
+                lastDoc = snapshot.docs[snapshot.docs.length - 1];
+            }
+
+            logger.log(`Scanned ${scannedCount} logs, found ${logGroups.size} orphaned sessions so far`);
+        }
+
+        // 3. Get list of orphaned UIDs
+        const orphanedUids = Array.from(logGroups.keys());
+        result.orphanedUids = orphanedUids;
+        logger.log(`Found ${orphanedUids.length} orphaned session UIDs total`);
+
+        if (orphanedUids.length === 0) {
+            return result;
+        }
+
+        // 4. Create sessions in batches (Firestore has 500 operation limit per batch)
+        let currentBatch = writeBatch(db);
+        let batchCount = 0;
+
+        for (const uid of orphanedUids) {
+            const group = logGroups.get(uid)!;
+            const sessionRef = doc(db, 'synth_sessions', uid);
+
+            const sessionData = {
+                name: group.sessionName || `Recovered Session ${new Date(group.earliestTimestamp).toLocaleDateString()}`,
+                source: group.source || 'unknown',
+                createdAt: group.earliestTimestamp,
+                sessionUid: uid,
+                logCount: group.count,
+                isAutoRecovered: true,
+                isAutoCreated: true
+            };
+
+            currentBatch.set(sessionRef, sessionData);
+            result.sessionsCreated++;
+            result.logsAssigned += group.count;
+            batchCount++;
+
+            // Commit batch if we hit the limit
+            if (batchCount >= BATCH_WRITE_LIMIT) {
+                await currentBatch.commit();
+                logger.log(`Committed batch of ${batchCount} sessions`);
+                currentBatch = writeBatch(db);
+                batchCount = 0;
+            }
+        }
+
+        // Commit remaining batch
+        if (batchCount > 0) {
+            await currentBatch.commit();
+            logger.log(`Committed final batch of ${batchCount} sessions`);
+        }
+
+        logger.log(`Created ${result.sessionsCreated} sessions for ${result.logsAssigned} orphaned logs`);
+
+        return result;
+    } catch (e) {
+        console.error("Error syncing orphaned logs to sessions", e);
+        throw e;
     }
 };

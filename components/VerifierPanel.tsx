@@ -36,8 +36,9 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [isLimitEnabled, setIsLimitEnabled] = useState(true);
     const [isImporting, setIsImporting] = useState(false);
     const [availableSessions, setAvailableSessions] = useState<FirebaseService.SavedSession[]>([]);
-    const [discoveredSessions, setDiscoveredSessions] = useState<FirebaseService.DiscoveredSession[]>([]);
-    const [isLoadingDiscoveredSessions, setIsLoadingDiscoveredSessions] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);  // Sync orphaned logs state
+    const [isCheckingOrphans, setIsCheckingOrphans] = useState(false);  // Loading state for orphan check
+    const [orphanedLogsInfo, setOrphanedLogsInfo] = useState<FirebaseService.OrphanedLogsInfo | null>(null);
     const [selectedSessionFilter, setSelectedSessionFilter] = useState<string>('all'); // 'all', 'current', 'custom', or session ID
     const [customSessionId, setCustomSessionId] = useState('');
 
@@ -122,18 +123,33 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     // Load available sessions when Import tab is active
     useEffect(() => {
         if (activeTab === 'import' && FirebaseService.isFirebaseConfigured()) {
-            // Fetch saved sessions
+            // Fetch saved sessions only - orphan check is now manual
             FirebaseService.getSessionsFromFirebase()
                 .then(setAvailableSessions)
                 .catch(console.error);
-            // Fetch discovered sessions from logs
-            setIsLoadingDiscoveredSessions(true);
-            FirebaseService.getUniqueSessionUidsFromLogs()
-                .then(setDiscoveredSessions)
-                .catch(console.error)
-                .finally(() => setIsLoadingDiscoveredSessions(false));
         }
     }, [activeTab]);
+
+    // Manual orphan check handler
+    const handleCheckOrphans = async () => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            toast.error("Firebase not configured.");
+            return;
+        }
+        setIsCheckingOrphans(true);
+        setOrphanedLogsInfo(null);  // Clear previous result
+        try {
+            const result = await FirebaseService.getOrphanedLogsInfo();
+            setOrphanedLogsInfo(result);
+            if (!result.hasOrphanedLogs) {
+                toast.success("No orphaned logs found. All logs are synced!");
+            }
+        } catch (e: any) {
+            toast.error("Check failed: " + e.message);
+        } finally {
+            setIsCheckingOrphans(false);
+        }
+    };
 
     // Reset pagination when filters or data change
     useEffect(() => {
@@ -325,6 +341,36 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             toast.error("Import failed: " + e.message);
         } finally {
             setIsImporting(false);
+        }
+    };
+
+    // --- Logic: Sync Orphaned Logs ---
+
+    const handleSyncOrphanedLogs = async () => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            toast.error("Firebase not configured.");
+            return;
+        }
+        setIsSyncing(true);
+        try {
+            const result = await FirebaseService.syncOrphanedLogsToSessions();
+            if (result.sessionsCreated === 0) {
+                toast.info("No orphaned logs found. All logs are already connected to sessions.");
+            } else {
+                toast.success(`Created ${result.sessionsCreated} sessions for ${result.logsAssigned} orphaned logs.`);
+            }
+            // Refresh session data after sync
+            FirebaseService.getSessionsFromFirebase()
+                .then(setAvailableSessions)
+                .catch(console.error);
+            // Re-check for orphaned logs (should now be empty)
+            FirebaseService.getOrphanedLogsInfo()
+                .then(setOrphanedLogsInfo)
+                .catch(console.error);
+        } catch (e: any) {
+            toast.error("Sync failed: " + e.message);
+        } finally {
+            setIsSyncing(false);
         }
     };
 
@@ -915,17 +961,9 @@ Based on the criteria above, provide a 1-5 score.`;
                                         <option value="all">All Sessions</option>
                                         <option value="current">Current Session</option>
                                         <option value="custom">Specific Session ID...</option>
-                                        {isLoadingDiscoveredSessions && <optgroup label="⏳ Loading sessions from logs..."></optgroup>}
-                                        {!isLoadingDiscoveredSessions && discoveredSessions.length > 0 && <optgroup label="📊 Sessions from Logs">
-                                            {discoveredSessions.map(s => (
-                                                <option key={`log-${s.uid}`} value={s.uid}>
-                                                    {s.uid.substring(0, 8)}... ({s.count} logs)
-                                                </option>
-                                            ))}
-                                        </optgroup>}
                                         {availableSessions.length > 0 && <optgroup label="💾 Saved Cloud Sessions">
                                             {availableSessions.map((s: FirebaseService.SavedSession) => (
-                                                <option key={s.id} value={s.id}>{s.name} ({new Date(s.createdAt).toLocaleDateString()})</option>
+                                                <option key={s.id} value={s.id}>{s.name} ({s.logCount !== undefined ? `${s.logCount} items` : new Date(s.createdAt).toLocaleDateString()})</option>
                                             ))}
                                         </optgroup>}
                                     </select>
@@ -975,6 +1013,58 @@ Based on the criteria above, provide a 1-5 score.`;
                                 </button>
                             </div>
                         </div>
+                    </div>
+
+                    {/* Orphaned Logs Section - Manual check button or results */}
+                    <div className="mt-8 text-center">
+                        {!isCheckingOrphans && !orphanedLogsInfo?.hasOrphanedLogs && (
+                            <div className="animate-in fade-in">
+                                <p className="text-xs text-slate-500 mb-3">Check if there are any logs without matching sessions.</p>
+                                <button
+                                    onClick={handleCheckOrphans}
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-all border border-slate-700"
+                                >
+                                    <Search className="w-3.5 h-3.5" />
+                                    Check for Orphaned Logs
+                                </button>
+                            </div>
+                        )}
+                        {isCheckingOrphans && (
+                            <div className="animate-in fade-in">
+                                <div className="max-w-md mx-auto bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+                                    <div className="flex items-center justify-center gap-3">
+                                        <RefreshCcw className="w-5 h-5 text-slate-400 animate-spin" />
+                                        <span className="text-xs text-slate-400">Checking for orphaned logs...</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {!isCheckingOrphans && orphanedLogsInfo?.hasOrphanedLogs && (
+                            <div className="animate-in fade-in slide-in-from-bottom-2">
+                                <div className="max-w-md mx-auto bg-amber-900/20 border border-amber-600/40 rounded-xl p-4">
+                                    <div className="flex items-start gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-amber-600/20 flex items-center justify-center flex-shrink-0">
+                                            <AlertTriangle className="w-5 h-5 text-amber-400" />
+                                        </div>
+                                        <div className="flex-1 text-left">
+                                            <h4 className="text-amber-300 font-bold text-sm mb-1">Unsynced Logs Detected</h4>
+                                            <p className="text-xs text-amber-200/70 mb-3">
+                                                Found <span className="font-bold text-amber-300">{orphanedLogsInfo.totalOrphanedLogs} logs</span> across{' '}
+                                                <span className="font-bold text-amber-300">{orphanedLogsInfo.orphanedSessionCount} sessions</span> without matching session records.
+                                            </p>
+                                            <button
+                                                onClick={handleSyncOrphanedLogs}
+                                                disabled={isSyncing}
+                                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-all disabled:opacity-50"
+                                            >
+                                                {isSyncing ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5" />}
+                                                Sync Now
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
