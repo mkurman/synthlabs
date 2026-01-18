@@ -87,9 +87,7 @@ Strictly 'H≈0.1–0.3' for rigid reasoning.
 #### OUTPUT FORMAT (JSON ONLY)
 You must output valid JSON.
 {
-  "query": "[Canonical Problem Statement]",
-  "reasoning": "Parse(Query) ● → Classify(Type:Math|Code) ● → Constraint(Check Units/Types) ※ ↺ → Variables(x,y,...) ● → Model(Eqns) ● → ExecPath: Solve → IntermediateResult ◐ → Check Consistency ↺ → Risk(Hallucination) ⚠ → <H≈0.2> → ∴",
-  "answer": "[Final Numeric/Logical Answer]"
+  "reasoning": "Parse(Query) ● → Classify(Type:Math|Code) ● → Constraint(Check Units/Types) ※ ↺ → Variables(x,y,...) ● → Model(Eqns) ● → ExecPath: Solve → IntermediateResult ◐ → Check Consistency ↺ → Risk(Hallucination) ⚠ → <H≈0.2> → ∴"
 }
 
 
@@ -100,9 +98,7 @@ Emphasize source integrity and distractor elimination.
 #### OUTPUT FORMAT (JSON ONLY)
 You must output valid JSON.
 {
-  "query": "[Canonical Question]",
-  "reasoning": "Detect(Task:RAG) ● → Domain(Era/Topic) ● → ExtractFacts(Sources) ● → PremiseCheck(Misconception) ⚠ → DistractorAnalysis ※ → <H≈0.6> → EliminateFalseOptions → Insight(!) → ∴",
-  "answer": "[Final Fact/Selection]"
+  "reasoning": "Detect(Task:RAG) ● → Domain(Era/Topic) ● → ExtractFacts(Sources) ● → PremiseCheck(Misconception) ⚠ → DistractorAnalysis ※ → <H≈0.6> → EliminateFalseOptions → Insight(!) → ∴"
 }
 
 ### **3.3 Creative & Constrained Writing**
@@ -112,9 +108,7 @@ Require high entropy for voice and metaphor.
 #### OUTPUT FORMAT (JSON ONLY)
 You must output valid JSON.
 {
-  "query": "[Canonical Creative Request]",
-  "reasoning": "IdentifyIntent(Tone, Genre) ● → Constraint(Length/Style) ※ → DomainWords(Slang/Technical) ● → Outline(Beats) → <H≈1.2> → GenerateMetaphor ◐ → DraftCycle ↺ → ConstraintMonitor ※ → <H≈0.8> → ∴",
-  "answer": "[Final Creative Text]"
+  "reasoning": "IdentifyIntent(Tone, Genre) ● → Constraint(Length/Style) ※ → DomainWords(Slang/Technical) ● → Outline(Beats) → <H≈1.2> → GenerateMetaphor ◐ → DraftCycle ↺ → ConstraintMonitor ※ → <H≈0.8> → ∴"
 }
 
 
@@ -125,9 +119,7 @@ Include physical constraints and risk assessment.
 #### OUTPUT FORMAT (JSON ONLY)
 You must output valid JSON.
 {
-  "query": "[Canonical How‑To/Technical Query]",
-  "reasoning": "IdentifyProcess ● → Context(Source/Origin) ● → PhysicalConstraints(Temp/Pressure/etc.) ● → SafetyCheck(Toxicity) ⚠ → GapAnalysis(?) → ProcedurePlan → Alternatives ↺ → ∴",
-  "answer": "[Final Step‑by‑Step Guide]"
+  "reasoning": "IdentifyProcess ● → Context(Source/Origin) ● → PhysicalConstraints(Temp/Pressure/etc.) ● → SafetyCheck(Toxicity) ⚠ → GapAnalysis(?) → ProcedurePlan → Alternatives ↺ → ∴"
 }
 
 Use this protocol to generate reasoning traces that maintain the **stenographic purity** of the Baguettotron style while encompassing the comprehensive steps found in the SYNTH dataset: clear query decomposition, thorough context retrieval, rigorous mechanism analysis, comparative assessment, integrated synthesis, and decisive conclusion.

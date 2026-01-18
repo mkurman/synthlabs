@@ -33,6 +33,12 @@ interface RewriteMessageParams {
     promptSet?: string;  // Optional prompt set override for auto-routing
 }
 
+// Result type for functions that return both reasoning and answer
+export interface RewriteResult {
+    reasoning: string;
+    answer: string;
+}
+
 /**
  * Builds context string from a VerifierItem for AI rewriting
  */
@@ -55,6 +61,7 @@ ${item[targetField]}`;
 
 /**
  * Builds context for message rewriting with conversation history up to target
+ * Used for answer-only regeneration
  */
 function buildMessageContext(item: VerifierItem, targetIndex: number): string {
     if (!item.messages || item.messages.length === 0) {
@@ -73,7 +80,75 @@ ${msg.content}`;
 ${formattedHistory}
 
 ---
-REWRITE THE LAST MESSAGE IN THE HISTORY ABOVE (the one marked as TARGET).`;
+REWRITE THE LAST MESSAGE IN THE HISTORY ABOVE (the one marked as TARGET).
+IMPORTANT: Only rewrite the ANSWER portion. Preserve any existing reasoning structure.`;
+}
+
+/**
+ * Builds detailed context for targeted regeneration with specific component selection
+ */
+function buildMessageContextForTarget(
+    item: VerifierItem,
+    targetIndex: number,
+    targetComponent: 'reasoning' | 'answer' | 'both'
+): string {
+    if (!item.messages || item.messages.length === 0) {
+        return '';
+    }
+
+    const targetMessage = item.messages[targetIndex];
+
+    // Parse existing reasoning and answer from message
+    const thinkMatch = targetMessage.content.match(/<think>([\s\S]*?)<\/think>/);
+    const existingReasoning = thinkMatch ? thinkMatch[1].trim() : (targetMessage.reasoning || '');
+    const existingAnswer = thinkMatch
+        ? targetMessage.content.replace(/<think>[\s\S]*?<\/think>/, '').trim()
+        : targetMessage.content;
+
+    // Build full conversation history
+    const contextMessages = item.messages.slice(0, targetIndex + 1);
+    const formattedHistory = contextMessages.map((msg, idx) => {
+        const isTarget = idx === targetIndex;
+        if (isTarget) {
+            return `[${msg.role.toUpperCase()}] (TARGET MESSAGE):
+<REASONING_TRACE>
+${existingReasoning || '(no reasoning present)'}
+</REASONING_TRACE>
+
+<ANSWER>
+${existingAnswer}
+</ANSWER>`;
+        }
+        return `[${msg.role.toUpperCase()}]:
+${msg.content}`;
+    }).join('\n\n');
+
+    let instructions = '';
+    if (targetComponent === 'reasoning') {
+        instructions = `TASK: Regenerate ONLY the REASONING TRACE for the target message.
+- Keep the existing ANSWER exactly as it is: "${existingAnswer.substring(0, 200)}${existingAnswer.length > 200 ? '...' : ''}"
+- Generate new, improved reasoning that leads to this answer
+- Your response must be a JSON object: { "reasoning": "your new reasoning", "answer": "${existingAnswer.replace(/"/g, '\\"')}" }`;
+    } else if (targetComponent === 'answer') {
+        instructions = `TASK: Regenerate ONLY the ANSWER for the target message.
+- Keep the existing REASONING TRACE for reference
+- Generate a new, improved answer based on the reasoning
+- Your response must be a JSON object: { "reasoning": "${existingReasoning.replace(/"/g, '\\"').substring(0, 500)}", "answer": "your new answer" }`;
+    } else {
+        instructions = `TASK: Regenerate BOTH the REASONING TRACE and ANSWER for the target message.
+- Generate new reasoning that thoroughly analyzes the user's request
+- Generate a new answer that follows from the reasoning
+- Your response must be a JSON object: { "reasoning": "your new reasoning", "answer": "your new answer" }`;
+    }
+
+    return `## CONVERSATION HISTORY
+
+${formattedHistory}
+
+---
+${instructions}
+
+Respond with ONLY the JSON object, no additional text.`;
 }
 
 /**
@@ -102,6 +177,41 @@ function cleanResponse(input: any): string {
     }
 
     return String(content);
+}
+
+/**
+ * Parses JSON response that should contain reasoning and answer
+ */
+function parseRewriteResult(input: any, fallbackReasoning: string, fallbackAnswer: string): RewriteResult {
+    let content = input;
+
+    // Try to parse if it's a string
+    if (typeof input === 'string') {
+        try {
+            const trimmed = input.trim();
+            // Remove markdown code blocks if present
+            const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, trimmed];
+            const jsonStr = jsonMatch[1].trim();
+
+            if (jsonStr.startsWith('{') && jsonStr.endsWith('}')) {
+                content = JSON.parse(jsonStr);
+            }
+        } catch (e) {
+            console.warn('Failed to parse rewrite result as JSON:', e);
+            // If parsing fails, treat entire response as the answer
+            return { reasoning: fallbackReasoning, answer: input.trim() };
+        }
+    }
+
+    // Extract from parsed object
+    if (typeof content === 'object' && content !== null) {
+        return {
+            reasoning: content.reasoning || content.reasoning_trace || content.thought || fallbackReasoning,
+            answer: content.answer || content.response || content.content || fallbackAnswer
+        };
+    }
+
+    return { reasoning: fallbackReasoning, answer: String(content) };
 }
 
 /**
@@ -146,6 +256,42 @@ export async function callRewriterAI(
 }
 
 /**
+ * Calls the AI service and returns raw result for structured parsing
+ */
+async function callRewriterAIRaw(
+    systemPrompt: string,
+    userPrompt: string,
+    config: RewriterConfig,
+    signal?: AbortSignal
+): Promise<any> {
+    if (config.provider === 'gemini') {
+        const result = await GeminiService.generateReasoningTrace(
+            userPrompt,
+            systemPrompt,
+            {
+                maxRetries: config.maxRetries ?? 2,
+                retryDelay: config.retryDelay ?? 1000
+            }
+        );
+        return result.answer || result.reasoning || String(result);
+    } else {
+        const result = await ExternalApiService.callExternalApi({
+            provider: config.externalProvider,
+            apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
+            model: config.model,
+            customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+            systemPrompt,
+            userPrompt,
+            signal,
+            maxRetries: config.maxRetries ?? 2,
+            retryDelay: config.retryDelay ?? 1000,
+            structuredOutput: true
+        });
+        return result;
+    }
+}
+
+/**
  * Rewrites a specific field of a VerifierItem using AI
  */
 export async function rewriteField(params: RewriteFieldParams): Promise<string> {
@@ -164,7 +310,7 @@ export async function rewriteField(params: RewriteFieldParams): Promise<string> 
 }
 
 /**
- * Rewrites a specific message in a multi-turn conversation
+ * Rewrites a specific message in a multi-turn conversation (answer only)
  */
 export async function rewriteMessage(params: RewriteMessageParams): Promise<string> {
     const { item, messageIndex, config, signal, promptSet } = params;
@@ -179,4 +325,91 @@ export async function rewriteMessage(params: RewriteMessageParams): Promise<stri
 
     const result = await callRewriterAI(systemPrompt, userPrompt, config, signal);
     return result.trim();
+}
+
+/**
+ * Rewrites only the reasoning trace for a message, preserving the answer
+ */
+export async function rewriteMessageReasoning(params: RewriteMessageParams): Promise<RewriteResult> {
+    const { item, messageIndex, config, signal } = params;
+
+    if (!item.messages || messageIndex >= item.messages.length) {
+        throw new Error('Invalid message index or no messages in item');
+    }
+
+    const targetMessage = item.messages[messageIndex];
+
+    // Extract existing answer to preserve
+    const thinkMatch = targetMessage.content.match(/<think>([\s\S]*?)<\/think>/);
+    const existingReasoning = thinkMatch ? thinkMatch[1].trim() : (targetMessage.reasoning || '');
+    const existingAnswer = thinkMatch
+        ? targetMessage.content.replace(/<think>[\s\S]*?<\/think>/, '').trim()
+        : targetMessage.content;
+
+    const systemPrompt = config.systemPrompt || `You are an expert at generating detailed reasoning traces. 
+Given a conversation and a target message, regenerate ONLY the reasoning/thinking process.
+The answer must remain EXACTLY as provided - do not modify it.
+Respond with a JSON object: { "reasoning": "your new reasoning", "answer": "preserved answer" }`;
+
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'reasoning');
+
+    const result = await callRewriterAIRaw(systemPrompt, userPrompt, config, signal);
+    return parseRewriteResult(result, existingReasoning, existingAnswer);
+}
+
+/**
+ * Rewrites both reasoning and answer for a message
+ */
+export async function rewriteMessageBoth(params: RewriteMessageParams): Promise<RewriteResult> {
+    const { item, messageIndex, config, signal } = params;
+
+    if (!item.messages || messageIndex >= item.messages.length) {
+        throw new Error('Invalid message index or no messages in item');
+    }
+
+    const targetMessage = item.messages[messageIndex];
+
+    // Extract existing values as fallbacks
+    const thinkMatch = targetMessage.content.match(/<think>([\s\S]*?)<\/think>/);
+    const existingReasoning = thinkMatch ? thinkMatch[1].trim() : (targetMessage.reasoning || '');
+    const existingAnswer = thinkMatch
+        ? targetMessage.content.replace(/<think>[\s\S]*?<\/think>/, '').trim()
+        : targetMessage.content;
+
+    const systemPrompt = config.systemPrompt || `You are an expert at generating high-quality reasoning traces and answers.
+Given a conversation, regenerate both the reasoning process AND the final answer for the target message.
+Respond with a JSON object: { "reasoning": "your reasoning", "answer": "your answer" }`;
+
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'both');
+
+    const result = await callRewriterAIRaw(systemPrompt, userPrompt, config, signal);
+    return parseRewriteResult(result, existingReasoning, existingAnswer);
+}
+
+/**
+ * Rewrites both reasoning and answer for a non-message VerifierItem
+ */
+export async function rewriteBoth(params: Omit<RewriteFieldParams, 'field'>): Promise<RewriteResult> {
+    const { item, config, signal } = params;
+
+    const systemPrompt = config.systemPrompt || `You are an expert at generating high-quality reasoning traces and answers.
+Given a query, regenerate both the reasoning process AND the final answer.
+Respond with a JSON object: { "reasoning": "your reasoning", "answer": "your answer" }`;
+
+    const userPrompt = `## ITEM TO REGENERATE
+
+**Query:** ${item.query}
+
+**Current Reasoning Trace:**
+${item.reasoning}
+
+**Current Answer:**
+${item.answer}
+
+---
+TASK: Regenerate BOTH the reasoning trace and answer.
+Respond with a JSON object: { "reasoning": "your new reasoning", "answer": "your new answer" }`;
+
+    const result = await callRewriterAIRaw(systemPrompt, userPrompt, config, signal);
+    return parseRewriteResult(result, item.reasoning, item.answer);
 }

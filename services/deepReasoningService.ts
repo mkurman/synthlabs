@@ -1,5 +1,5 @@
 
-import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig } from '../types';
+import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, StreamChunkCallback, StreamPhase } from '../types';
 import * as GeminiService from './geminiService';
 import * as ExternalApiService from './externalApiService';
 import { SettingsService } from './settingsService';
@@ -17,6 +17,9 @@ interface DeepOrchestrationParams {
   generationParams?: GenerationParams;
   onPhaseComplete?: (phase: string) => void;
   structuredOutput?: boolean;
+  // Streaming support - only for writer/rewriter phases
+  stream?: boolean;
+  onStreamChunk?: StreamChunkCallback;
 }
 
 const executePhase = async (
@@ -26,7 +29,8 @@ const executePhase = async (
   maxRetries = 3,
   retryDelay = 2000,
   generationParams?: GenerationParams,
-  structuredOutput: boolean = true
+  structuredOutput: boolean = true,
+  streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<{ result: any; model: string; input: string; duration: number; timestamp: string }> => {
   const { id, provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt } = phaseConfig;
   const modelName = provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
@@ -58,7 +62,11 @@ const executePhase = async (
         maxRetries,
         retryDelay,
         generationParams,
-        structuredOutput
+        structuredOutput,
+        // Streaming: only enable if streamOptions provided with callback
+        stream: streamOptions?.stream,
+        onStreamChunk: streamOptions?.onStreamChunk,
+        streamPhase: streamOptions?.streamPhase
       });
     }
 
@@ -90,7 +98,7 @@ const getModelName = (cfg: DeepPhaseConfig) => {
 export const orchestrateDeepReasoning = async (
   params: DeepOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { input, originalQuery, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams, structuredOutput } = params;
+  const { input, originalQuery, expectedAnswer, config, signal, maxRetries, retryDelay, onPhaseComplete, generationParams, structuredOutput, stream, onStreamChunk } = params;
 
   // Use originalQuery for output fields (training data), fall back to input if not provided
   const cleanQuery = originalQuery || input;
@@ -103,21 +111,21 @@ export const orchestrateDeepReasoning = async (
 
   try {
     // 1. Parallel Execution of Phase 0, 1, 2
-    const metaPromise = executePhase(config.phases.meta, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
+    const metaPromise = executePhase(config.phases.meta, input, signal, maxRetries, retryDelay, config.phases.meta.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('meta');
         deepTrace.meta = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
         return res.result;
       });
 
-    const retrievalPromise = executePhase(config.phases.retrieval, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
+    const retrievalPromise = executePhase(config.phases.retrieval, input, signal, maxRetries, retryDelay, config.phases.retrieval.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('retrieval');
         deepTrace.retrieval = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
         return res.result;
       });
 
-    const derivationPromise = executePhase(config.phases.derivation, input, signal, maxRetries, retryDelay, generationParams, structuredOutput)
+    const derivationPromise = executePhase(config.phases.derivation, input, signal, maxRetries, retryDelay, config.phases.derivation.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('derivation');
         deepTrace.derivation = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
@@ -138,6 +146,9 @@ You are the [FINAL SYNTHESIS AGENT]. Your inputs are the reports from three spec
 ## 1. SOURCE DATA
 [ORIGINAL SEED]
 ${input}
+
+[FINAL ANSWER]
+${expectedAnswer}
 
 ## 2. AGENT REPORTS
 ### PHASE 1: META-ANALYSIS (Intent & Traps)
@@ -161,14 +172,16 @@ You must output a single valid JSON object. Do NOT wrap it in markdown code bloc
 
     logger.log("📝 Constructed Aggregated Context for Writer:", aggregatedContext);
 
-    // 3. Execute Writer Phase
+    // 3. Execute Writer Phase (with optional streaming)
     const writerRes = await executePhase(
       config.phases.writer,
       aggregatedContext,
       signal,
       maxRetries,
       retryDelay,
-      generationParams
+      config.phases.writer.generationParams || generationParams,
+      true, // structuredOutput
+      stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'writer' } : undefined
     );
 
     deepTrace.writer = { model: writerRes.model, input: writerRes.input, output: writerRes.result, timestamp: writerRes.timestamp, duration: writerRes.duration };
@@ -193,6 +206,7 @@ ${writerResult.query}
 ${writerResult.reasoning}
 
 Instructions: Based on the reasoning trace above, write the final high-quality response.
+CRITICAL: Output valid JSON only. Format: { "answer": "Your final refined answer string here" }
 `;
       const rewriterRes = await executePhase(
         config.phases.rewriter,
@@ -200,18 +214,46 @@ Instructions: Based on the reasoning trace above, write the final high-quality r
         signal,
         maxRetries,
         retryDelay,
-        generationParams
+        config.phases.rewriter.generationParams || generationParams,
+        true, // structuredOutput
+        stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'rewriter' } : undefined
       );
 
       deepTrace.rewriter = { model: rewriterRes.model, input: rewriterRes.input, output: rewriterRes.result, timestamp: rewriterRes.timestamp, duration: rewriterRes.duration };
       onPhaseComplete?.('rewriter');
 
-      if (rewriterRes.result && rewriterRes.result.answer) {
-        // Overwrite the original answer with the rewritten one
-        writerResult.answer = rewriterRes.result.answer.trim();
-      } else if (typeof rewriterRes.result === 'string') {
-        // Fallback if rewriter output string directly
-        writerResult.answer = rewriterRes.result.trim();
+      // Robustly extract answer from various possible keys (case-insensitive)
+      let newAnswer = "";
+      if (rewriterRes.result) {
+        if (typeof rewriterRes.result === 'string') {
+          newAnswer = rewriterRes.result;
+        } else if (typeof rewriterRes.result === 'object') {
+          // Flatten keys to lowercase
+          const normalized = Object.keys(rewriterRes.result).reduce((acc, key) => {
+            acc[key.toLowerCase()] = rewriterRes.result[key];
+            return acc;
+          }, {} as Record<string, any>);
+
+          newAnswer = normalized.answer ||
+            normalized.response ||
+            normalized.content ||
+            normalized.text ||
+            normalized.res ||
+            normalized.output ||
+            "";
+        }
+      }
+
+      if (newAnswer && newAnswer.trim().length > 0) {
+        // Explicitly set the answer on the writerResult object
+        writerResult.answer = newAnswer.trim();
+        logger.log("✅ Rewriter successfully refined the answer", newAnswer.substring(0, 50) + "...");
+      } else {
+        logger.warn("⚠️ Rewriter returned empty or invalid format, keeping original answer.", {
+          result: rewriterRes.result,
+          keys: typeof rewriterRes.result === 'object' ? Object.keys(rewriterRes.result) : 'not-object',
+          normalizedKeys: typeof rewriterRes.result === 'object' ? Object.keys(rewriterRes.result).map(k => k.toLowerCase()) : []
+        });
       }
     } else {
       // Use Derivation result as the answer if Rewriter is disabled
@@ -292,13 +334,17 @@ interface MultiTurnOrchestrationParams {
     model: string;
     customBaseUrl: string;
     systemPrompt: string;
+    generationParams?: GenerationParams;
   };
   signal?: AbortSignal;
   maxRetries: number;
   retryDelay: number;
   generationParams?: GenerationParams;
   promptSet?: string; // Optional prompt set for fallback prompt loading (auto-routing)
-  structuredOutput?: boolean
+  structuredOutput?: boolean;
+  // Streaming for responder (user follow-up responses)
+  stream?: boolean;
+  onStreamChunk?: StreamChunkCallback;
 }
 
 /**
@@ -312,7 +358,7 @@ interface MultiTurnOrchestrationParams {
 export const orchestrateMultiTurnConversation = async (
   params: MultiTurnOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, promptSet, structuredOutput } = params;
+  const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, promptSet, structuredOutput, stream, onStreamChunk } = params;
   const startTime = Date.now();
 
   // Heuristic: Use initialInput (user's selected column content) if the inferred query looks like a database ID/slug or is missing.
@@ -368,8 +414,9 @@ export const orchestrateMultiTurnConversation = async (
         signal,
         maxRetries,
         retryDelay,
-        generationParams,
-        structuredOutput
+        responderConfig.generationParams || generationParams,
+        structuredOutput,
+        stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'user_followup' } : undefined
       );
       firstResponse = generatedResponse.answer || generatedResponse.reasoning || "No response generated.";
       firstReasoning = generatedResponse.reasoning;
@@ -401,14 +448,15 @@ export const orchestrateMultiTurnConversation = async (
           apiKey: userAgentConfig.apiKey,
           model: userAgentConfig.model,
           customBaseUrl: userAgentConfig.customBaseUrl,
-          systemPrompt: userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent', promptSet)
+          systemPrompt: userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent', promptSet),
+          generationParams: userAgentConfig.generationParams
         },
         userAgentInput,
         userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent', promptSet),
         signal,
         maxRetries,
         retryDelay,
-        generationParams,
+        userAgentConfig.generationParams || generationParams,
         structuredOutput
       );
 
@@ -429,8 +477,9 @@ export const orchestrateMultiTurnConversation = async (
         signal,
         maxRetries,
         retryDelay,
-        generationParams,
-        structuredOutput
+        responderConfig.generationParams || generationParams,
+        structuredOutput,
+        stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'user_followup' } : undefined
       );
 
       messages.push({
@@ -493,6 +542,7 @@ const callAgent = async (
     model: string;
     customBaseUrl: string;
     systemPrompt: string;
+    generationParams?: GenerationParams;
   },
   userContent: string,
   systemPrompt: string,
@@ -500,10 +550,12 @@ const callAgent = async (
   maxRetries = 3,
   retryDelay = 2000,
   generationParams?: GenerationParams,
-  structuredOutput: boolean = true
+  structuredOutput: boolean = true,
+  streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<any> => {
+  const effectiveParams = config.generationParams || generationParams;
   if (config.provider === 'gemini') {
-    return await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams });
+    return await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams: effectiveParams });
   } else {
     return await ExternalApiService.callExternalApi({
       provider: config.externalProvider as any,
@@ -515,8 +567,11 @@ const callAgent = async (
       signal,
       maxRetries,
       retryDelay,
-      generationParams,
-      structuredOutput
+      generationParams: effectiveParams,
+      structuredOutput,
+      stream: streamOptions?.stream,
+      onStreamChunk: streamOptions?.onStreamChunk,
+      streamPhase: streamOptions?.streamPhase
     });
   }
 };
@@ -543,9 +598,13 @@ interface ConversationRewriteParams {
     apiKey: string;
     model: string;
     customBaseUrl: string;
+    generationParams?: GenerationParams;
   };
   promptSet?: string;
-  structuredOutput?: boolean                // Optional prompt set for fallback prompt loading (auto-routing)
+  structuredOutput?: boolean;                // Optional prompt set for fallback prompt loading (auto-routing)
+  // Streaming support
+  stream?: boolean;
+  onStreamChunk?: StreamChunkCallback;
 }
 
 /**
@@ -575,7 +634,9 @@ export const orchestrateConversationRewrite = async (
     maxTraces,
     regularModeConfig,
     promptSet,
-    structuredOutput
+    structuredOutput,
+    stream,
+    onStreamChunk
   } = params;
 
   const startTime = Date.now();
@@ -658,10 +719,15 @@ ${outsideThinkContent}
           maxRetries: maxRetries,
           retryDelay: retryDelay,
           generationParams: generationParams,
-          structuredOutput: structuredOutput
+          structuredOutput: structuredOutput,
+          expectedAnswer: outsideThinkContent,
+          // Streaming for writer/rewriter phases
+          stream: stream,
+          onStreamChunk: onStreamChunk
         });
 
         newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
+        outsideThinkContent = deepResult.answer || outsideThinkContent;
       } else {
         // Use regular converter
         const prompt = converterPrompt || PromptService.getPrompt('converter', 'writer', promptSet);
@@ -670,7 +736,7 @@ ${outsideThinkContent}
           const result = await GeminiService.generateGenericJSON(
             rewriteInput,
             prompt,
-            { maxRetries, retryDelay, generationParams }
+            { maxRetries, retryDelay, generationParams: regularModeConfig.generationParams || generationParams }
           );
           newReasoning = result.reasoning || originalThinking;
         } else if (regularModeConfig) {
@@ -685,7 +751,11 @@ ${outsideThinkContent}
             maxRetries,
             retryDelay,
             generationParams,
-            structuredOutput
+            structuredOutput,
+            // Streaming for regular mode
+            stream: stream,
+            onStreamChunk: onStreamChunk,
+            streamPhase: 'regular'
           });
           newReasoning = result.reasoning || originalThinking;
         } else {
@@ -696,7 +766,7 @@ ${outsideThinkContent}
             signal,
             maxRetries,
             retryDelay,
-            generationParams,
+            config.phases.writer.generationParams || generationParams,
             structuredOutput
           );
           newReasoning = writerRes.result?.reasoning || originalThinking;
@@ -712,8 +782,9 @@ ${outsideThinkContent}
         reasoning: newReasoning
       });
 
-      onMessageRewritten?.(assistantIndex, totalAssistants);
-      logger.log(`Message ${i}: Rewritten successfully`);
+      // Report progress (use 0-indexed for UI display)
+      onMessageRewritten?.(assistantIndex - 1, totalAssistants);
+      logger.log(`Message ${i}: Rewritten successfully (${assistantIndex}/${totalAssistants})`);
     }
 
     logger.log("✅ Conversation rewrite complete");

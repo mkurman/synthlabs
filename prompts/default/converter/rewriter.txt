@@ -10,3 +10,8 @@ Instructions:
 2. Rely strictly on the logic in the [REASONING] trace.
 3. Produce a polished, final output text.
 4. Output valid JSON only: { "answer": "string" }
+
+Output valid JSON only:
+{
+  "answer": "[Polished, human-readable response]"
+}

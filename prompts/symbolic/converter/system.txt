@@ -11,3 +11,8 @@ Convert it into the strict `[Concept] : [Value] >> [Effect]` format.
 *   Use `Ω` for premises.
 *   Use `∴` for conclusions.
 *   Preserve the logical flow, but purify the representation.
+
+Output valid JSON only:
+{
+  "reasoning": "[Full reasoning trace with sections and symbols]"
+}

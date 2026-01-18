@@ -405,6 +405,11 @@ export const SettingsService = {
         return PROVIDER_URLS[provider] || '';
     },
 
+    // Get default model for a provider
+    getDefaultModel: (provider: string): string => {
+        return settingsCache.providerDefaultModels?.[provider] || '';
+    },
+
     // Clear all app data (settings + IndexedDB + any remaining localStorage)
     // Note: indexedDB.databases() is not supported in Firefox and Safari.
     // We fall back to deleting known databases, but any databases created in the

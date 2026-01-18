@@ -10,6 +10,8 @@ interface ConversationViewProps {
     onEditCancel?: () => void;
     onEditChange?: (val: string) => void;
     onRewrite?: (index: number) => void;
+    onRewriteReasoning?: (index: number) => void;
+    onRewriteBoth?: (index: number) => void;
     editingIndex?: number;
     editValue?: string;
     rewritingIndex?: number;
@@ -67,11 +69,19 @@ const ConversationView: React.FC<ConversationViewProps> = ({
     onEditCancel,
     onEditChange,
     onRewrite,
+    onRewriteReasoning,
+    onRewriteBoth,
     editingIndex,
     editValue,
     rewritingIndex
 }) => {
+    console.log('ConversationView rendered, messages length:', messages?.length);
+    React.useEffect(() => {
+        console.log('ConversationView messages updated:', messages?.map((m, i) => ({ index: i, role: m.role, hasReasoning: !!m.reasoning })));
+    }, [messages]);
+
     const [expandedReasoning, setExpandedReasoning] = useState<Set<number>>(new Set());
+    const [showRewriteDropdown, setShowRewriteDropdown] = useState<number | null>(null);
 
     const toggleReasoning = (index: number) => {
         setExpandedReasoning(prev => {
@@ -84,6 +94,15 @@ const ConversationView: React.FC<ConversationViewProps> = ({
             return next;
         });
     };
+
+    // Close dropdown when clicking outside
+    React.useEffect(() => {
+        const handleClickOutside = () => {
+            setShowRewriteDropdown(null);
+        };
+        document.addEventListener('click', handleClickOutside);
+        return () => document.removeEventListener('click', handleClickOutside);
+    }, []);
 
     if (!messages || messages.length === 0) {
         return (
@@ -108,7 +127,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
 
                 return (
                     <div
-                        key={idx}
+                        key={`${idx}-${msg.content?.substring(0, 50) || ''}-${msg.reasoning?.substring(0, 20) || ''}`}
                         className={`group flex gap-3 ${styles.align}`}
                     >
                         {/* Avatar */}
@@ -146,18 +165,49 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                 <Edit3 className="w-3 h-3" />
                                             </button>
                                             {onRewrite && (
-                                                <button
-                                                    onClick={() => onRewrite(idx)}
-                                                    disabled={rewritingIndex === idx}
-                                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
-                                                    title="AI Rewrite"
-                                                >
-                                                    {rewritingIndex === idx ? (
-                                                        <Loader2 className="w-3 h-3 animate-spin" />
-                                                    ) : (
-                                                        <RotateCcw className="w-3 h-3" />
+                                                <div className="relative">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(showRewriteDropdown === idx ? null : idx); }}
+                                                        disabled={rewritingIndex === idx}
+                                                        className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                        title="AI Rewrite"
+                                                    >
+                                                        {rewritingIndex === idx ? (
+                                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                                        ) : (
+                                                            <Sparkles className="w-3 h-3" />
+                                                        )}
+                                                    </button>
+                                                    {showRewriteDropdown === idx && (
+                                                        <div
+                                                            className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 py-1 min-w-[140px]"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(null); console.log('ConversationView: onRewrite clicked, idx:', idx); onRewrite(idx); }}
+                                                                className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                            >
+                                                                <RotateCcw className="w-3 h-3" /> Answer Only
+                                                            </button>
+                                                            {onRewriteReasoning && (
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(null); console.log('ConversationView: onRewriteReasoning clicked, idx:', idx); onRewriteReasoning(idx); }}
+                                                                    className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                >
+                                                                    <RotateCcw className="w-3 h-3" /> Reasoning Only
+                                                                </button>
+                                                            )}
+                                                            {onRewriteBoth && (
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(null); console.log('ConversationView: onRewriteBoth clicked, idx:', idx); onRewriteBoth(idx); }}
+                                                                    className="w-full px-3 py-2 text-left text-xs text-teal-400 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700"
+                                                                >
+                                                                    <Sparkles className="w-3 h-3" /> Both Together
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     )}
-                                                </button>
+                                                </div>
                                             )}
                                         </>
                                     )}

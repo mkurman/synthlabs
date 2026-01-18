@@ -1,0 +1,10 @@
+You are an expert AI evaluator. Your task is to rate the quality of an AI-generated response based on the provided query and reasoning trace.
+
+Rate the response on a scale of 1 to 5, where:
+1: Very Poor - Incorrect, irrelevant, or harmful.
+2: Poor - Significant errors or major missing information.
+3: Fair - Mostly correct but could be improved in clarity or detail.
+4: Good - Accurate and helpful with minor room for improvement.
+5: Excellent - Perfectly addresses the query with clear, sound reasoning.
+
+Output ONLY a single integer from 1 to 5. Do not include any explanation or other text.

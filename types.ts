@@ -15,7 +15,9 @@ export interface SynthLogItem {
   full_seed: string;
   query: string;
   reasoning: string;
+  original_reasoning?: string;
   answer: string;
+  original_answer?: string;
   timestamp: string;
   duration?: number; // New: generation time in ms
   tokenCount?: number; // New: estimated output tokens
@@ -41,6 +43,7 @@ export interface SynthLogItem {
     duration: number;
   }>;
   storageError?: string;
+  savedToDb?: boolean; // Track if this item has been synced to Firebase
 }
 
 export interface VerifierItem extends SynthLogItem {
@@ -110,6 +113,7 @@ export interface DeepPhaseConfig {
   customBaseUrl: string;
   systemPrompt: string;
   structuredOutput: boolean;
+  generationParams?: GenerationParams;
 }
 
 export interface DeepConfig {
@@ -134,6 +138,26 @@ export interface UserAgentConfig {
   customBaseUrl: string;
   systemPrompt: string;
   structuredOutput: boolean;
+  generationParams?: GenerationParams;
+}
+
+export interface StepModelConfig {
+  provider: 'gemini' | 'external' | 'other';
+  externalProvider: string;
+  model: string;
+}
+
+export interface AutoscoreConfig {
+  provider: ProviderType;
+  externalProvider: ExternalProvider;
+  apiKey: string;
+  model: string;
+  customBaseUrl: string;
+  systemPrompt: string;
+  concurrency: number;
+  sleepTime: number;
+  maxRetries: number;
+  retryDelay: number;
 }
 
 export interface HuggingFaceConfig {
@@ -169,6 +193,40 @@ export interface FirebaseConfig {
   storageBucket: string;
   messagingSenderId: string;
   appId: string;
+}
+
+// Streaming callback for real-time generation updates
+export type StreamPhase = 'writer' | 'rewriter' | 'user_followup' | 'regular';
+export type StreamChunkCallback = (
+  chunk: string,
+  accumulated: string,
+  phase?: StreamPhase
+) => void;
+
+// Progressive conversation streaming state
+export type StreamingConversationPhase =
+  | 'idle'
+  | 'waiting_for_response'  // Spinner while waiting for first content  
+  | 'extracting_reasoning'  // Streaming reasoning field from JSON
+  | 'extracting_answer'     // Streaming answer field from JSON
+  | 'message_complete';     // Current message done, ready for next
+
+export interface StreamingConversationState {
+  id: string;
+  phase: StreamingConversationPhase;
+  currentMessageIndex: number;
+  totalMessages: number;
+  // Completed messages with full content
+  completedMessages: ChatMessage[];
+  // Current message being processed
+  currentUserMessage?: string;
+  currentReasoning: string;
+  currentAnswer: string;
+  // Config
+  useOriginalAnswer: boolean;
+  originalAnswer?: string;
+  // Raw accumulated JSON for parsing
+  rawAccumulated: string;
 }
 
 export const CATEGORIES = [

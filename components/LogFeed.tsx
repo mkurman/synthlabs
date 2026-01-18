@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle } from 'lucide-react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
-import { SynthLogItem } from '../types';
+import StreamingConversationCard from './StreamingConversationCard';
+import { SynthLogItem, StreamingConversationState } from '../types';
 
 interface LogFeedProps {
   logs: SynthLogItem[];
@@ -13,12 +14,18 @@ interface LogFeedProps {
   onPageChange: (page: number) => void;
   onRetry?: (id: string) => void;
   onRetrySave?: (id: string) => void;
+  onSaveToDb?: (id: string) => void;
   retryingIds?: Set<string>;
+  savingIds?: Set<string>;
+  isProdMode?: boolean;
+  // Map of concurrent streaming conversations
+  streamingConversations?: Map<string, StreamingConversationState>;
 }
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
-  onRetry, onRetrySave, retryingIds
+  onRetry, onRetrySave, onSaveToDb, retryingIds, savingIds, isProdMode,
+  streamingConversations
 }) => {
   const [showLatestOnly, setShowLatestOnly] = useState(false);
 
@@ -30,12 +37,26 @@ const LogFeed: React.FC<LogFeedProps> = ({
     }
   }, [pageSize]);
 
-  if (totalLogCount === 0 && logs.length === 0) {
+  const hasActiveStreams = streamingConversations && streamingConversations.size > 0;
+
+  // Show empty state only if no logs AND no active streaming
+  if (totalLogCount === 0 && logs.length === 0 && !hasActiveStreams) {
     return (
       <div className="flex flex-col items-center justify-center h-96 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/30">
         <Terminal className="w-12 h-12 text-slate-700 mb-4" />
         <p className="text-slate-500 font-medium">No data generated yet.</p>
         <p className="text-sm text-slate-600 mt-1">Configure the engine and press Start.</p>
+      </div>
+    );
+  }
+
+  // If only streaming (no logs yet), render just the streaming cards
+  if (totalLogCount === 0 && logs.length === 0 && hasActiveStreams) {
+    return (
+      <div className="space-y-4">
+        {Array.from(streamingConversations.values()).map(streamState => (
+          <StreamingConversationCard key={streamState.id} streamState={streamState} />
+        ))}
       </div>
     );
   }
@@ -74,6 +95,17 @@ const LogFeed: React.FC<LogFeedProps> = ({
           <Eye className="w-3 h-3" /> Show Latest Only
         </button>
       </div>
+
+      {/* Streaming Conversation Cards - Show active generations */}
+      {hasActiveStreams && (
+        <div className="space-y-4 mb-4">
+          {Array.from(streamingConversations!.values())
+            .filter(s => s.phase !== 'idle')
+            .map(streamState => (
+              <StreamingConversationCard key={streamState.id} streamState={streamState} />
+            ))}
+        </div>
+      )}
 
       {visibleLogs.map((item) => (
         <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -143,6 +175,19 @@ const LogFeed: React.FC<LogFeedProps> = ({
                   <Database className="w-3 h-3" />
                   <AlertTriangle className="w-3 h-3" />
                   <span className="hidden sm:inline">Retry Save</span>
+                </button>
+              )}
+
+              {/* Save to DB Button - for unsaved items in prod mode */}
+              {isProdMode && !item.savedToDb && !item.isError && !item.storageError && onSaveToDb && (
+                <button
+                  onClick={() => onSaveToDb(item.id)}
+                  disabled={savingIds?.has(item.id)}
+                  className="flex items-center gap-1.5 bg-emerald-950/50 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-500/20 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Save to Firebase"
+                >
+                  <Upload className={`w-3 h-3 ${savingIds?.has(item.id) ? 'animate-pulse' : ''}`} />
+                  <span className="hidden sm:inline">Save to DB</span>
                 </button>
               )}
             </div>

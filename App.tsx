@@ -5,14 +5,15 @@ import {
     Sparkles, Wand2, Dice5, Trash2, Upload, Save, FileJson, ArrowLeftRight,
     Cloud, Laptop, ShieldCheck, Globe, Archive, FileText, Server, BrainCircuit,
     Timer, RotateCcw, MessageSquare, Table, Layers, Search, PenTool, GitBranch,
-    PlusCircle, FileX, RefreshCcw, Copy, X, FileEdit, CloudUpload, CloudDownload, Calendar,
+    PlusCircle, Plus, FileX, RefreshCcw, Copy, X, FileEdit, CloudUpload, CloudDownload, Calendar,
     LayoutDashboard, Bookmark, Beaker, List, Info
 } from 'lucide-react';
 
 import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider,
     GenerationConfig, ProgressStats, HuggingFaceConfig, DetectedColumns,
-    CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig, ChatMessage
+    CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, FirebaseConfig, UserAgentConfig, ChatMessage,
+    StreamChunkCallback, StreamingConversationState
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
 import { logger, setVerbose } from './utils/logger';
@@ -33,6 +34,7 @@ import VerifierPanel from './components/VerifierPanel';
 import DataPreviewTable from './components/DataPreviewTable';
 import SettingsPanel from './components/SettingsPanel';
 import ColumnSelector from './components/ColumnSelector';
+import { ToastContainer } from './components/Toast';
 
 export default function App() {
     // --- State: Modes ---
@@ -154,6 +156,7 @@ export default function App() {
 
     // 3. Manual Input
     const [converterInputText, setConverterInputText] = useState('');
+    const [manualFileName, setManualFileName] = useState('');
 
     // --- State: Firebase Config UI ---
     const [firebaseConfigInput, setFirebaseConfigInput] = useState<FirebaseConfig>({
@@ -185,6 +188,10 @@ export default function App() {
     const [hfPreviewData, setHfPreviewData] = useState<any[]>([]);
     const [hfTotalRows, setHfTotalRows] = useState<number>(0);
     const [isLoadingHfPreview, setIsLoadingHfPreview] = useState(false);
+
+    // --- State: Progressive conversation streaming (supports concurrent requests) ---
+    const [streamingConversations, setStreamingConversations] = useState<Map<string, StreamingConversationState>>(new Map());
+    const streamingConversationsRef = useRef<Map<string, StreamingConversationState>>(new Map());
 
     // Column detection utility with expanded patterns
     const detectColumns = (columns: string[]): DetectedColumns => {
@@ -253,6 +260,8 @@ export default function App() {
 
     // Retry State
     const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
+    // DB save tracking state
+    const [savingToDbIds, setSavingToDbIds] = useState<Set<string>>(new Set());
 
     // UI State for Deep Config
     const [activeDeepTab, setActiveDeepTab] = useState<'meta' | 'retrieval' | 'derivation' | 'writer' | 'rewriter'>('meta');
@@ -482,6 +491,13 @@ export default function App() {
                 }
             }
 
+            let outputContent = null;
+
+            if (hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
+                outputContent = hfConfig.outputColumns?.map((col: string) => getColumnContent(col))
+                    .filter((c: string) => c.trim() !== '')
+                    .join(COLUMN_SEPARATOR);
+            }
             // Append reasoning if reasoningColumns are configured
             if (hfConfig.reasoningColumns && hfConfig.reasoningColumns.length > 0) {
                 const reasoning = hfConfig.reasoningColumns
@@ -492,8 +508,13 @@ export default function App() {
                 if (reasoning) {
                     // If we have input content (query), we wrap both for extractInputContent
                     const inputQuery = contents.join(COLUMN_SEPARATOR);
-                    return `<input_query>${inputQuery}</input_query><model_response><think>${reasoning}</think></model_response>`;
+                    const outputQuery = outputContent ? `<output>${outputContent}</output>` : '';
+                    return `<input_query>${inputQuery}</input_query><model_response><think>${reasoning}</think>${outputQuery}</model_response>`;
                 }
+            }
+
+            if (outputContent) {
+                return "<input_query>" + contents.join(COLUMN_SEPARATOR) + "</input_query><model_response>" + outputContent + "</model_response>";
             }
 
             if (contents.length > 0) {
@@ -535,62 +556,6 @@ export default function App() {
         }
         if (typeof autoContent === 'object') return JSON.stringify(autoContent);
         return String(autoContent);
-    };
-
-    const getRowExpectedOutput = (row: any): string => {
-        if (!row) return "";
-
-        const getText = (node: any): string => {
-            if (!node) return "";
-            if (typeof node === 'string') return node;
-            if (Array.isArray(node)) return node.map(getText).join('\n');
-            return node.content || node.value || node.text || JSON.stringify(node);
-        };
-
-        const getColumnContent = (columnName: string): string => {
-            const value = row[columnName];
-            if (value === undefined || value === null) return '';
-
-            if (Array.isArray(value)) {
-                const turnIndex = hfConfig.messageTurnIndex || 0;
-                const firstItem = value[0];
-                const isChat = firstItem && typeof firstItem === 'object' && ('role' in firstItem || 'from' in firstItem);
-                if (isChat) {
-                    // For output, we usually want the assistant response if it's chat
-                    return getText(value[turnIndex * 2 + 1] || value[turnIndex * 2]);
-                }
-                return getText(value[turnIndex]);
-            }
-
-            if (typeof value === 'object') return JSON.stringify(value);
-            return String(value);
-        };
-
-        // Try outputColumns if configured
-        if (hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
-            return hfConfig.outputColumns
-                .map((col: string) => getColumnContent(col))
-                .filter((c: string) => c.trim() !== '')
-                .join('\n\n');
-        }
-
-        // Auto-detect fallback for answer
-        const candidates = ['answer', 'output', 'response', 'target', 'label', 'gpt', 'assistant'];
-        for (const c of candidates) {
-            if (row[c]) return getColumnContent(c);
-        }
-
-        // Try messages/conversation format
-        const msgs = row.messages || row.conversation || row.conversations;
-        if (Array.isArray(msgs)) {
-            const turnIndex = hfConfig.messageTurnIndex || 0;
-            const assistantMsg = msgs.find((m: any, idx: number) =>
-                (m.role === 'assistant' || m.from === 'gpt') && idx >= turnIndex * 2
-            );
-            if (assistantMsg) return getText(assistantMsg);
-        }
-
-        return "";
     };
 
     const prefetchColumns = async (overrideConfig?: HuggingFaceConfig) => {
@@ -812,6 +777,8 @@ export default function App() {
     const handleLoadSourceFile = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+        // Store the file name for source tracking
+        setManualFileName(file.name);
         const reader = new FileReader();
         reader.onload = (event) => {
             if (typeof event.target?.result === 'string') {
@@ -952,19 +919,6 @@ export default function App() {
         return hasParams ? params : undefined;
     };
 
-    const handleSaveFirebaseConfig = async () => {
-        const success = await FirebaseService.initializeFirebase(firebaseConfigInput);
-        if (success) {
-            localStorage.setItem('synth_firebase_config', JSON.stringify(firebaseConfigInput));
-            setError(null);
-            updateDbStats();
-        } else {
-            setError("Failed to initialize Firebase with these settings. Check console.");
-        }
-    };
-
-    // --- Session Management ---
-
     const getSessionData = () => {
         return {
             version: 2,
@@ -974,7 +928,8 @@ export default function App() {
                 appMode, engineMode, environment, provider, externalProvider, externalApiKey, externalModel,
                 customBaseUrl, deepConfig, userAgentConfig, concurrency, rowsToFetch, skipRows, sleepTime, maxRetries, retryDelay,
                 feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt, conversationRewriteMode,
-                converterInputText, generationParams: { temperature, topP, topK, frequencyPenalty, presencePenalty }
+                // NOTE: converterInputText excluded - it can be very large (entire uploaded files)
+                generationParams: { temperature, topP, topK, frequencyPenalty, presencePenalty }
             }
         };
     };
@@ -1117,7 +1072,7 @@ export default function App() {
         setSessionName(session.name);
         // Pass sessionUid from the saved session to restore it
         const savedSessionUid = (session as any).sessionUid;
-        restoreSession(session.config, savedSessionUid);
+        restoreSession(session.config || {}, savedSessionUid);
         setShowCloudLoadModal(false);
 
         // Sync existing log count from Firestore for this session
@@ -1155,14 +1110,14 @@ export default function App() {
         promptSet: string;
     }
 
-    const generateSingleItem = async (inputText: string, workerId: number, opts: { retryId?: string, originalQuestion?: string, row?: any, runtimeConfig?: RuntimePromptConfig } = {}): Promise<SynthLogItem | null> => {
-        const { retryId, originalQuestion, row, runtimeConfig } = opts;
+    const generateSingleItem = async (inputText: string, workerId: number, opts: { retryId?: string, originalQuestion?: string, originalAnswer?: string, originalReasoning?: string, row?: any, runtimeConfig?: RuntimePromptConfig } = {}): Promise<SynthLogItem | null> => {
+        const { retryId, originalQuestion, originalAnswer, originalReasoning, row, runtimeConfig } = opts;
         const startTime = Date.now();
         // Determine source for tracking (outside try for catch access)
         const source = dataSourceMode === 'huggingface'
             ? `hf:${hfConfig.dataset}`
             : dataSourceMode === 'manual'
-                ? 'manual'
+                ? `manual:${manualFileName || 'unknown'}`
                 : 'synthetic';
         try {
             const safeInput = typeof inputText === 'string' ? inputText : String(inputText);
@@ -1175,9 +1130,69 @@ export default function App() {
             const genParams = getGenerationParams();
             const retryConfig = { maxRetries, retryDelay, generationParams: genParams };
 
+            // Create a unique ID for this generation (for streaming state)
+            const generationId = retryId || crypto.randomUUID();
+
+            // Import JSON field extractor dynamically
+            const { extractJsonFields } = await import('./utils/jsonFieldExtractor');
+
+            // Initialize streaming conversation state
+            const initStreamingState = (totalMessages: number, userMessage?: string): StreamingConversationState => ({
+                id: generationId,
+                phase: 'waiting_for_response',
+                currentMessageIndex: 0,
+                totalMessages,
+                completedMessages: [],
+                currentUserMessage: userMessage,
+                currentReasoning: '',
+                currentAnswer: '',
+                useOriginalAnswer: false,
+                rawAccumulated: ''
+            });
+
+            // Progressive streaming callback that parses JSON fields
+            const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase) => {
+                // Parse accumulated JSON for reasoning/answer fields
+                const extracted = extractJsonFields(accumulated);
+
+                const current = streamingConversationsRef.current.get(generationId);
+                if (!current) return;
+
+                // Determine phase based on what we've extracted
+                let newPhase = current.phase;
+                if (extracted.hasReasoningStart && !extracted.hasReasoningEnd) {
+                    newPhase = 'extracting_reasoning';
+                } else if (extracted.hasReasoningEnd && (!extracted.hasAnswerEnd || !current.useOriginalAnswer)) {
+                    newPhase = 'extracting_answer';
+                }
+
+                // Update the ref and trigger React state update
+                const updated: StreamingConversationState = {
+                    ...current,
+                    phase: newPhase,
+                    currentReasoning: extracted.reasoning || current.currentReasoning,
+                    currentAnswer: extracted.answer || current.currentAnswer,
+                    rawAccumulated: accumulated
+                };
+                streamingConversationsRef.current.set(generationId, updated);
+                setStreamingConversations(new Map(streamingConversationsRef.current));
+            };
+
+            // Helper to clear streaming state after completion
+            const clearStreamingState = () => {
+                streamingConversationsRef.current.delete(generationId);
+                setStreamingConversations(new Map(streamingConversationsRef.current));
+            };
+
             // --- Conversation Trace Rewriting Mode ---
             // When enabled, extract messages from row and rewrite/generate <think> content
-            if (conversationRewriteMode && row) {
+            // Also auto-detect messages columns even when toggle is not explicitly set
+            const potentialMessagesArray = row?.messages || row?.conversation || row?.conversations;
+            const hasMessagesColumn = Array.isArray(potentialMessagesArray) && potentialMessagesArray.length > 0 &&
+                potentialMessagesArray[0] && typeof potentialMessagesArray[0] === 'object' &&
+                ('role' in potentialMessagesArray[0] || 'from' in potentialMessagesArray[0]);
+
+            if ((conversationRewriteMode || hasMessagesColumn) && row) {
                 const messagesArray = row.messages || row.conversation || row.conversations;
                 if (Array.isArray(messagesArray) && messagesArray.length > 0) {
                     // Convert to ChatMessage format if needed, filtering out empty messages
@@ -1191,6 +1206,24 @@ export default function App() {
                             };
                         })
                         .filter((m: ChatMessage) => m.content.trim().length > 0); // Skip empty messages
+
+                    // Initialize streaming state for conversation
+                    const firstUserMsg = chatMessages.find(m => m.role === 'user');
+                    // Count message pairs (or assistant messages) that need processing
+                    const assistantCount = chatMessages.filter(m => m.role === 'assistant').length;
+                    const newStreamState = initStreamingState(
+                        assistantCount,
+                        firstUserMsg?.content
+                    );
+                    logger.log('[STREAMING] Initializing streaming state:', {
+                        generationId,
+                        totalMessages: chatMessages.length,
+                        assistantCount,
+                        phase: newStreamState.phase,
+                        currentUserMessage: newStreamState.currentUserMessage?.substring(0, 50)
+                    });
+                    streamingConversationsRef.current.set(generationId, newStreamState);
+                    setStreamingConversations(new Map(streamingConversationsRef.current));
 
                     const rewriteResult = await DeepReasoningService.orchestrateConversationRewrite({
                         messages: chatMessages,
@@ -1209,9 +1242,71 @@ export default function App() {
                             apiKey: externalApiKey,
                             model: externalModel,
                             customBaseUrl: customBaseUrl
-                        } : undefined
+                        } : undefined,
+                        // Streaming for real-time updates
+                        stream: true,
+                        onStreamChunk: handleStreamChunk,
+                        // Message progression callback
+                        onMessageRewritten: (index: number, total: number) => {
+                            const current = streamingConversationsRef.current.get(generationId);
+                            if (!current) return;
+
+                            // Get the user message for this index (find next user after current position)
+                            const userMsgs = chatMessages.filter(m => m.role === 'user');
+                            const assistantMsgs = chatMessages.filter(m => m.role === 'assistant');
+
+                            // Add current pair to completed messages
+                            const completedUser = userMsgs[index];
+                            const completedAssistant = assistantMsgs[index];
+
+                            // Helper to clean empty think tags from content
+                            const cleanEmptyThinkTags = (text: string) =>
+                                text?.replace(/<think>\s*<\/think>\s*/gi, '').trim();
+
+                            const newCompleted = [...current.completedMessages];
+                            if (completedUser) {
+                                newCompleted.push({ ...completedUser });
+                            }
+                            if (completedAssistant) {
+                                // Clean content and use streamed reasoning/answer for this message
+                                const cleanContent = cleanEmptyThinkTags(
+                                    current.currentAnswer || completedAssistant.content || ''
+                                );
+                                newCompleted.push({
+                                    role: 'assistant',
+                                    content: cleanContent,
+                                    reasoning: current.currentReasoning || completedAssistant.reasoning
+                                });
+                            }
+
+                            // Get next user message if there is one
+                            const nextUserMsg = userMsgs[index + 1];
+
+                            logger.log('[STREAMING] Message rewritten:', {
+                                generationId,
+                                index,
+                                total,
+                                completedCount: newCompleted.length,
+                                nextUser: nextUserMsg?.content?.substring(0, 30)
+                            });
+
+                            // Update state for next message
+                            const updatedState: StreamingConversationState = {
+                                ...current,
+                                phase: index + 1 < total ? 'waiting_for_response' : 'message_complete',
+                                currentMessageIndex: index + 1,
+                                completedMessages: newCompleted,
+                                currentUserMessage: nextUserMsg?.content,
+                                currentReasoning: '',
+                                currentAnswer: '',
+                                rawAccumulated: ''
+                            };
+                            streamingConversationsRef.current.set(generationId, updatedState);
+                            setStreamingConversations(new Map(streamingConversationsRef.current));
+                        }
                     });
 
+                    clearStreamingState(); // Clear streaming after completion
                     return {
                         ...rewriteResult,
                         id: retryId || rewriteResult.id,
@@ -1221,10 +1316,6 @@ export default function App() {
                 }
             }
 
-
-
-            // Extract expected answer from dataset row - available for both regular and deep modes
-            const expectedAnswer = opts.row ? getRowExpectedOutput(opts.row) : undefined;
 
             if (engineMode === 'regular') {
                 if (provider === 'gemini') {
@@ -1266,8 +1357,13 @@ export default function App() {
                         maxRetries,
                         retryDelay,
                         generationParams: genParams,
-                        structuredOutput: true
+                        structuredOutput: true,
+                        // Enable streaming for regular mode
+                        stream: true,
+                        onStreamChunk: handleStreamChunk,
+                        streamPhase: 'regular'
                     });
+                    clearStreamingState();
                 }
                 const ensureString = (val: any) => {
                     if (val === null || val === undefined) return "";
@@ -1281,7 +1377,7 @@ export default function App() {
                 // Actually, if the user is RUNNING a converter, they might want to see the CONVERTED answer.
                 // However, the user said "no answer from ground truth", implying they WANT the ground truth preserved.
                 // In converter mode, usually the "answer" field in the dataset is the ground truth.
-                const finalAnswer = (appMode === 'converter' && expectedAnswer) ? expectedAnswer : answer;
+                const finalAnswer = (appMode === 'converter' && originalAnswer) ? originalAnswer : answer;
 
                 return {
                     id: retryId || crypto.randomUUID(),
@@ -1291,7 +1387,9 @@ export default function App() {
                     full_seed: safeInput,
                     query: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
                     reasoning: reasoning,
+                    original_reasoning: originalReasoning,
                     answer: finalAnswer,
+                    original_answer: originalAnswer,
                     timestamp: new Date().toISOString(),
                     duration: Date.now() - startTime,
                     tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4), // Rough estimate
@@ -1305,8 +1403,8 @@ export default function App() {
                 }
 
                 // In generator mode, append the gold answer to the seed so all agents see it
-                if (appMode === 'generator' && expectedAnswer && expectedAnswer.trim().length > 0) {
-                    inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${expectedAnswer.trim()}`;
+                if (appMode === 'generator' && originalAnswer && originalAnswer.trim().length > 0) {
+                    inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${originalAnswer.trim()}`;
                 }
 
                 // Deep copy to prevent mutation of state (use effectiveDeepConfig for auto-routing)
@@ -1317,13 +1415,19 @@ export default function App() {
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
                     originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
-                    expectedAnswer: expectedAnswer,
+                    expectedAnswer: originalAnswer,
                     config: runtimeDeepConfig,
                     signal: abortControllerRef.current?.signal || undefined,
                     maxRetries,
                     retryDelay,
-                    generationParams: genParams
+                    generationParams: genParams,
+                    // Enable streaming for writer/rewriter phases
+                    stream: true,
+                    onStreamChunk: handleStreamChunk
                 });
+
+                // Clear streaming content after completion
+                clearStreamingState();
 
                 // If User Agent is enabled, run multi-turn conversation
                 if (userAgentConfig.enabled && userAgentConfig.followUpCount > 0) {
@@ -1372,6 +1476,8 @@ export default function App() {
                 const reasoning = deepResult.reasoning || "";
                 return {
                     ...deepResult,
+                    original_reasoning: originalReasoning,
+                    original_answer: originalAnswer,
                     sessionUid: sessionUid,
                     source: source,
                     duration: Date.now() - startTime,
@@ -1388,9 +1494,11 @@ export default function App() {
                 source: source,
                 seed_preview: safeErrInput.substring(0, 50),
                 full_seed: safeErrInput,
-                query: "ERROR",
+                query: originalQuestion || 'ERROR',
                 reasoning: "",
                 answer: "Failed",
+                original_reasoning: originalReasoning,
+                original_answer: originalAnswer,
                 timestamp: new Date().toISOString(),
                 duration: Date.now() - startTime,
                 modelUsed: engineMode === 'deep' ? 'DEEP ENGINE' : "System",
@@ -1462,9 +1570,9 @@ export default function App() {
     };
 
     const retryAllFailed = async () => {
-        const failedItems = visibleLogs.filter(l => l.isError);
+        const failedItems = visibleLogs.filter((l: SynthLogItem) => l.isError);
         if (failedItems.length === 0) return;
-        const failedIds = failedItems.map(l => l.id);
+        const failedIds = failedItems.map((l: SynthLogItem) => l.id);
         setRetryingIds(prev => new Set([...prev, ...failedIds]));
         const queue = [...failedItems];
         let activeWorkers = 0;
@@ -1482,7 +1590,10 @@ export default function App() {
                     activeWorkers--;
                     if (result) {
                         if (environment === 'production' && !result.isError) {
-                            try { await FirebaseService.saveLogToFirebase(result); } catch (e) { }
+                            try {
+                                await FirebaseService.saveLogToFirebase(result);
+                                result.savedToDb = true;
+                            } catch (e) { }
                         }
                         LogStorageService.updateLog(sessionUid, result);
                         refreshLogs();
@@ -1491,6 +1602,116 @@ export default function App() {
             }
         };
         processQueue();
+    };
+
+    // Sync all unsaved items from current session to Firebase
+    const syncAllUnsavedToDb = async () => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            alert("Firebase is not configured. Please configure Firebase in Settings to enable cloud sync.");
+            return;
+        }
+
+        const allLogs = await LogStorageService.getAllLogs(sessionUid);
+        const unsavedLogs = allLogs.filter((l: SynthLogItem) => !l.savedToDb && !l.isError);
+
+        if (unsavedLogs.length === 0) {
+            alert("No unsaved items to sync.");
+            return;
+        }
+
+        const confirm = window.confirm(`Sync ${unsavedLogs.length} unsaved items to Firebase?`);
+        if (!confirm) return;
+
+        let synced = 0;
+        let failed = 0;
+
+        for (const log of unsavedLogs) {
+            try {
+                // Update sessionUid to current Firebase session for proper association
+                const logToSave = { ...log, sessionUid: sessionUid };
+                await FirebaseService.saveLogToFirebase(logToSave);
+                log.savedToDb = true;
+                log.sessionUid = sessionUid; // Also update local copy
+                await LogStorageService.updateLog(sessionUid, log);
+                synced++;
+            } catch (e: any) {
+                logger.warn(`Failed to sync item ${log.id}:`, e);
+                failed++;
+            }
+        }
+
+        updateDbStats();
+        refreshLogs();
+        alert(`Synced ${synced} items to Firebase.${failed > 0 ? ` ${failed} failed.` : ''}`);
+    };
+
+    // Count unsaved items in current session
+    const getUnsavedCount = (): number => {
+        return visibleLogs.filter((l: SynthLogItem) => !l.savedToDb && !l.isError).length;
+    };
+
+    // Save a single item to Firebase
+    const saveItemToDb = async (id: string) => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            alert("Firebase not configured!");
+            return;
+        }
+
+        const log = visibleLogs.find((l: SynthLogItem) => l.id === id);
+        if (!log || log.savedToDb || log.isError) return;
+
+        setSavingToDbIds((prev: Set<string>) => new Set([...prev, id]));
+
+        try {
+            const logToSave = { ...log, sessionUid: sessionUid };
+            await FirebaseService.saveLogToFirebase(logToSave);
+            log.savedToDb = true;
+            log.sessionUid = sessionUid;
+            await LogStorageService.updateLog(sessionUid, log);
+            updateDbStats();
+            refreshLogs();
+        } catch (e: any) {
+            logger.warn(`Failed to save item ${id}:`, e);
+            alert(`Failed to save: ${e.message}`);
+        } finally {
+            setSavingToDbIds((prev: Set<string>) => {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+            });
+        }
+    };
+
+    const startNewSession = async () => {
+        const sourceLabel = dataSourceMode === 'huggingface'
+            ? `hf:${hfConfig.dataset}`
+            : dataSourceMode === 'manual'
+                ? `manual:${manualFileName || 'unknown'}`
+                : 'synthetic';
+
+        let newUid: string;
+
+        if (environment === 'production' && FirebaseService.isFirebaseConfigured()) {
+            try {
+                const sessionName = `${appMode === 'generator' ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
+                const sessionConfig = getSessionData();
+                newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel, sessionConfig);
+                logger.log(`Created new Firebase session: ${newUid}`);
+            } catch (e) {
+                logger.warn("Failed to create Firebase session, using local UUID", e);
+                newUid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
+            }
+        } else {
+            newUid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
+        }
+
+        setSessionUid(newUid);
+        sessionUidRef.current = newUid;
+        setSessionName(null);
+        setVisibleLogs([]);
+        setTotalLogCount(0);
+        setSparklineHistory([]);
+        setDbStats({ total: 0, session: 0 });
     };
 
     const startGeneration = async (append = false) => {
@@ -1503,23 +1724,29 @@ export default function App() {
             const sourceLabel = dataSourceMode === 'huggingface'
                 ? `hf:${hfConfig.dataset}`
                 : dataSourceMode === 'manual'
-                    ? 'manual'
+                    ? `manual:${manualFileName || 'unknown'}`
                     : 'synthetic';
 
             let newUid: string;
 
+            // Check if current session is already a Firebase session (Firestore IDs are 20 chars, alphanumeric)
+            const isCurrentSessionFirebase = sessionUidRef.current.length === 20 && /^[a-zA-Z0-9]+$/.test(sessionUidRef.current);
+
             // In production mode with Firebase, create session first and use its ID
-            if (environment === 'production' && FirebaseService.isFirebaseConfigured()) {
+            // BUT only if we're not already in a Firebase session
+            if (environment === 'production' && FirebaseService.isFirebaseConfigured() && !isCurrentSessionFirebase) {
                 try {
                     const sessionName = `${appMode === 'generator' ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
-                    newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel);
+                    const sessionConfig = getSessionData(); // Include config so session can be restored
+                    newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel, sessionConfig);
                     logger.log(`Created Firebase session: ${newUid}`);
                 } catch (e) {
                     logger.warn("Failed to create Firebase session, using local UUID", e);
-                    newUid = crypto.randomUUID();
+                    // Safe UUID fallback
+                    newUid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
                 }
             } else {
-                newUid = crypto.randomUUID();
+                newUid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2) + Date.now().toString(36);
             }
 
             setSessionUid(newUid);
@@ -1555,6 +1782,7 @@ export default function App() {
         setError(null);
         setIsRunning(true);
         abortControllerRef.current = new AbortController();
+
         try {
             // Updated item structure to preserve original row context
             interface WorkItem {
@@ -1808,77 +2036,6 @@ export default function App() {
             setProgress({ current: 0, total: workItems.length, activeWorkers: 0 });
             let currentIndex = 0;
 
-            const detectOriginalQuestion = (row: any): string | undefined => {
-                if (!row) return undefined;
-
-                let question = "";
-
-                // PRIORITY 1: Use explicitly selected input columns if available
-                // This ensures we get the RAW value from the dataset exactly as the user selected
-                if (hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
-                    const parts: string[] = [];
-                    for (const col of hfConfig.inputColumns) {
-                        const val = row[col];
-                        if (val !== undefined && val !== null) {
-                            if (typeof val === 'string') {
-                                parts.push(val);
-                            } else if (typeof val === 'object') {
-                                parts.push(JSON.stringify(val));
-                            } else {
-                                parts.push(String(val));
-                            }
-                        }
-                    }
-                    if (parts.length > 0) {
-                        question = parts.join('\n\n');
-                    }
-                }
-
-                // PRIORITY 2: Fallback to auto-detection if no explicit columns selected
-                if (!question) {
-                    const candidates = ['question', 'instruction', 'prompt', 'input', 'query', 'task'];
-                    for (const c of candidates) {
-                        if (row[c] && typeof row[c] === 'string' && row[c].length < 2000) {
-                            question = row[c];
-                            break;
-                        }
-                    }
-                }
-
-                // Try array formats (ShareGPT/ChatML) if no simple column found
-                if (!question) {
-                    const msgs = row.messages || row.conversation || row.conversations;
-                    if (Array.isArray(msgs)) {
-                        const firstUser = msgs.find((m: any) => m.role === 'user' || m.from === 'human');
-                        if (firstUser) question = firstUser.content || firstUser.value;
-                    }
-                }
-
-                if (!question) return undefined;
-
-                // Append Options if available (for multiple choice datasets)
-                // Check for 'options', 'choices'
-                // Format: Map/Object {"A": "...", "B": "..."} or Array ["...", "..."]
-                const optionsField = row['options'] || row['choices'];
-                if (optionsField) {
-                    let formattedOptions = "";
-                    if (typeof optionsField === 'string') {
-                        formattedOptions = "\n\nOptions:\n" + optionsField;
-                    } else if (Array.isArray(optionsField)) {
-                        formattedOptions = "\n\nOptions:\n" + optionsField.map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`).join('\n');
-                    } else if (typeof optionsField === 'object') {
-                        // entries [key, value]
-                        const entries = Object.entries(optionsField);
-                        if (entries.length > 0) {
-                            formattedOptions = "\n\nOptions:\n" + entries.map(([k, v]) => `${k}: ${v}`).join('\n');
-                        }
-                    }
-                    if (formattedOptions) question += formattedOptions;
-                }
-
-                return question;
-            };
-
             const worker = async (id: number) => {
                 while (currentIndex < workItems.length) {
                     if (abortControllerRef.current?.signal.aborted) break;
@@ -1902,9 +2059,37 @@ export default function App() {
                         }
                     }
 
+                    let originalAnswer: string | undefined;
+                    if (item.row && hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
+                        const parts: string[] = [];
+                        for (const col of hfConfig.outputColumns) {
+                            const val = item.row[col];
+                            if (val !== undefined && val !== null) {
+                                parts.push(typeof val === 'string' ? val : JSON.stringify(val));
+                            }
+                        }
+                        if (parts.length > 0) {
+                            originalAnswer = parts.join('\n\n');
+                        }
+                    }
+
+                    let originalReasoning: string | undefined;
+                    if (item.row && hfConfig.reasoningColumns && hfConfig.reasoningColumns.length > 0) {
+                        const parts: string[] = [];
+                        for (const col of hfConfig.reasoningColumns) {
+                            const val = item.row[col];
+                            if (val !== undefined && val !== null) {
+                                parts.push(typeof val === 'string' ? val : JSON.stringify(val));
+                            }
+                        }
+                        if (parts.length > 0) {
+                            originalReasoning = parts.join('\n\n');
+                        }
+                    }
+
                     setProgress(p => ({ ...p, activeWorkers: p.activeWorkers + 1 }));
 
-                    const result = await generateSingleItem(item.content, id, { originalQuestion, row: item.row, runtimeConfig });
+                    const result = await generateSingleItem(item.content, id, { originalQuestion, originalAnswer, originalReasoning, row: item.row, runtimeConfig });
 
 
                     setProgress(p => ({
@@ -1929,6 +2114,9 @@ export default function App() {
                         if (currentEnv === 'production' && !result.isError && FirebaseService.isFirebaseConfigured()) {
                             try {
                                 await FirebaseService.saveLogToFirebase(result);
+                                // Mark as saved to DB and update local storage
+                                result.savedToDb = true;
+                                await LogStorageService.updateLog(sessionUidRef.current, result);
                                 updateDbStats();
                             } catch (saveErr: any) {
                                 console.error("Firebase Sync Error", saveErr);
@@ -2059,7 +2247,7 @@ export default function App() {
                                 <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
                                 <input
                                     type="password"
-                                    value={phase.apiKey}
+                                    value={phase.apiKey || ''}
                                     onChange={e => updateDeepPhase(phaseId, { apiKey: e.target.value })}
                                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
                                     placeholder={SettingsService.getApiKey(phase.externalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
@@ -2072,7 +2260,7 @@ export default function App() {
                                 <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
                                 <input
                                     type="text"
-                                    value={phase.customBaseUrl}
+                                    value={phase.customBaseUrl || ''}
                                     onChange={e => updateDeepPhase(phaseId, { customBaseUrl: e.target.value })}
                                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
                                     placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
@@ -2086,7 +2274,7 @@ export default function App() {
                         <label className="text-[10px] text-slate-500 font-bold uppercase">Phase System Prompt</label>
                         <button onClick={() => copyDeepConfigToAll(phaseId)} className="text-[9px] text-indigo-400 hover:text-indigo-300 underline">Apply Config to All Phases</button>
                     </div>
-                    <textarea value={phase.systemPrompt} onChange={e => updateDeepPhase(phaseId, { systemPrompt: e.target.value })} className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-2 text-[10px] font-mono text-slate-300 focus:border-indigo-500 outline-none resize-y" spellCheck={false} />
+                    <textarea value={phase.systemPrompt || ''} onChange={e => updateDeepPhase(phaseId, { systemPrompt: e.target.value })} className="w-full h-32 bg-slate-950 border border-slate-700 rounded p-2 text-[10px] font-mono text-slate-300 focus:border-indigo-500 outline-none resize-y" spellCheck={false} />
                 </div>
             </div>
         )
@@ -2161,9 +2349,9 @@ export default function App() {
                                                     <Calendar className="w-3 h-3" /> {new Date(session.createdAt).toLocaleString()}
                                                 </span>
                                                 <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">
-                                                    {session.config.appMode === 'generator' ? 'GEN' : 'CONV'}
+                                                    {session.config?.appMode === 'generator' ? 'GEN' : 'CONV'}
                                                 </span>
-                                                {session.config.engineMode === 'deep' && (
+                                                {session.config?.engineMode === 'deep' && (
                                                     <span className="text-[10px] bg-indigo-900/30 text-indigo-400 px-1.5 py-0.5 rounded">
                                                         DEEP
                                                     </span>
@@ -2406,6 +2594,17 @@ export default function App() {
                                 </button>
                             )}
 
+                            {/* New Session Button - visible when items exist */}
+                            {!isRunning && totalLogCount > 0 && (
+                                <button onClick={() => {
+                                    if (window.confirm("This will clear the feed and analytics, and start a new session. Continue?")) {
+                                        startNewSession();
+                                    }
+                                }} className="w-full mt-2 bg-pink-600/20 hover:bg-pink-600/30 text-pink-400 border border-pink-600/30 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all">
+                                    <Plus className="w-3.5 h-3.5" />New Session
+                                </button>
+                            )}
+
                             <div className="mt-4 flex justify-between text-xs text-slate-500 font-mono">
                                 <span>Completed: {progress.current}</span>
                                 <span>Target: {progress.total}</span>
@@ -2427,6 +2626,8 @@ export default function App() {
                                         totalRecords={dbStats.total}
                                         sessionRecords={dbStats.session}
                                         recentHistory={sparklineHistory}
+                                        unsavedCount={getUnsavedCount()}
+                                        onSyncAll={syncAllUnsavedToDb}
                                     />
                                 </div>
                             )}
@@ -2539,12 +2740,12 @@ export default function App() {
                                             <>
                                                 <div className="space-y-1">
                                                     <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
-                                                    <input type="password" value={externalApiKey} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" />
+                                                    <input type="password" value={externalApiKey || ''} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" />
                                                 </div>
                                                 {externalProvider === 'other' && (
                                                     <div className="space-y-1">
                                                         <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
-                                                        <input type="text" value={customBaseUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"} />
+                                                        <input type="text" value={customBaseUrl || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCustomBaseUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"} />
                                                     </div>
                                                 )}
                                             </>
@@ -2578,6 +2779,29 @@ export default function App() {
                                             placeholder={appMode === 'generator' ? "# ROLE..." : "# CONVERTER ROLE..."}
                                         />
                                     </div>
+
+                                    {/* Max Traces for messages columns - visible in regular mode for HF/manual sources */}
+                                    {(dataSourceMode === 'huggingface' || dataSourceMode === 'manual') && (
+                                        <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg space-y-2">
+                                            <p className="text-[10px] text-slate-400">
+                                                When processing messages/conversation columns, limit the number of turns to rewrite:
+                                            </p>
+                                            <div className="flex items-center gap-3">
+                                                <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                                                    <Layers className="w-3 h-3" /> Max Traces
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    value={hfConfig.maxMultiTurnTraces || ''}
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHfConfig({ ...hfConfig, maxMultiTurnTraces: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
+                                                    className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                    placeholder="All"
+                                                />
+                                                <span className="text-[10px] text-slate-500">Empty = process all traces</span>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="animate-in fade-in slide-in-from-right-2 duration-300">
@@ -2775,7 +2999,7 @@ export default function App() {
                                         <select value={topicCategory} onChange={e => setTopicCategory(e.target.value)} className="bg-slate-950 border border-slate-700 text-[10px] text-slate-300 rounded px-2 py-1 flex-1 outline-none">{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select>
                                         <button onClick={generateRandomTopic} disabled={isGeneratingTopic} className="bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded p-1.5 text-slate-300 transition-colors disabled:opacity-50"><Dice5 className={`w-3.5 h-3.5 ${isGeneratingTopic ? 'animate-spin' : ''}`} /></button>
                                     </div>
-                                    <textarea value={geminiTopic} onChange={e => setGeminiTopic(e.target.value)} className="w-full h-20 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 outline-none resize-none" placeholder="Enter topic..." />
+                                    <textarea value={geminiTopic || ''} onChange={e => setGeminiTopic(e.target.value)} className="w-full h-20 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 outline-none resize-none" placeholder="Enter topic..." />
                                     <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Items to Generate</label><input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none" /></div>
                                 </div>
                             )}
@@ -2784,13 +3008,13 @@ export default function App() {
                                     <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-200">Fetches rows from a public HF dataset.</div>
                                     <div className="space-y-1 relative" onBlur={() => setTimeout(() => setShowHFResults(false), 200)}>
                                         <label className="text-[10px] text-slate-500 font-bold uppercase">Dataset ID</label>
-                                        <div className="relative"><input type="text" value={hfConfig.dataset} onChange={e => handleHFSearch(e.target.value)} onFocus={() => hfSearchResults.length > 0 && setShowHFResults(true)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none pr-8" placeholder="Search e.g. fka/awesome-chatgpt-prompts" /><div className="absolute right-2 top-1.5 text-slate-500 pointer-events-none">{isSearchingHF ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}</div></div>
+                                        <div className="relative"><input type="text" value={hfConfig.dataset || ''} onChange={e => handleHFSearch(e.target.value)} onFocus={() => hfSearchResults.length > 0 && setShowHFResults(true)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none pr-8" placeholder="Search e.g. fka/awesome-chatgpt-prompts" /><div className="absolute right-2 top-1.5 text-slate-500 pointer-events-none">{isSearchingHF ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}</div></div>
                                         {showHFResults && hfSearchResults.length > 0 && (<div className="absolute z-10 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl max-h-48 overflow-y-auto mt-1">{hfSearchResults.map(result => (<button key={result} onClick={() => handleSelectHFDataset(result)} className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white transition-colors border-b border-slate-800 last:border-0">{result}</button>))}</div>)}
                                     </div>
                                     {/* ... (HF Config Inputs) ... */}
                                     <div className="flex gap-2">
-                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Config</label>{hfStructure.configs.length > 0 ? (<select value={hfConfig.config} onChange={e => handleConfigChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.configs.map(c => <option key={c} value={c}>{c}</option>)}</select>) : (<input type="text" value={hfConfig.config} onChange={e => setHfConfig({ ...hfConfig, config: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
-                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Split</label>{hfStructure.splits[hfConfig.config]?.length > 0 ? (<select value={hfConfig.split} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.splits[hfConfig.config].map(s => <option key={s} value={s}>{s}</option>)}</select>) : (<input type="text" value={hfConfig.split} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
+                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Config</label>{hfStructure.configs.length > 0 ? (<select value={hfConfig.config || ''} onChange={e => handleConfigChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.configs.map(c => <option key={c} value={c}>{c}</option>)}</select>) : (<input type="text" value={hfConfig.config || ''} onChange={e => setHfConfig({ ...hfConfig, config: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
+                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Split</label>{hfStructure.splits[hfConfig.config]?.length > 0 ? (<select value={hfConfig.split || ''} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.splits[hfConfig.config].map(s => <option key={s} value={s}>{s}</option>)}</select>) : (<input type="text" value={hfConfig.split || ''} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
                                     </div>
                                     <div className="flex gap-2">
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Rows to Fetch</label><input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" /></div>
@@ -3098,7 +3322,11 @@ export default function App() {
                                 onPageChange={handlePageChange}
                                 onRetry={retryItem}
                                 onRetrySave={retrySave}
+                                onSaveToDb={saveItemToDb}
                                 retryingIds={retryingIds}
+                                savingIds={savingToDbIds}
+                                isProdMode={environment === 'production'}
+                                streamingConversations={streamingConversations}
                             />
                         ) : (
                             <AnalyticsDashboard logs={visibleLogs} />
@@ -3117,6 +3345,9 @@ export default function App() {
                     await refreshLogs();
                 }}
             />
-        </div >
+
+            {/* Toast Notifications */}
+            <ToastContainer />
+        </div>
     );
 }

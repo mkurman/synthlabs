@@ -15,3 +15,8 @@ You will receive input text.
 1. Strip all conversational filler ("I think", "Maybe").
 2. Use symbols to represent logical flow.
 3. Maintain the *original logical steps* but compress them.
+
+Output valid JSON only:
+{
+  "reasoning": "[Full reasoning trace with sections and symbols]"
+}

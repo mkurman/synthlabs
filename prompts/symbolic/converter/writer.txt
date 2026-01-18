@@ -30,4 +30,7 @@ Your task is to take the "Reasoning Trace" (The Golden Thread) and produce the f
 [Trace]: The symbolic reasoning chain.
 
 # OUTPUT
-The final text.
+Output valid JSON only:
+{
+  "reasoning": "[Full reasoning trace with sections and symbols]"
+}
