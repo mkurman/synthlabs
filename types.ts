@@ -242,3 +242,15 @@ export const CATEGORIES = [
   "Environmental Science",
   "Psychology & Neuroscience"
 ];
+
+// Electron API types for renderer process
+export interface ElectronAPI {
+  getAppVersion: () => Promise<string>;
+  platform: string;
+}
+
+declare global {
+  interface Window {
+    electronAPI?: ElectronAPI;
+  }
+}

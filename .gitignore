@@ -12,7 +12,8 @@ dist
 dist-ssr
 *.local
 .env
-.history 
+.history
+release 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
