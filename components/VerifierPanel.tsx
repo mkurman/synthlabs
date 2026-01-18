@@ -451,8 +451,8 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         setIsUploading(true);
         try {
             const itemsToSave = data.filter((i: VerifierItem) => !i.isDiscarded);
-            const count = await FirebaseService.saveFinalDataset(itemsToSave, 'synth_final');
-            toast.success(`Saved ${count} items to 'synth_final' collection.`);
+            const count = await FirebaseService.saveFinalDataset(itemsToSave, 'synth_verified');
+            toast.success(`Saved ${count} items to 'synth_verified' collection.`);
         } catch (e: any) {
             toast.error("DB Save Failed: " + e.message);
         } finally {
@@ -1572,7 +1572,7 @@ Based on the criteria above, provide a 1-5 score.`;
                             <div className="flex flex-col gap-3">
                                 <button onClick={handleDbSave} disabled={isUploading} className="bg-pink-600/10 hover:bg-pink-600/20 border border-pink-600/20 text-pink-400 py-2.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2">
                                     {isUploading ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
-                                    Save to 'synth_final'
+                                    Save to 'synth_verified'
                                 </button>
                                 <button onClick={handleJsonExport} className="bg-slate-800 hover:bg-slate-700 text-white py-2.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2">
                                     <FileJson className="w-3.5 h-3.5" />

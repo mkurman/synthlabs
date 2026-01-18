@@ -401,7 +401,7 @@ export const fetchAllLogs = async (limitCount?: number, sessionUid?: string): Pr
     }
 };
 
-export const saveFinalDataset = async (items: VerifierItem[], collectionName = 'synth_final') => {
+export const saveFinalDataset = async (items: VerifierItem[], collectionName = 'synth_verified') => {
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
