@@ -34,5 +34,3 @@ Rewrite the REASONING field into structured prose with symbolic markers.
 4. **Preserve logical steps** - Keep the original reasoning intact
 5. **Remove filler** - Strip "I think", "Let me explain"
 6. **Ensure flow to answer** - Reasoning should lead logically to the answer
-
-Return ONLY the rewritten reasoning as {"response": "..."} JSON object.

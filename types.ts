@@ -44,6 +44,12 @@ export interface SynthLogItem {
   }>;
   storageError?: string;
   savedToDb?: boolean; // Track if this item has been synced to Firebase
+  // Verifier fields (optional in base log, required in VerifierItem)
+  score?: number;
+  isDuplicate?: boolean;
+  duplicateGroupId?: string;
+  isDiscarded?: boolean;
+  verifiedTimestamp?: string;
 }
 
 export interface VerifierItem extends SynthLogItem {

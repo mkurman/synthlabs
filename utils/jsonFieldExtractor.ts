@@ -30,28 +30,34 @@ export function extractJsonFields(rawJson: string): ExtractedFields {
     };
 
     // Clean markdown code blocks if present
+    // Clean markdown code blocks if present
     let content = rawJson.trim();
-    if (content.startsWith('```json')) {
-        content = content.replace(/^```json\s*/, '').replace(/```$/, '');
-    } else if (content.startsWith('```')) {
-        content = content.replace(/^```\s*/, '').replace(/```$/, '');
+
+    // Robustly extract content from markdown code blocks if present
+    // Matches ```json ... ``` or ``` ... ``` anywhere in the string
+    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)(?:```|$)/);
+    if (codeBlockMatch && codeBlockMatch[1]) {
+        content = codeBlockMatch[1].trim();
     }
+
+    // Sanitize smart quotes to straight quotes
+    content = content.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
 
     // Try to find "reasoning" field
     const reasoningPatterns = [
-        /"reasoning"\s*:\s*"/,
-        /'reasoning'\s*:\s*'/,
-        /reasoning\s*:\s*"/,
+        { regex: /"\s*reasoning\s*"\s*:\s*"/i, quote: '"' },
+        { regex: /'\s*reasoning\s*'\s*:\s*'/i, quote: "'" },
+        { regex: /reasoning\s*:\s*"/i, quote: '"' },
     ];
 
-    for (const pattern of reasoningPatterns) {
-        const match = content.match(pattern);
+    for (const { regex, quote } of reasoningPatterns) {
+        const match = content.match(regex);
         if (match) {
             result.hasReasoningStart = true;
             const startIdx = match.index! + match[0].length;
 
             // Find the end of the reasoning value
-            let endIdx = findStringEnd(content, startIdx);
+            let endIdx = findStringEnd(content, startIdx, quote);
 
             if (endIdx !== -1) {
                 result.reasoning = unescapeJsonString(content.slice(startIdx, endIdx));
@@ -65,21 +71,28 @@ export function extractJsonFields(rawJson: string): ExtractedFields {
         }
     }
 
-    // Try to find "answer" field
+    // Try to find "answer" field (or alternative names like "response", "content", "text")
     const answerPatterns = [
-        /"answer"\s*:\s*"/,
-        /'answer'\s*:\s*'/,
-        /answer\s*:\s*"/,
+        { regex: /"\s*answer\s*"\s*:\s*"/i, quote: '"' },
+        { regex: /'\s*answer\s*'\s*:\s*'/i, quote: "'" },
+        { regex: /answer\s*:\s*"/i, quote: '"' },
+        { regex: /"\s*response\s*"\s*:\s*"/i, quote: '"' },
+        { regex: /'\s*response\s*'\s*:\s*'/i, quote: "'" },
+        { regex: /response\s*:\s*"/i, quote: '"' },
+        { regex: /"\s*content\s*"\s*:\s*"/i, quote: '"' },
+        { regex: /'\s*content\s*'\s*:\s*'/i, quote: "'" },
+        { regex: /"\s*text\s*"\s*:\s*"/i, quote: '"' },
+        { regex: /'\s*text\s*'\s*:\s*'/i, quote: "'" },
     ];
 
-    for (const pattern of answerPatterns) {
-        const match = content.match(pattern);
+    for (const { regex, quote } of answerPatterns) {
+        const match = content.match(regex);
         if (match) {
             result.hasAnswerStart = true;
             const startIdx = match.index! + match[0].length;
 
             // Find the end of the answer value
-            let endIdx = findStringEnd(content, startIdx);
+            let endIdx = findStringEnd(content, startIdx, quote);
 
             if (endIdx !== -1) {
                 result.answer = unescapeJsonString(content.slice(startIdx, endIdx));
@@ -124,19 +137,10 @@ function findStringEnd(content: string, startIdx: number, quoteChar: string = '"
 
         // Only end on the MATCHING quote type
         if (char === quoteChar) {
-            // Verify this looks like a proper JSON field end
-            // (should be followed by comma, closing brace, or whitespace + one of those)
-            const afterQuote = content.slice(i + 1).trimStart();
-            if (afterQuote.length === 0) {
-                // Still streaming, can't confirm end
-                return -1;
-            }
-            // Valid terminators after a JSON string value
-            if (afterQuote[0] === ',' || afterQuote[0] === '}' || afterQuote[0] === ']') {
-                return i;
-            }
-            // If there's more content but no valid terminator, might be incomplete
-            // Continue looking (this handles cases where quote appears in content)
+            // Found the closing quote - return it immediately
+            // We trust that the first unescaped matching quote is the end
+            // This handles cases with trailing text/garbage robustly
+            return i;
         }
 
         i++;

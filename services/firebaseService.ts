@@ -1,5 +1,29 @@
 import { initializeApp, getApps, deleteApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, updateDoc, increment } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, updateDoc, increment, getDoc } from 'firebase/firestore';
+
+// ... (existing imports)
+
+export const fetchLogItem = async (logId: string): Promise<VerifierItem | null> => {
+    await ensureInitialized();
+    if (!db) throw new Error("Firebase not initialized");
+    try {
+        const docRef = doc(db, 'synth_logs', logId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            return {
+                ...docSnap.data(),
+                id: docSnap.id,
+                score: (docSnap.data() as any).score || 0
+            } as VerifierItem;
+        } else {
+            return null;
+        }
+    } catch (e) {
+        console.error("Error fetching log item", e);
+        throw e;
+    }
+};
 import { SynthLogItem, FirebaseConfig, VerifierItem } from '../types';
 import { logger } from '../utils/logger';
 
@@ -261,6 +285,35 @@ export const saveLogToFirebase = async (log: SynthLogItem, collectionName: strin
         if (lastError) throw lastError;
     } catch (e) {
         console.error("Error saving to Firebase:", e);
+        throw e;
+    }
+};
+
+export const updateLogItem = async (logId: string, updates: Partial<SynthLogItem>) => {
+    await ensureInitialized();
+    if (!db) throw new Error("Firebase not initialized");
+
+    try {
+        const docRef = doc(db, 'synth_logs', logId);
+        // Sanitize updates to remove undefined values
+        const sanitizedUpdates = sanitizeForFirestore(updates);
+
+        await updateDoc(docRef, sanitizedUpdates);
+    } catch (e) {
+        console.error("Error updating log item:", e);
+        throw e;
+    }
+};
+
+export const deleteLogItem = async (logId: string) => {
+    await ensureInitialized();
+    if (!db) throw new Error("Firebase not initialized");
+
+    try {
+        const docRef = doc(db, 'synth_logs', logId);
+        await deleteDoc(docRef);
+    } catch (e) {
+        console.error("Error deleting log item:", e);
         throw e;
     }
 };

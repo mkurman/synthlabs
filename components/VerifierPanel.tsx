@@ -5,7 +5,7 @@ import {
     GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
     ShieldCheck, LayoutGrid, List, Search, Server, Plus,
     ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileType, MessageCircle,
-    ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2,
+    ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2, Save,
     Sparkles
 } from 'lucide-react';
 import { VerifierItem, ExternalProvider } from '../types';
@@ -20,6 +20,7 @@ import ConversationView from './ConversationView';
 import { PromptService } from '../services/promptService';
 import { AutoscoreConfig } from '../types';
 import { toast } from '../services/toastService';
+import { extractJsonFields } from '../utils/jsonFieldExtractor';
 
 interface VerifierPanelProps {
     onImportFromDb: () => Promise<void>;
@@ -29,6 +30,7 @@ interface VerifierPanelProps {
 export default function VerifierPanel({ onImportFromDb, currentSessionUid }: VerifierPanelProps) {
     const [data, setData] = useState<VerifierItem[]>([]);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+    const [dataSource, setDataSource] = useState<'file' | 'db' | null>(null);
     const [activeTab, setActiveTab] = useState<'import' | 'review' | 'export'>('import');
 
     // Import State
@@ -76,6 +78,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [editingField, setEditingField] = useState<{ itemId: string; field: string; messageIndex?: number; originalValue: string } | null>(null);
     const [editValue, setEditValue] = useState('');
     const [rewritingField, setRewritingField] = useState<{ itemId: string; field: string; messageIndex?: number } | null>(null);
+    const [streamingContent, setStreamingContent] = useState<string>('');  // Real-time streaming content
 
     // Regenerate Dropdown State
     const [showRegenerateDropdown, setShowRegenerateDropdown] = useState<string | null>(null);
@@ -93,9 +96,22 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             customBaseUrl: '',
             maxRetries: 3,
             retryDelay: 2000,
-            systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite')
+            systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite'),
+            concurrency: 1,
+            delayMs: 0
         };
     });
+    const [isRewritingAll, setIsRewritingAll] = useState(false);
+    const [rewriteProgress, setRewriteProgress] = useState({ current: 0, total: 0 });
+
+    // Delete Modal State
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [itemsToDelete, setItemsToDelete] = useState<string[]>([]);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+    const [itemStates, setItemStates] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
+    const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
 
     // Autoscore Config State
     const [isAutoscorePanelOpen, setIsAutoscorePanelOpen] = useState(false);
@@ -295,6 +311,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             if (allItems.length > 0) {
                 analyzeDuplicates(allItems);
                 setData(allItems);
+                setDataSource('file');
                 setActiveTab('review');
             } else {
                 toast.error("No valid data found in selected files. Please check the format (JSON Array or JSONL).");
@@ -335,6 +352,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             } else {
                 analyzeDuplicates(items);
                 setData(items);
+                setDataSource('db');
                 setActiveTab('review');
             }
         } catch (e: any) {
@@ -506,6 +524,61 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         }
     };
 
+    const handleDbUpdate = async (item: VerifierItem) => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            toast.error("Firebase not configured.");
+            return;
+        }
+
+        setItemStates(prev => ({ ...prev, [item.id]: 'saving' }));
+
+        try {
+            await FirebaseService.updateLogItem(item.id, {
+                query: item.query,
+                reasoning: item.reasoning,
+                answer: item.answer,
+                // Note: 'score' and 'isDiscarded' are verifier-only fields, not part of the raw synth_log schema
+            });
+            setItemStates(prev => ({ ...prev, [item.id]: 'saved' }));
+            setTimeout(() => {
+                setItemStates(prev => ({ ...prev, [item.id]: 'idle' }));
+            }, 10000);
+        } catch (e: any) {
+            console.error("Failed to update item:", e);
+            toast.error("Update failed: " + e.message);
+            setItemStates(prev => ({ ...prev, [item.id]: 'idle' }));
+        }
+    };
+
+    const handleDbRollback = async (item: VerifierItem) => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            toast.error("Firebase not configured.");
+            return;
+        }
+
+        toast.info("Rolling back from DB...");
+
+        try {
+            const freshItem = await FirebaseService.fetchLogItem(item.id);
+            if (freshItem) {
+                // Preserve local UI flags that aren't in DB
+                const restoredItem = {
+                    ...freshItem,
+                    isDuplicate: item.isDuplicate,        // Keep duplicate status (local analysis)
+                    duplicateGroupId: item.duplicateGroupId
+                };
+
+                setData((prev: VerifierItem[]) => prev.map(i => i.id === item.id ? restoredItem : i));
+                toast.success("Changes reverted to DB version.");
+            } else {
+                toast.error("Item not found in DB.");
+            }
+        } catch (e: any) {
+            console.error("Failed to rollback item:", e);
+            toast.error("Rollback failed: " + e.message);
+        }
+    };
+
     const handleHfPush = async () => {
         if (!hfToken || !hfRepo) {
             toast.info("Please provide HF Token and Repo ID.");
@@ -539,8 +612,11 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const saveEditing = () => {
         if (!editingField) return;
 
+        let updatedItem: VerifierItem | null = null;
+
         setData((prev: VerifierItem[]) => prev.map(item => {
             if (item.id === editingField.itemId) {
+                let newItem = { ...item };
                 if (editingField.field === 'message' && editingField.messageIndex !== undefined && item.messages) {
                     const newMessages = [...item.messages];
                     if (newMessages[editingField.messageIndex]) {
@@ -555,16 +631,113 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                             reasoning: newReasoning
                         };
                     }
-                    return { ...item, messages: newMessages };
+                    newItem = { ...item, messages: newMessages };
                 } else if (['query', 'reasoning', 'answer'].includes(editingField.field)) {
-                    return { ...item, [editingField.field]: editValue };
+                    newItem = { ...item, [editingField.field]: editValue };
                 }
+                updatedItem = newItem;
+                return newItem;
             }
             return item;
         }));
 
         setEditingField(null);
         setEditValue('');
+
+        if (autoSaveEnabled && dataSource === 'db' && updatedItem) {
+            handleDbUpdate(updatedItem);
+        }
+    };
+
+    // Handler for rewriting user query messages with streaming
+    const handleMessageQueryRewrite = async (itemId: string, messageIndex: number) => {
+        console.log('handleMessageQueryRewrite called:', { itemId, messageIndex });
+        const item = data.find(i => i.id === itemId);
+        if (!item || !item.messages || !item.messages[messageIndex]) {
+            console.log('Early return: item or message not found');
+            return;
+        }
+
+        const targetMessage = item.messages[messageIndex];
+        if (targetMessage.role !== 'user') {
+            console.log('Not a user message, skipping');
+            return;
+        }
+
+        if (!rewriterConfig.model || rewriterConfig.model.trim() === '') {
+            toast.error('Please set a default model for ' + rewriterConfig.externalProvider + ' in Settings');
+            return;
+        }
+
+        setRewritingField({ itemId, field: 'message_query', messageIndex });
+        setStreamingContent('');
+
+        try {
+            console.log('Calling query rewrite streaming...');
+            const systemPrompt = rewriterConfig.systemPrompt || `You are an expert at improving and clarifying user queries. 
+Given a user's question or request, rewrite it to be clearer, more specific, and better structured.
+Preserve the original intent while improving clarity.
+Return ONLY the improved query text.`;
+
+            const userPrompt = `Rewrite and improve this user query:
+
+${targetMessage.content}
+
+IMPORTANT: Respond with a VALID JSON object containing the improved query.
+
+Expected Output Format:
+{
+  "response": "The improved, clearer version of the query..."
+}`;
+
+            // Direct streaming call
+            const newValue = await VerifierRewriterService.callRewriterAIStreaming(
+                systemPrompt,
+                userPrompt,
+                rewriterConfig,
+                (_chunk, accumulated) => {
+                    // Try to extract from JSON if LLM returns JSON
+                    const extracted = extractJsonFields(accumulated);
+                    if (extracted.answer) {
+                        setStreamingContent(extracted.answer);
+                    } else {
+                        // Fall back to raw content
+                        setStreamingContent(accumulated);
+                    }
+                }
+            );
+            console.log('Query rewrite result:', newValue);
+
+            // Extract final value from JSON if present
+            const extracted = extractJsonFields(newValue);
+            // extractJsonFields maps 'response' to 'answer'
+            const finalQuery = extracted.answer || newValue.trim();
+
+            const updatedItem = { ...item };
+            if (updatedItem.messages) {
+                const newMessages = [...updatedItem.messages];
+                newMessages[messageIndex] = {
+                    ...newMessages[messageIndex],
+                    content: finalQuery
+                };
+                updatedItem.messages = newMessages;
+            }
+
+            setData((prev: VerifierItem[]) => {
+                return prev.map(i => i.id === itemId ? updatedItem : i);
+            });
+
+            if (autoSaveEnabled && dataSource === 'db') {
+                handleDbUpdate(updatedItem);
+            }
+            toast.success('Query rewritten');
+        } catch (error) {
+            console.error("Query rewrite failed:", error);
+            toast.error("Rewrite failed. See console for details.");
+        } finally {
+            setRewritingField(null);
+            setStreamingContent('');
+        }
     };
 
     const handleMessageRewrite = async (itemId: string, messageIndex: number) => {
@@ -581,15 +754,33 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         }
 
         setRewritingField({ itemId, field: 'message', messageIndex });
+        setStreamingContent('');  // Clear previous streaming content
+
         try {
-            console.log('Calling rewriteMessage...');
-            const newValue = await VerifierRewriterService.rewriteMessage({
-                item,
-                messageIndex,
-                config: rewriterConfig,
-                promptSet: SettingsService.getSettings().promptSet
-            });
-            console.log('rewriteMessage result:', newValue);
+            console.log('Calling rewriteMessageStreaming...');
+            const newValue = await VerifierRewriterService.rewriteMessageStreaming(
+                {
+                    item,
+                    messageIndex,
+                    config: rewriterConfig,
+                    promptSet: SettingsService.getSettings().promptSet
+                },
+                (_chunk, accumulated) => {
+                    // Parse JSON on-the-fly and extract answer field
+                    const extracted = extractJsonFields(accumulated);
+                    if (extracted.answer) {
+                        setStreamingContent(extracted.answer);
+                    } else {
+                        // Fallback to raw content
+                        setStreamingContent(accumulated);
+                    }
+                }
+            );
+            console.log('rewriteMessageStreaming result:', newValue);
+
+            // Parse the final result to extract the answer field
+            const extracted = extractJsonFields(newValue);
+            const finalAnswer = extracted.answer || newValue;
 
             setData((prev: VerifierItem[]) => {
                 console.log('Updating data...');
@@ -597,9 +788,25 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                     if (i.id === itemId && i.messages) {
                         console.log('Found target item, updating message:', messageIndex);
                         const newMessages = [...i.messages];
+
+                        // Robustly preserve existing reasoning
+                        let existingReasoningBlock = '';
+                        const thinkMatch = newMessages[messageIndex].content.match(/<think>([\s\S]*?)<\/think>/);
+
+                        if (thinkMatch) {
+                            // Found think tags in content, preserve them
+                            existingReasoningBlock = thinkMatch[0];
+                        } else if (newMessages[messageIndex].reasoning) {
+                            // No tags in content but reasoning field exists, reconstruct it
+                            existingReasoningBlock = `<think>${newMessages[messageIndex].reasoning}</think>`;
+                        }
+
+                        // Ensure proper spacing
+                        const prefix = existingReasoningBlock ? existingReasoningBlock + '\n' : '';
+
                         newMessages[messageIndex] = {
                             ...newMessages[messageIndex],
-                            content: newValue
+                            content: prefix + finalAnswer.trim()
                         };
                         console.log('Updated message:', newMessages[messageIndex]);
                         return { ...i, messages: newMessages };
@@ -613,6 +820,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             toast.error("Rewrite failed. See console for details.");
         } finally {
             setRewritingField(null);
+            setStreamingContent('');
         }
     };
 
@@ -631,41 +839,71 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         }
 
         setRewritingField({ itemId, field: 'message_reasoning', messageIndex });
+        setStreamingContent('');  // Clear previous streaming content
+
         try {
-            console.log('Calling rewriteMessageReasoning...');
-            const result = await VerifierRewriterService.rewriteMessageReasoning({
-                item,
-                messageIndex,
-                config: rewriterConfig,
-                promptSet: SettingsService.getSettings().promptSet
-            });
-            console.log('rewriteMessageReasoning result:', result);
+            console.log('Calling rewriteMessageReasoningStreaming...');
+            // Use streaming with JSON field extraction for reasoning
+            const rawResult = await VerifierRewriterService.rewriteMessageReasoningStreaming(
+                {
+                    item,
+                    messageIndex,
+                    config: rewriterConfig,
+                    promptSet: SettingsService.getSettings().promptSet
+                },
+                (_chunk, accumulated) => {
+                    // Parse JSON on-the-fly and extract reasoning field
+                    const extracted = extractJsonFields(accumulated);
+                    if (extracted.reasoning) {
+                        setStreamingContent(extracted.reasoning);
+                    } else if (extracted.answer) {
+                        // Fallback to generic key content (response/text/etc)
+                        setStreamingContent(extracted.answer);
+                    } else {
+                        // Fallback to raw content
+                        setStreamingContent(accumulated);
+                    }
+                }
+            );
+            console.log('rewriteMessageReasoningStreaming result:', rawResult);
+
+            // Parse the final result to extract reasoning and answer
+            const extracted = extractJsonFields(rawResult);
+            // Fallback to extracted.answer if reasoning key missing (handles 'response'/'text' keys)
+            const finalReasoning = extracted.reasoning || extracted.answer || rawResult;
+            // For reasoning only rewrite, we typically preserve the original answer, 
+            // unless the model explicitly returned a NEW answer in the answer field (and reasoning field was present)
+            // But if we used extracted.answer as reasoning, we should keep original answer.
+            const modelGeneratedAnswer = extracted.reasoning && extracted.answer ? extracted.answer : undefined;
+            const finalAnswer = modelGeneratedAnswer || item.messages![messageIndex].content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+
+            const updatedItem = { ...item };
+            if (updatedItem.messages) {
+                const newMessages = [...updatedItem.messages];
+                const thinkTag = finalReasoning ? `<think>${finalReasoning}</think>\n` : '';
+                newMessages[messageIndex] = {
+                    ...newMessages[messageIndex],
+                    content: thinkTag + finalAnswer,
+                    reasoning: finalReasoning
+                };
+                updatedItem.messages = newMessages;
+            }
 
             setData((prev: VerifierItem[]) => {
                 console.log('Updating data...');
-                const updated = prev.map(i => {
-                    if (i.id === itemId && i.messages) {
-                        console.log('Found target item, updating message:', messageIndex);
-                        const newMessages = [...i.messages];
-                        const thinkTag = result.reasoning ? `<think>${result.reasoning}</think>\n` : '';
-                        newMessages[messageIndex] = {
-                            ...newMessages[messageIndex],
-                            content: thinkTag + result.answer,
-                            reasoning: result.reasoning
-                        };
-                        console.log('Updated message:', newMessages[messageIndex]);
-                        return { ...i, messages: newMessages };
-                    }
-                    return i;
-                });
-                return updated;
+                return prev.map(i => i.id === itemId ? updatedItem : i);
             });
             console.log('Data updated successfully');
+
+            if (autoSaveEnabled && dataSource === 'db') {
+                handleDbUpdate(updatedItem);
+            }
         } catch (error) {
             console.error("Reasoning rewrite failed:", error);
             toast.error("Rewrite failed. See console for details.");
         } finally {
             setRewritingField(null);
+            setStreamingContent('');
         }
     };
 
@@ -683,25 +921,48 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         }
 
         setRewritingField({ itemId, field: 'message_both', messageIndex });
-        try {
-            const result = await VerifierRewriterService.rewriteMessageBoth({
-                item,
-                messageIndex,
-                config: rewriterConfig,
-                promptSet: SettingsService.getSettings().promptSet
-            });
+        setStreamingContent('');  // Clear previous streaming content
 
-            console.log('handleMessageBothRewrite result:', result);
+        try {
+            // Use streaming to show progress while generating both fields
+            // Use specialized streaming function for both fields
+            const rawResult = await VerifierRewriterService.rewriteMessageBothStreaming(
+                {
+                    item,
+                    messageIndex,
+                    config: rewriterConfig,
+                    promptSet: SettingsService.getSettings().promptSet
+                },
+                (_chunk, accumulated) => {
+                    // Parse JSON on-the-fly and show reasoning first, then answer
+                    const extracted = extractJsonFields(accumulated);
+                    // Show reasoning while it's being generated, then show combined
+                    if (extracted.reasoning && !extracted.hasAnswerStart) {
+                        setStreamingContent(extracted.reasoning);
+                    } else if (extracted.answer) {
+                        setStreamingContent(extracted.answer);
+                    } else {
+                        setStreamingContent(accumulated);
+                    }
+                }
+            );
+
+            console.log('handleMessageBothRewrite streaming result:', rawResult);
+
+            // Parse final result for both fields
+            const extracted = extractJsonFields(rawResult);
+            const finalReasoning = extracted.reasoning || '';
+            const finalAnswer = extracted.answer || rawResult;
 
             setData((prev: VerifierItem[]) => {
                 const updated = prev.map(i => {
                     if (i.id === itemId && i.messages) {
                         const newMessages = [...i.messages];
-                        const thinkTag = result.reasoning ? `<think>${result.reasoning}</think>\n` : '';
+                        const thinkTag = finalReasoning ? `<think>${finalReasoning}</think>\n` : '';
                         newMessages[messageIndex] = {
                             ...newMessages[messageIndex],
-                            content: thinkTag + result.answer,
-                            reasoning: result.reasoning
+                            content: thinkTag + finalAnswer,
+                            reasoning: finalReasoning
                         };
                         return { ...i, messages: newMessages };
                     }
@@ -716,6 +977,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             toast.error("Rewrite failed. See console for details.");
         } finally {
             setRewritingField(null);
+            setStreamingContent('');
         }
     };
 
@@ -735,23 +997,63 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         };
 
         setRewritingField({ itemId, field });
+        setStreamingContent('');  // Clear previous streaming content
+
         try {
-            const newValue = await VerifierRewriterService.rewriteField({
-                item: itemForRewrite,
-                field,
-                config: rewriterConfig,
-                promptSet: SettingsService.getSettings().promptSet
-            });
+            // Use streaming variant for real-time display
+            const newValue = await VerifierRewriterService.rewriteFieldStreaming(
+                {
+                    item: itemForRewrite,
+                    field,
+                    config: rewriterConfig,
+                    promptSet: SettingsService.getSettings().promptSet
+                },
+                (_chunk, accumulated) => {
+                    // Parse JSON on-the-fly and extract only the relevant field
+                    const extracted = extractJsonFields(accumulated);
+
+                    // Display the extracted field content based on what we're rewriting
+                    if (field === 'reasoning') {
+                        setStreamingContent(extracted.reasoning || extracted.answer || accumulated);
+                    } else if (field === 'answer') {
+                        setStreamingContent(extracted.answer || extracted.reasoning || accumulated);
+                    } else if (field === 'query') {
+                        setStreamingContent(extracted.answer || accumulated);
+                    } else {
+                        // Fallback: show raw content if can't extract field
+                        setStreamingContent(accumulated);
+                    }
+                }
+            );
+
+            // After streaming completes, save the final value
+            const extracted = extractJsonFields(newValue);
+            let finalValue = newValue;
+            if (field === 'reasoning') {
+                finalValue = extracted.reasoning || extracted.answer || newValue;
+            } else if (field === 'answer') {
+                finalValue = extracted.answer || extracted.reasoning || newValue;
+            } else if (field === 'query') {
+                finalValue = extracted.answer || newValue;
+            }
+
+            const updatedItem = { ...itemForRewrite, [field]: finalValue };
+
             setData((prev: VerifierItem[]) => prev.map(i =>
                 i.id === itemId
-                    ? { ...i, [field]: newValue }
+                    ? updatedItem
                     : i
             ));
+
+            if (autoSaveEnabled && dataSource === 'db') {
+                handleDbUpdate(updatedItem);
+            }
         } catch (err: any) {
             console.error('Rewrite failed:', err);
             toast.error('Rewrite failed: ' + err.message);
         } finally {
             setRewritingField(null);
+            setStreamingContent('');
         }
     };
 
@@ -770,23 +1072,57 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         };
 
         setRewritingField({ itemId, field: 'both' });
+        setStreamingContent('');  // Clear previous streaming content
+
         try {
-            const result = await VerifierRewriterService.rewriteBoth({
-                item: itemForRewrite,
-                config: rewriterConfig,
-                promptSet: SettingsService.getSettings().promptSet
-            });
+            // Use streaming for real-time display
+            const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
+                {
+                    item: itemForRewrite,
+                    field: 'reasoning',  // Start with reasoning field prompt
+                    config: rewriterConfig,
+                    promptSet: SettingsService.getSettings().promptSet
+                },
+                (_chunk, accumulated) => {
+                    // Parse JSON on-the-fly and show reasoning first, then answer
+                    const extracted = extractJsonFields(accumulated);
+                    if (extracted.reasoning && !extracted.hasAnswerStart) {
+                        setStreamingContent(extracted.reasoning);
+                    } else if (extracted.answer) {
+                        setStreamingContent(extracted.answer);
+                    } else {
+                        setStreamingContent(accumulated);
+                    }
+                }
+            );
+
+            // Parse final result for both fields
+            const extracted = extractJsonFields(rawResult);
+            // Robustly handle generic keys, prioritizing specialized fields if present
+            const finalReasoning = extracted.reasoning || extracted.answer || rawResult;
+            // If extracted.answer was used for reasoning (because answer key was missing/generic), keep original answer
+            // Logic: if we have both reasoning AND answer keys, assume answer key is Answer.
+            // If we only have answer key (mapped from 'response'), assume it's Reasoning (since we asked for reasoning rewrite primarily).
+            const finalAnswer = (extracted.reasoning && extracted.answer) ? extracted.answer : item.answer;
+
+            const updatedItem = { ...item, reasoning: finalReasoning, answer: finalAnswer };
+
             setData((prev: VerifierItem[]) => prev.map(i =>
                 i.id === itemId
-                    ? { ...i, reasoning: result.reasoning, answer: result.answer }
+                    ? updatedItem
                     : i
             ));
+
+            if (autoSaveEnabled && dataSource === 'db') {
+                handleDbUpdate(updatedItem);
+            }
             toast.success('Regenerated reasoning and answer');
         } catch (err: any) {
             console.error('Rewrite both failed:', err);
             toast.error('Rewrite failed: ' + err.message);
         } finally {
             setRewritingField(null);
+            setStreamingContent('');
         }
     };
 
@@ -838,14 +1174,152 @@ Based on the criteria above, provide a 1-5 score.`;
         return 0;
     };
 
-    const handleAutoscoreAll = async () => {
-        const itemsToScore = filteredData.filter(i => i.score === 0);
-        if (itemsToScore.length === 0) {
-            toast.info("No unrated items to score.");
+    const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+
+    const toggleSelection = (id: string) => {
+        setSelectedItemIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const handleSelectAll = () => {
+        if (selectedItemIds.size === filteredData.length) {
+            setSelectedItemIds(new Set());
+        } else {
+            setSelectedItemIds(new Set(filteredData.map(i => i.id)));
+        }
+    };
+
+    const getSelectedItems = () => {
+        return filteredData.filter(i => selectedItemIds.has(i.id));
+    };
+
+    const handleBulkRewrite = async (mode: 'query' | 'reasoning' | 'answer' | 'both') => {
+        const itemsToProcess = getSelectedItems();
+        if (itemsToProcess.length === 0) {
+            toast.info("No items selected.");
             return;
         }
 
-        if (!confirm(`Autoscore ${itemsToScore.length} items using ${autoscoreConfig.model}?`)) return;
+        if (!rewriterConfig.model || rewriterConfig.model.trim() === '') {
+            toast.error('Please set a default model for ' + rewriterConfig.externalProvider + ' in Settings');
+            return;
+        }
+
+        if (!confirm(`Rewrite ${mode.toUpperCase()} for ${itemsToProcess.length} SELECTED items using ${rewriterConfig.model}? This cannot be undone.`)) return;
+
+        setIsRewritingAll(true);
+        setRewriteProgress({ current: 0, total: itemsToProcess.length });
+
+        const { concurrency = 1, delayMs = 0 } = rewriterConfig;
+        let currentIndex = 0;
+
+        const worker = async () => {
+            while (currentIndex < itemsToProcess.length) {
+                const myIndex = currentIndex++;
+                if (myIndex >= itemsToProcess.length) break;
+
+                const item = itemsToProcess[myIndex];
+
+                // Prepare item with fallbacks
+                const itemForRewrite = {
+                    ...item,
+                    query: item.query || (item as any).QUERY || item.full_seed || ''
+                };
+
+                try {
+                    if (mode === 'both') {
+                        // Both: Use the same strategy as handleBothRewrite (request reasoning, expect both)
+                        const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
+                            {
+                                item: itemForRewrite,
+                                field: 'reasoning',
+                                config: rewriterConfig,
+                                promptSet: SettingsService.getSettings().promptSet
+                            },
+                            () => { } // No-op for streaming callback in bulk mode
+                        );
+
+                        const extracted = extractJsonFields(rawResult);
+                        const finalReasoning = extracted.reasoning || extracted.answer || rawResult;
+                        const finalAnswer = (extracted.reasoning && extracted.answer) ? extracted.answer : item.answer;
+
+                        setData((prev: VerifierItem[]) => prev.map(i =>
+                            i.id === item.id ? { ...i, reasoning: finalReasoning, answer: finalAnswer } : i
+                        ));
+                    } else {
+                        // Single field: Reasoning or Answer
+                        const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
+                            {
+                                item: itemForRewrite,
+                                field: mode,
+                                config: rewriterConfig,
+                                promptSet: SettingsService.getSettings().promptSet
+                            },
+                            () => { }
+                        );
+
+                        const extracted = extractJsonFields(rawResult);
+                        let finalValue = rawResult;
+                        if (mode === 'reasoning') {
+                            finalValue = extracted.reasoning || extracted.answer || rawResult;
+                        } else if (mode === 'answer') {
+                            finalValue = extracted.answer || extracted.reasoning || rawResult;
+                        } else if (mode === 'query') {
+                            // extractJsonFields maps 'response'/'query' keys to 'answer' property
+                            finalValue = extracted.answer || rawResult;
+                        }
+
+                        // Prepare updated item for state and auto-save
+                        const updatedItem = { ...item, [mode]: finalValue };
+
+                        setData((prev: VerifierItem[]) => prev.map(i =>
+                            i.id === item.id ? updatedItem : i
+                        ));
+
+                        if (autoSaveEnabled && dataSource === 'db') {
+                            handleDbUpdate(updatedItem);
+                        }
+                    }
+                } catch (err) {
+                    console.error(`Failed to rewrite item ${item.id}:`, err);
+                }
+
+                setRewriteProgress(prev => ({ ...prev, current: prev.current + 1 }));
+
+                if (delayMs > 0 && currentIndex < itemsToProcess.length) {
+                    await new Promise(r => setTimeout(r, delayMs));
+                }
+            }
+        };
+
+        const workers = Array.from({ length: Math.min(concurrency, itemsToProcess.length) }, () => worker());
+        await Promise.all(workers);
+
+        setIsRewritingAll(false);
+        toast.success(`Bulk rewrite (${mode}) of ${itemsToProcess.length} items complete!`);
+        // Optional: clear selection?
+        // setSelectedItemIds(new Set());
+    };
+
+    const handleAutoscoreSelected = async () => {
+        const selectedItems = getSelectedItems();
+        // Option: Filter only unrated items? Or rescore all selected?
+        // User just said "autoscore". Let's assume unrated only to be safe/consistent with "Auto", but maybe warn?
+        // Actually, if I select items, I probably want to score them.
+        // But the previous "Autoscore All" was specifically "itemsToScore = filteredData.filter(i => i.score === 0)".
+        // I will keep ONLY unrated check for now.
+        const itemsToScore = selectedItems.filter(i => i.score === 0);
+
+        if (itemsToScore.length === 0) {
+            toast.info("No unrated items in selection.");
+            return;
+        }
+
+        if (!confirm(`Autoscore ${itemsToScore.length} unrated items from selection using ${autoscoreConfig.model}?`)) return;
 
         setIsAutoscoring(true);
         setAutoscoreProgress({ current: 0, total: itemsToScore.length });
@@ -881,6 +1355,86 @@ Based on the criteria above, provide a 1-5 score.`;
 
         setIsAutoscoring(false);
         toast.success(`Autoscoring complete! Processed ${itemsToScore.length} items.`);
+    };
+
+    const handleBulkDbUpdate = async () => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            toast.error("Firebase not configured.");
+            return;
+        }
+
+        const itemsToUpdate = getSelectedItems();
+        if (itemsToUpdate.length === 0) {
+            toast.info("No items selected.");
+            return;
+        }
+
+        if (!confirm(`Update ${itemsToUpdate.length} items in DB?`)) return;
+
+        setIsBulkUpdating(true);
+        let successCount = 0;
+        let failCount = 0;
+
+        // Use rewriter batch settings for DB update valid? Or just sequential/parallel?
+        // Firebase handles concurrency well usually.
+        // Let's do chunks of 10.
+        const chunkSize = 10;
+
+        for (let i = 0; i < itemsToUpdate.length; i += chunkSize) {
+            const chunk = itemsToUpdate.slice(i, i + chunkSize);
+            await Promise.all(chunk.map(async (item) => {
+                try {
+                    await FirebaseService.updateLogItem(item.id, {
+                        reasoning: item.reasoning,
+                        answer: item.answer,
+                        score: item.score,
+                        isDuplicate: item.isDuplicate
+                    });
+                    successCount++;
+                } catch (e) {
+                    console.error("Update failed", item.id, e);
+                    failCount++;
+                }
+            }));
+        }
+
+        if (failCount > 0) {
+            toast.warning(`Updated ${successCount} items. Failed: ${failCount}`);
+        } else {
+            toast.success(`Updated ${successCount} items in DB.`);
+        }
+        setIsBulkUpdating(false);
+    };
+
+    const initiateDelete = (ids: string[]) => {
+        setItemsToDelete(ids);
+        setDeleteModalOpen(true);
+    };
+
+    const confirmDelete = async () => {
+        setIsDeleting(true);
+        try {
+            await Promise.all(itemsToDelete.map(id => FirebaseService.deleteLogItem(id)));
+
+            // Remove from local state
+            setData(prev => prev.filter(item => !itemsToDelete.includes(item.id)));
+            // filteredData updates automatically derived from data
+
+            // Clear selection of deleted items
+            setSelectedItemIds(prev => {
+                const next = new Set(prev);
+                itemsToDelete.forEach(id => next.delete(id));
+                return next;
+            });
+
+            setDeleteModalOpen(false);
+            setItemsToDelete([]);
+        } catch (e) {
+            console.error("Failed to delete items", e);
+            alert("Failed to delete items. See console for details.");
+        } finally {
+            setIsDeleting(false);
+        }
     };
 
     // --- Render Helpers ---
@@ -1157,6 +1711,29 @@ Based on the criteria above, provide a 1-5 score.`;
                                         />
                                     </div>
                                 </div>
+                                <div className="col-span-1 md:col-span-2 flex gap-4">
+                                    <div className="flex-1">
+                                        <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Concurrency</label>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            value={rewriterConfig.concurrency ?? 1}
+                                            onChange={e => setRewriterConfig(prev => ({ ...prev, concurrency: Math.max(1, parseInt(e.target.value) || 1) }))}
+                                            className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
+                                        />
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Batch Delay (ms)</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="100"
+                                            value={rewriterConfig.delayMs ?? 0}
+                                            onChange={e => setRewriterConfig(prev => ({ ...prev, delayMs: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                            className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-teal-500"
+                                        />
+                                    </div>
+                                </div>
                                 <div className="col-span-1 md:col-span-4">
                                     <details className="group">
                                         <summary className="flex items-center gap-2 cursor-pointer list-none text-[10px] text-slate-500 font-bold uppercase mb-1 select-none">
@@ -1285,6 +1862,123 @@ Based on the criteria above, provide a 1-5 score.`;
                     </div>
 
                     {/* Toolbar */}
+                    {/* Action Toolbar */}
+                    <div className="flex flex-wrap items-center justify-between gap-4 bg-teal-950/10 border border-teal-900/30 p-3 rounded-xl mb-4">
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 border-r border-teal-800/30 pr-4">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedItemIds.size > 0 && selectedItemIds.size === filteredData.length}
+                                    ref={input => { if (input) input.indeterminate = selectedItemIds.size > 0 && selectedItemIds.size < filteredData.length; }}
+                                    onChange={handleSelectAll}
+                                    className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-teal-500 focus:ring-offset-slate-900"
+                                />
+                                <span className="text-xs font-bold text-teal-400">
+                                    {selectedItemIds.size} Selected
+                                </span>
+                            </div>
+
+                            {/* Auto Save Toggle */}
+                            {dataSource === 'db' && (
+                                <div className="flex items-center gap-2 px-2 py-1 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Auto-Save</span>
+                                    <button
+                                        onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                                        className={`w-8 h-4 rounded-full relative transition-colors ${autoSaveEnabled ? 'bg-teal-600' : 'bg-slate-600'}`}
+                                        title="Automatically save changes to DB"
+                                    >
+                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${autoSaveEnabled ? 'left-4.5 translate-x-0' : 'left-0.5'}`} style={autoSaveEnabled ? { left: '1.125rem' } : {}} ></div>
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Rewrite Selected Dropdown */}
+                            <div className="relative group z-20">
+                                <button
+                                    onMouseEnter={(e) => e.stopPropagation()}
+                                    onClick={(e) => e.stopPropagation()}
+                                    disabled={isRewritingAll || selectedItemIds.size === 0}
+                                    className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${isRewritingAll ? 'bg-teal-600 text-white' : 'bg-teal-600/10 text-teal-500 hover:bg-teal-600/20'} disabled:opacity-50`}
+                                >
+                                    {isRewritingAll ? (
+                                        <>
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            Rewriting {rewriteProgress.current}/{rewriteProgress.total}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Edit3 className="w-3.5 h-3.5" />
+                                            Rewrite
+                                            <ChevronDown className="w-3 h-3" />
+                                        </>
+                                    )}
+                                </button>
+                                {!isRewritingAll && selectedItemIds.size > 0 && (
+                                    <div className="hidden group-hover:block absolute top-full left-0 pt-1 w-48 z-50">
+                                        <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+                                            <button onClick={() => handleBulkRewrite('query')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                                Query Only
+                                            </button>
+                                            <button onClick={() => handleBulkRewrite('reasoning')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                                Reasoning Only
+                                            </button>
+                                            <button onClick={() => handleBulkRewrite('answer')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                                Answer Only
+                                            </button>
+                                            <div className="h-px bg-slate-800 my-1"></div>
+                                            <button onClick={() => handleBulkRewrite('both')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-teal-400 hover:text-teal-300 font-bold transition-colors">
+                                                Rewrite Both
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Autoscore Selected */}
+                            <button
+                                onClick={handleAutoscoreSelected}
+                                disabled={isAutoscoring || selectedItemIds.size === 0}
+                                className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${isAutoscoring ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 text-emerald-500 hover:bg-emerald-600/20'} disabled:opacity-50`}
+                            >
+                                {isAutoscoring ? (
+                                    <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        Scoring {autoscoreProgress.current}/{autoscoreProgress.total}
+                                    </>
+                                ) : (
+                                    <>
+                                        <Star className="w-3.5 h-3.5" />
+                                        Autoscore
+                                    </>
+                                )}
+                            </button>
+
+                            {/* Update DB */}
+                            {dataSource === 'db' && (
+                                <>
+                                    <button
+                                        onClick={handleBulkDbUpdate}
+                                        disabled={selectedItemIds.size === 0 || isBulkUpdating}
+                                        className="flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
+                                    >
+                                        {isBulkUpdating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                                        {isBulkUpdating ? 'Updating...' : 'Update DB'}
+                                    </button>
+                                    <button
+                                        onClick={() => initiateDelete(Array.from(selectedItemIds))}
+                                        disabled={selectedItemIds.size === 0}
+                                        className="flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg bg-red-950/30 hover:bg-red-900/50 text-red-400 hover:text-red-300 border border-red-900/50 transition-colors disabled:opacity-50"
+                                        title="Permanently Delete Selected from DB"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        Delete
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Filter Main Toolbar */}
                     <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-950/50 p-3 rounded-xl border border-slate-800">
                         <div className="flex items-center gap-4">
                             <span className="text-sm font-bold text-slate-400 uppercase tracking-wide px-2 border-r border-slate-800">{filteredData.length} Items</span>
@@ -1305,24 +1999,6 @@ Based on the criteria above, provide a 1-5 score.`;
                                     <option value="5">5 Stars</option>
                                 </select>
                             </div>
-
-                            <button
-                                onClick={handleAutoscoreAll}
-                                disabled={isAutoscoring || filteredData.length === 0}
-                                className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${isAutoscoring ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 text-emerald-500 hover:bg-emerald-600/20'}`}
-                            >
-                                {isAutoscoring ? (
-                                    <>
-                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        Scoring {autoscoreProgress.current}/{autoscoreProgress.total}
-                                    </>
-                                ) : (
-                                    <>
-                                        <Star className="w-3.5 h-3.5" />
-                                        Autoscore All
-                                    </>
-                                )}
-                            </button>
                         </div>
 
                         <div className="flex items-center gap-2">
@@ -1350,6 +2026,7 @@ Based on the criteria above, provide a 1-5 score.`;
                     <div className={`grid gap-4 overflow-y-auto max-h-[600px] pr-2 ${viewMode === 'grid' ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'}`}>
                         {currentItems.map(item => (
                             <div key={item.id} className={`bg-slate-900 border relative group transition-all rounded-xl p-4 flex flex-col gap-3 ${item.isDuplicate ? 'border-amber-500/30' : 'border-slate-800 hover:border-teal-500/30'}`}>
+
                                 {item.isDuplicate && (
                                     <button
                                         onClick={() => toggleDuplicateStatus(item.id)}
@@ -1361,16 +2038,52 @@ Based on the criteria above, provide a 1-5 score.`;
                                 )}
 
                                 <div className="flex justify-between items-start">
-                                    <div className="flex gap-1">
-                                        {[1, 2, 3, 4, 5].map(star => (
-                                            <button key={star} onClick={() => setScore(item.id, star)} className="focus:outline-none transition-transform active:scale-90">
-                                                <Star className={`w-4 h-4 ${item.score >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
-                                            </button>
-                                        ))}
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedItemIds.has(item.id)}
+                                            onChange={() => toggleSelection(item.id)}
+                                            className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-teal-600 focus:ring-offset-slate-900 cursor-pointer"
+                                        />
+                                        <div className="flex gap-1">
+                                            {[1, 2, 3, 4, 5].map(star => (
+                                                <button key={star} onClick={() => setScore(item.id, star)} className="focus:outline-none transition-transform active:scale-90">
+                                                    <Star className={`w-4 h-4 ${item.score >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <button onClick={() => toggleDiscard(item.id)} className="text-slate-600 hover:text-red-400 transition-colors">
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
+                                    <div className="flex gap-2">
+                                        {dataSource === 'db' && (
+                                            <>
+                                                <button
+                                                    onClick={() => handleDbUpdate(item)}
+                                                    disabled={itemStates[item.id] === 'saving'}
+                                                    className={`transition-colors ${itemStates[item.id] === 'saved' ? 'text-emerald-500' : 'text-slate-600 hover:text-teal-400'}`}
+                                                    title={itemStates[item.id] === 'saved' ? "Saved!" : "Update in DB"}
+                                                >
+                                                    {itemStates[item.id] === 'saving' ? (
+                                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                                    ) : itemStates[item.id] === 'saved' ? (
+                                                        <Check className="w-4 h-4 animate-in zoom-in spin-in-180" />
+                                                    ) : (
+                                                        <Save className="w-4 h-4" />
+                                                    )}
+                                                </button>
+                                                <button onClick={() => handleDbRollback(item)} className="text-slate-600 hover:text-amber-400 transition-colors" title="Discard Changes (Reload from DB)">
+                                                    <RotateCcw className="w-4 h-4" />
+                                                </button>
+                                                <button onClick={() => initiateDelete([item.id])} className="text-slate-600 hover:text-red-500 transition-colors" title="Permanently Delete from DB">
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </>
+                                        )}
+                                        {dataSource !== 'db' && (
+                                            <button onClick={() => toggleDiscard(item.id)} className="text-slate-600 hover:text-red-400 transition-colors" title="Remove from list">
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
 
                                 {/* Query Section */}
@@ -1455,9 +2168,22 @@ Based on the criteria above, provide a 1-5 score.`;
                                                 onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
                                                 onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
                                                 onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
+                                                onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
                                                 editingIndex={editingField?.itemId === item.id && editingField.field === 'message' ? editingField.messageIndex : undefined}
                                                 editValue={editValue}
-                                                rewritingIndex={rewritingField?.itemId === item.id && rewritingField.field === 'message' ? rewritingField.messageIndex : undefined}
+                                                rewritingIndex={
+                                                    rewritingField?.itemId === item.id &&
+                                                        (rewritingField.field === 'message' || rewritingField.field === 'message_reasoning' || rewritingField.field === 'message_both' || rewritingField.field === 'message_query')
+                                                        ? rewritingField.messageIndex
+                                                        : undefined
+                                                }
+                                                streamingContent={rewritingField?.itemId === item.id ? streamingContent : undefined}
+                                                streamingField={
+                                                    rewritingField?.field === 'message_reasoning' ? 'reasoning' :
+                                                        rewritingField?.field === 'message' ? 'answer' :
+                                                            rewritingField?.field === 'message_both' ? 'both' :
+                                                                rewritingField?.field === 'message_query' ? 'query' : undefined
+                                                }
                                             />
                                         </div>
                                     </div>
@@ -1536,6 +2262,11 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     autoFocus
                                                     className="w-full bg-slate-900 border border-teal-500 rounded p-2 text-[10px] text-slate-400 font-mono resize-none min-h-[100px] outline-none"
                                                 />
+                                            ) : rewritingField?.itemId === item.id && rewritingField.field === 'reasoning' && streamingContent ? (
+                                                <div className="max-h-32 overflow-y-auto text-[10px] text-teal-300 font-mono animate-pulse">
+                                                    {streamingContent}
+                                                    <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                                </div>
                                             ) : (
                                                 <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
                                                     <ReasoningHighlighter text={item.reasoning} />
@@ -1572,6 +2303,13 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     autoFocus
                                                     className="w-full bg-slate-900 border border-teal-500 rounded p-2 text-[10px] text-slate-400 font-mono resize-none min-h-[80px] outline-none"
                                                 />
+                                            ) : rewritingField?.itemId === item.id && rewritingField.field === 'answer' && streamingContent ? (
+                                                <div className="max-h-32 overflow-y-auto">
+                                                    <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
+                                                        {streamingContent}
+                                                        <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                                    </p>
+                                                </div>
                                             ) : (
                                                 <div className="max-h-32 overflow-y-auto">
                                                     <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{item.answer}</p>
@@ -1694,6 +2432,43 @@ Based on the criteria above, provide a 1-5 score.`;
                             <button onClick={handleHfPush} disabled={isUploading} className="mt-4 bg-amber-600/10 hover:bg-amber-600/20 border border-amber-600/20 text-amber-400 py-2.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2">
                                 {isUploading ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                                 Push to Hub
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {deleteModalOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl shadow-2xl max-w-md w-full mx-4">
+                        <div className="flex items-center gap-3 mb-4 text-red-500">
+                            <div className="p-3 bg-red-500/10 rounded-full">
+                                <AlertTriangle className="w-6 h-6" />
+                            </div>
+                            <h3 className="text-lg font-bold text-white">Delete from Database?</h3>
+                        </div>
+
+                        <p className="text-slate-300 mb-6">
+                            Are you sure you want to permanently delete <span className="font-bold text-white">{itemsToDelete.length}</span> item{itemsToDelete.length !== 1 ? 's' : ''}?
+                            <br /><br />
+                            This action cannot be undone.
+                        </p>
+
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => setDeleteModalOpen(false)}
+                                className="px-4 py-2 text-sm font-bold text-slate-400 hover:text-white transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmDelete}
+                                disabled={isDeleting}
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                            >
+                                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                                {isDeleting ? 'Deleting...' : 'Delete Permanently'}
                             </button>
                         </div>
                     </div>
