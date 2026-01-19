@@ -224,7 +224,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
     // Reset pagination when filters or data change
     useEffect(() => {
         setCurrentPage(1);
-    }, [showDuplicatesOnly, filterScore, data.length]);
+    }, [showDuplicatesOnly, filterScore, showUnsavedOnly, data.length]);
 
     // Dynamically discover columns from loaded data
     useEffect(() => {
@@ -309,7 +309,8 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
             modelUsed: modelUsed,
             score: raw.score || 0,
             isDuplicate: false,
-            isDiscarded: false
+            isDiscarded: false,
+            hasUnsavedChanges: false
         };
     };
 
@@ -863,7 +864,7 @@ Expected Output Format:
             });
 
             if (autoSaveEnabled && dataSource === 'db') {
-                handleDbUpdate(updatedItem);
+                handleDbUpdate(finalItem);
             }
             toast.success('Query rewritten');
         } catch (error) {
@@ -917,6 +918,7 @@ Expected Output Format:
             const extracted = extractJsonFields(newValue);
             const finalAnswer = extracted.answer || newValue;
 
+            let updatedItem: VerifierItem | null = null;
             setData((prev: VerifierItem[]) => {
                 console.log('Updating data...');
                 return prev.map(i => {
@@ -944,12 +946,17 @@ Expected Output Format:
                             content: prefix + finalAnswer.trim()
                         };
                         console.log('Updated message:', newMessages[messageIndex]);
-                        return { ...i, messages: newMessages };
+                        updatedItem = { ...i, messages: newMessages, hasUnsavedChanges: true };
+                        return updatedItem;
                     }
                     return i;
                 });
             });
             console.log('Data updated successfully');
+
+            if (autoSaveEnabled && dataSource === 'db' && updatedItem) {
+                handleDbUpdate(updatedItem);
+            }
         } catch (error) {
             console.error("Rewrite failed:", error);
             toast.error("Rewrite failed. See console for details.");
@@ -1090,6 +1097,7 @@ Expected Output Format:
             const finalReasoning = extracted.reasoning || '';
             const finalAnswer = extracted.answer || rawResult;
 
+            let updatedItem: VerifierItem | null = null;
             setData((prev: VerifierItem[]) => {
                 const updated = prev.map(i => {
                     if (i.id === itemId && i.messages) {
@@ -1100,13 +1108,19 @@ Expected Output Format:
                             content: thinkTag + finalAnswer,
                             reasoning: finalReasoning
                         };
-                        return { ...i, messages: newMessages, hasUnsavedChanges: true };
+                        updatedItem = { ...i, messages: newMessages, hasUnsavedChanges: true };
+                        return updatedItem;
                     }
                     return i;
                 });
                 console.log('Updated data:', updated.find(x => x.id === itemId)?.messages?.[messageIndex]);
                 return updated;
             });
+            console.log('Data updated successfully');
+
+            if (autoSaveEnabled && dataSource === 'db' && updatedItem) {
+                handleDbUpdate(updatedItem);
+            }
             toast.success('Regenerated message reasoning and answer');
         } catch (error) {
             console.error("Both rewrite failed:", error);
@@ -1472,7 +1486,7 @@ Based on the criteria above, provide a 1-5 score.`;
                 try {
                     const score = await autoscoreSingleItem(item);
                     if (score > 0) {
-                        setData((prev: VerifierItem[]) => prev.map(i => i.id === item.id ? { ...i, score } : i));
+                        setData((prev: VerifierItem[]) => prev.map(i => i.id === item.id ? { ...i, score, hasUnsavedChanges: true } : i));
                     }
                 } catch (err) {
                     console.error(`Failed to score item ${item.id}:`, err);

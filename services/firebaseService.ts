@@ -14,7 +14,8 @@ export const fetchLogItem = async (logId: string): Promise<VerifierItem | null> 
             return {
                 ...docSnap.data(),
                 id: docSnap.id,
-                score: (docSnap.data() as any).score || 0
+                score: (docSnap.data() as any).score || 0,
+                hasUnsavedChanges: false
             } as VerifierItem;
         } else {
             return null;
@@ -488,6 +489,7 @@ export const fetchLogsAfter = async (options: {
             ...d.data(),
             id: d.id, // Use firestore ID
             score: 0, // Initialize score
+            hasUnsavedChanges: false, // Initialize unsaved changes flag
             _doc: d // Store internal doc reference for next cursor
         } as VerifierItem));
     } catch (e: any) {
@@ -500,7 +502,7 @@ export const fetchLogsAfter = async (options: {
 
             const qRetry = query(collection(db, 'synth_logs'), ...constraintsRetry);
             const snapRetry = await getDocs(qRetry);
-            const items = snapRetry.docs.map(d => ({ ...d.data(), id: d.id, score: 0 } as VerifierItem));
+            const items = snapRetry.docs.map(d => ({ ...d.data(), id: d.id, score: 0, hasUnsavedChanges: false } as VerifierItem));
             // Sort desc
             return items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         }
