@@ -11,6 +11,7 @@ export interface ExternalApiConfig {
   customBaseUrl?: string;
   systemPrompt: string;
   userPrompt: string;
+  messages?: any[]; // Allow passing full history
   signal?: AbortSignal;
   maxRetries?: number;
   retryDelay?: number;
@@ -20,10 +21,13 @@ export interface ExternalApiConfig {
   stream?: boolean;
   onStreamChunk?: StreamChunkCallback;
   streamPhase?: StreamPhase;
+  // Tool support
+  tools?: any[];
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Helper to parse SSE stream and extract content chunks
 // Helper to parse SSE stream and extract content chunks
 async function processStreamResponse(
   response: Response,
@@ -37,6 +41,10 @@ async function processStreamResponse(
   const decoder = new TextDecoder();
   let accumulated = '';
   let buffer = '';
+  let isReasoning = false;
+
+  // Track tool calls accumulation
+  let toolCalls: Record<number, { name: string, args: string, id?: string }> = {};
 
   try {
     while (true) {
@@ -60,9 +68,12 @@ async function processStreamResponse(
           try {
             const json = JSON.parse(trimmed.slice(6));
             let chunk = '';
+            let isReasoningChunk = false;
 
             if (provider === 'anthropic') {
               // Anthropic format: delta.text or content_block_delta
+              // Note: Anthropic uses a different stream event structure for tools (content_block_start etc).
+              // For simplicity, we assume this logic primarily targets OpenRouter/OpenAI-compatible endpoints where tools are passed directly via delta.tools_calls.
               if (json.type === 'content_block_delta') {
                 chunk = json.delta?.text || '';
               } else if (json.delta?.text) {
@@ -70,11 +81,58 @@ async function processStreamResponse(
               }
             } else {
               // OpenAI-compatible format
-              chunk = json.choices?.[0]?.delta?.content || '';
-              // Also handle reasoning_content for reasoning models
-              if (!chunk) {
-                chunk = json.choices?.[0]?.delta?.reasoning_content || '';
+              const delta = json.choices?.[0]?.delta;
+              if (delta) {
+                // Check for various reasoning field names
+                const reasoningVal = delta.reasoning_content || delta.reasoning;
+
+                // Check for tool calls
+                if (delta.tool_calls) {
+                  for (const tc of delta.tool_calls) {
+                    const idx = tc.index;
+                    if (!toolCalls[idx]) {
+                      toolCalls[idx] = { name: '', args: '', id: tc.id };
+                    }
+                    if (tc.function?.name) toolCalls[idx].name += tc.function.name;
+                    if (tc.function?.arguments) toolCalls[idx].args += tc.function.arguments;
+                  }
+                  // For streaming tool calls, we don't necessarily emit a text chunk immediately,
+                  // but we need to eventually serialize this into the returned "accumulated" string 
+                  // or let the parser handle it. 
+                  // Our current chat parser looks for <tool_call> JSON </tool_call>.
+                  // So we can synthesize this on the fly or just rely on the final object construction.
+                  // HOWEVER, `onChunk` expects (chunk, accumulated). 
+                  // We should probably serialise completed tool calls into the stream for the UI/Parser.
+
+                  // Simple approach: When we see tool calls, we don't output text chunks, 
+                  // but we append the construction to the accumulation at the end?
+                  // Actually, to make "streamResponse" return a single string compatible with our parser,
+                  // we should convert the tool calls to our internal XML format as they complete?
+                  // Or since we only return the final string, we can verify what "accumulated" means.
+                  // The UI updates based on 'accumulated'. If we want the UI to "see" the tool call happening, 
+                  // we might need to stream it.
+
+                  // But waiting until the end is safer for valid JSON.
+                } else if (reasoningVal) {
+                  chunk = reasoningVal;
+                  isReasoningChunk = true;
+                } else if (delta.content) {
+                  chunk = delta.content;
+                }
               }
+            }
+
+            // State transition logic for reasoning tags
+            if (isReasoningChunk && !isReasoning) {
+              const startTag = '<think>';
+              accumulated += startTag;
+              onChunk(startTag, accumulated);
+              isReasoning = true;
+            } else if (!isReasoningChunk && isReasoning && chunk) {
+              const endTag = '</think>';
+              accumulated += endTag;
+              onChunk(endTag, accumulated);
+              isReasoning = false;
             }
 
             if (chunk) {
@@ -92,6 +150,36 @@ async function processStreamResponse(
     reader.releaseLock();
   }
 
+  // Close reasoning tag if still open at end of stream
+  if (isReasoning) {
+    const endTag = '</think>';
+    accumulated += endTag;
+    onChunk(endTag, accumulated);
+  }
+
+  // Append collected tool calls to accumulated string in our internal format
+  // so that ChatService.parseResponse can pick them up cleanly.
+  // We utilize the <tool_call> format we defined.
+  const toolIndices = Object.keys(toolCalls).sort();
+  if (toolIndices.length > 0) {
+    for (const idx of toolIndices) {
+      const tc = toolCalls[Number(idx)];
+      try {
+        // Validate JSON if complete (optional, just raw dump is usually fine for our parser if valid)
+        // Construct our internal representation
+        const toolXml = `\n<tool_call>\n${JSON.stringify({ name: tc.name, arguments: JSON.parse(tc.args || '{}') }, null, 2)}\n</tool_call>\n`;
+        accumulated += toolXml;
+        onChunk(toolXml, accumulated);
+      } catch (e) {
+        console.warn("Failed to parse tool args at end of stream", tc.args);
+        // Dump raw if parsing fails, aiming for best effort
+        const rawXml = `\n<tool_call>\n{"name": "${tc.name}", "arguments": ${tc.args}}\n</tool_call>\n`;
+        accumulated += rawXml;
+        onChunk(rawXml, accumulated);
+      }
+    }
+  }
+
   return accumulated;
 }
 
@@ -99,7 +187,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   const {
     provider, apiKey, model, customBaseUrl, systemPrompt, userPrompt, signal,
     maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
-    stream = false, onStreamChunk, streamPhase
+    stream = false, onStreamChunk, streamPhase, tools
   } = config;
 
   let baseUrl = provider === 'other' ? customBaseUrl : PROVIDER_URLS[provider];
@@ -171,15 +259,18 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     };
   } else {
     url = baseUrl;
+    const finalMessages = config.messages || [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ];
+
     payload = {
       model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
+      messages: finalMessages,
       max_tokens: 8192,
-      response_format: { type: responseFormat },
+      response_format: structuredOutput ? { type: responseFormat } : undefined,
       stream: shouldStream,
+      ...(tools && tools.length > 0 ? { tools } : {}),
       ...cleanGenParams
     };
     // If temp was not provided in params, default to 0.8 if strictly needed,
@@ -248,8 +339,17 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         const message = choice?.message;
 
         let rawContent = message?.content;
-        if (!rawContent) {
+        if (!rawContent && !message?.tool_calls) {
           rawContent = message?.reasoning || message?.reasoning_content || "";
+        }
+
+        // Check for tool calls in non-streaming response
+        if (message?.tool_calls) {
+          // Append tool calls in our internal XML format
+          rawContent = rawContent || "";
+          for (const tc of message.tool_calls) {
+            rawContent += `\n<tool_call>\n${JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments) }, null, 2)}\n</tool_call>\n`;
+          }
         }
 
         if (!rawContent) {

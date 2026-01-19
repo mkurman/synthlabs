@@ -445,9 +445,18 @@ export const deleteSessionFromFirebase = async (id: string) => {
 // --- Verifier Functions ---
 
 export const fetchAllLogs = async (limitCount?: number, sessionUid?: string): Promise<VerifierItem[]> => {
+    return fetchLogsAfter({ limitCount, sessionUid });
+};
+
+export const fetchLogsAfter = async (options: {
+    limitCount?: number;
+    sessionUid?: string;
+    lastDoc?: any; // QueryDocumentSnapshot
+}): Promise<VerifierItem[]> => {
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
+        const { limitCount, sessionUid, lastDoc } = options;
         const constraints: any[] = [];
 
         // Filter by Session
@@ -456,12 +465,15 @@ export const fetchAllLogs = async (limitCount?: number, sessionUid?: string): Pr
         }
 
         // Ordering
-        // Note: Using 'orderBy' combined with 'where' on different fields requires a composite index in Firestore.
-        // To avoid breaking the app for users without indexes, we only orderBy createdAt if NO session filter is active,
-        // or we accept that an index creation link will appear in console.
-        // For safety/ease-of-use in this demo, we'll sort client-side if a specific session is requested to avoid index errors,
-        // unless it's a simple query.
         constraints.push(orderBy('createdAt', 'desc'));
+
+        // Pagination
+        if (lastDoc) {
+            // Lazy load startAfter (it's a function we need to import or use from existing imports if available)
+            // But we can just pass the doc snapshot directly to startAfter() query constraint
+            const { startAfter: startAfterFn } = await import('firebase/firestore');
+            constraints.push(startAfterFn(lastDoc));
+        }
 
         // Limit
         if (limitCount && limitCount > 0) {
@@ -475,15 +487,16 @@ export const fetchAllLogs = async (limitCount?: number, sessionUid?: string): Pr
         return snapshot.docs.map(d => ({
             ...d.data(),
             id: d.id, // Use firestore ID
-            score: 0 // Initialize score
+            score: 0, // Initialize score
+            _doc: d // Store internal doc reference for next cursor
         } as VerifierItem));
     } catch (e: any) {
         console.error("Error fetching logs", e);
-        // Fallback: If index is missing for orderBy, try fetching without sort and sort locally
-        if (e.code === 'failed-precondition' && sessionUid) {
+        // Fallback for missing index if no pagination needed yet or first page
+        if (e.code === 'failed-precondition' && options.sessionUid && !options.lastDoc) {
             logger.warn("Falling back to client-side sort due to missing Firestore index.");
-            const constraintsRetry: any[] = [where('sessionUid', '==', sessionUid)];
-            if (limitCount && limitCount > 0) constraintsRetry.push(limit(limitCount));
+            const constraintsRetry: any[] = [where('sessionUid', '==', options.sessionUid)];
+            if (options.limitCount && options.limitCount > 0) constraintsRetry.push(limit(options.limitCount));
 
             const qRetry = query(collection(db, 'synth_logs'), ...constraintsRetry);
             const snapRetry = await getDocs(qRetry);

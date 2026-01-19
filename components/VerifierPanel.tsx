@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
-    Upload, Database, AlertTriangle, Star, Trash2, CheckCircle2,
+    Upload, Database, AlertTriangle, AlertCircle, Star, Trash2, CheckCircle2,
     GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
     ShieldCheck, LayoutGrid, List, Search, Server, Plus,
     ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileType, MessageCircle,
@@ -17,7 +17,10 @@ import * as GeminiService from '../services/geminiService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
+import ChatPanel from './ChatPanel';
 import { PromptService } from '../services/promptService';
+import { ToolExecutor } from '../services/toolService';
+import AutoResizeTextarea from './AutoResizeTextarea';
 import { AutoscoreConfig } from '../types';
 import { toast } from '../services/toastService';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
@@ -25,9 +28,16 @@ import { extractJsonFields } from '../utils/jsonFieldExtractor';
 interface VerifierPanelProps {
     onImportFromDb: () => Promise<void>;
     currentSessionUid: string;
+    modelConfig: {
+        provider: 'gemini' | 'external';
+        externalProvider: ExternalProvider;
+        externalModel: string;
+        apiKey: string;
+        externalApiKey: string;
+    };
 }
 
-export default function VerifierPanel({ onImportFromDb, currentSessionUid }: VerifierPanelProps) {
+export default function VerifierPanel({ onImportFromDb, currentSessionUid, modelConfig }: VerifierPanelProps) {
     const [data, setData] = useState<VerifierItem[]>([]);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [dataSource, setDataSource] = useState<'file' | 'db' | null>(null);
@@ -35,8 +45,12 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
 
     // Import State
     const [importLimit, setImportLimit] = useState<number>(100);
-    const [isLimitEnabled, setIsLimitEnabled] = useState(true);
+    const [isLimitEnabled, setIsLimitEnabled] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+
+    // Chat Panel State
+    const [showChat, setShowChat] = useState(false);
+
     const [availableSessions, setAvailableSessions] = useState<FirebaseService.SavedSession[]>([]);
     const [isSyncing, setIsSyncing] = useState(false);  // Sync orphaned logs state
     const [isCheckingOrphans, setIsCheckingOrphans] = useState(false);  // Loading state for orphan check
@@ -65,6 +79,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
 
     // Dedupe State
     const [showDuplicatesOnly, setShowDuplicatesOnly] = useState(false);
+    const [showUnsavedOnly, setShowUnsavedOnly] = useState(false);
     const [filterScore, setFilterScore] = useState<number | null>(null); // null = all
 
     // Export State
@@ -135,6 +150,45 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const [autoscoreProgress, setAutoscoreProgress] = useState({ current: 0, total: 0 });
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const toolExecutorRef = useRef<ToolExecutor | null>(null);
+    const dataRef = useRef(data);
+    const setDataRef = useRef(setData);
+    const fetchMoreRef = useRef<any>(null);
+
+    // Sync refs
+    useEffect(() => {
+        dataRef.current = data;
+        setDataRef.current = setData;
+    }, [data]);
+
+    // Refs for ToolExecutor content access (must be declared at component level)
+    const autoSaveEnabledRef = useRef(autoSaveEnabled);
+    const handleDbUpdateRef = useRef<((item: VerifierItem) => Promise<void>) | null>(null);
+
+    // Sync refs on render
+    useEffect(() => {
+        fetchMoreRef.current = handleFetchMore;
+        autoSaveEnabledRef.current = autoSaveEnabled;
+        handleDbUpdateRef.current = handleDbUpdate;
+    });
+
+    // Initialize ToolExecutor
+    useEffect(() => {
+        if (!toolExecutorRef.current) {
+            toolExecutorRef.current = new ToolExecutor(() => ({
+                data: dataRef.current,
+                setData: setDataRef.current,
+                autoSaveEnabled: autoSaveEnabledRef.current,
+                handleDbUpdate: handleDbUpdateRef.current,
+                fetchMoreFromDb: async (start: number, end: number) => {
+                    if (fetchMoreRef.current) {
+                        return fetchMoreRef.current(start, end);
+                    }
+                    throw new Error("Fetch handler not ready");
+                }
+            }));
+        }
+    }, []);
 
     // Load available sessions when Import tab is active
     useEffect(() => {
@@ -362,6 +416,64 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         }
     };
 
+
+
+    const handleFetchMore = async (start: number, end: number) => {
+        if (!FirebaseService.isFirebaseConfigured()) {
+            toast.error("Firebase not configured.");
+            return;
+        }
+
+        setIsImporting(true);
+        try {
+            // Find the last item to use as cursor
+            const lastItem = data[data.length - 1];
+            const lastDoc = lastItem?._doc;
+
+            let sessionUidToUse: string | undefined = undefined;
+            if (selectedSessionFilter === 'current') {
+                sessionUidToUse = currentSessionUid;
+            } else if (selectedSessionFilter === 'custom') {
+                sessionUidToUse = customSessionId.trim();
+            } else if (selectedSessionFilter !== 'all') {
+                sessionUidToUse = selectedSessionFilter;
+            }
+
+            // Calculate needed items
+            // If explicit start/end via tool, we might need logic, but for UI button we usually just fetch 'pageSize' more
+            // For tool compatibility: the tool is asking for index X to Y.
+            // If we have items up to index Z, and X > Z, we need to fetch.
+            // But we can only fetch APPENDING to the end. We cannot invoke random access startAt(X).
+            // So we just fetch next batch using fetchLogsAfter with lastDoc.
+
+            const limitToFetch = (end && start) ? (end - start) : (importLimit || 100);
+
+            const newItems = await FirebaseService.fetchLogsAfter({
+                limitCount: limitToFetch,
+                sessionUid: sessionUidToUse,
+                lastDoc: lastDoc
+            });
+
+            if (newItems.length === 0) {
+                toast.info("No more items to fetch.");
+                return;
+            }
+
+            // Append to data
+            setData(prev => {
+                const next = [...prev, ...newItems];
+                analyzeDuplicates(next); // Re-analyze duplicates with new data
+                return next;
+            });
+            toast.success(`Fetched ${newItems.length} more items.`);
+
+        } catch (e: any) {
+            toast.error("Fetch more failed: " + e.message);
+        } finally {
+            setIsImporting(false);
+        }
+    };
+
     // --- Logic: Sync Orphaned Logs ---
 
     const handleSyncOrphanedLogs = async () => {
@@ -431,6 +543,16 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
         setData((prev: VerifierItem[]) => {
             const next = prev.map(i => ({ ...i })); // Shallow copy
             analyzeDuplicates(next);
+
+            // Check for changes in duplicate status
+            if (next.length === prev.length) {
+                for (let i = 0; i < next.length; i++) {
+                    if (next[i].isDuplicate !== prev[i].isDuplicate || next[i].duplicateGroupId !== prev[i].duplicateGroupId) {
+                        next[i].hasUnsavedChanges = true;
+                    }
+                }
+            }
+
             return next;
         });
     };
@@ -438,7 +560,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
     const toggleDuplicateStatus = (id: string) => {
         setData((prev: VerifierItem[]) => prev.map(item => {
             if (item.id === id) {
-                return { ...item, isDuplicate: !item.isDuplicate };
+                return { ...item, isDuplicate: !item.isDuplicate, hasUnsavedChanges: true };
             }
             return item;
         }));
@@ -471,17 +593,21 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
             }
         });
 
-        setData((prev: VerifierItem[]) => prev.map(item => idsToDiscard.has(item.id) ? { ...item, isDiscarded: true } : item));
+        setData((prev: VerifierItem[]) => prev.map(item =>
+            idsToDiscard.has(item.id)
+                ? { ...item, isDiscarded: true, hasUnsavedChanges: true }
+                : item
+        ));
     };
 
     // --- Logic: Review ---
 
     const setScore = (id: string, score: number) => {
-        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, score } : i));
+        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, score, hasUnsavedChanges: true } : i));
     };
 
     const toggleDiscard = (id: string) => {
-        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, isDiscarded: !i.isDiscarded } : i));
+        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, isDiscarded: !i.isDiscarded, hasUnsavedChanges: true } : i));
     };
 
     // --- Logic: Export ---
@@ -539,6 +665,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                 answer: item.answer,
                 // Note: 'score' and 'isDiscarded' are verifier-only fields, not part of the raw synth_log schema
             });
+            setData(prev => prev.map(i => i.id === item.id ? { ...i, hasUnsavedChanges: false } : i));
             setItemStates(prev => ({ ...prev, [item.id]: 'saved' }));
             setTimeout(() => {
                 setItemStates(prev => ({ ...prev, [item.id]: 'idle' }));
@@ -565,7 +692,8 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                 const restoredItem = {
                     ...freshItem,
                     isDuplicate: item.isDuplicate,        // Keep duplicate status (local analysis)
-                    duplicateGroupId: item.duplicateGroupId
+                    duplicateGroupId: item.duplicateGroupId,
+                    hasUnsavedChanges: false
                 };
 
                 setData((prev: VerifierItem[]) => prev.map(i => i.id === item.id ? restoredItem : i));
@@ -635,6 +763,10 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid }: Ver
                 } else if (['query', 'reasoning', 'answer'].includes(editingField.field)) {
                     newItem = { ...item, [editingField.field]: editValue };
                 }
+
+                // Mark as unsaved
+                newItem.hasUnsavedChanges = true;
+
                 updatedItem = newItem;
                 return newItem;
             }
@@ -723,8 +855,11 @@ Expected Output Format:
                 updatedItem.messages = newMessages;
             }
 
+
+
+            const finalItem = { ...updatedItem, hasUnsavedChanges: true };
             setData((prev: VerifierItem[]) => {
-                return prev.map(i => i.id === itemId ? updatedItem : i);
+                return prev.map(i => i.id === itemId ? finalItem : i);
             });
 
             if (autoSaveEnabled && dataSource === 'db') {
@@ -889,9 +1024,10 @@ Expected Output Format:
                 updatedItem.messages = newMessages;
             }
 
+            const finalUpdatedItem = { ...updatedItem, hasUnsavedChanges: true };
             setData((prev: VerifierItem[]) => {
                 console.log('Updating data...');
-                return prev.map(i => i.id === itemId ? updatedItem : i);
+                return prev.map(i => i.id === itemId ? finalUpdatedItem : i);
             });
             console.log('Data updated successfully');
 
@@ -964,7 +1100,7 @@ Expected Output Format:
                             content: thinkTag + finalAnswer,
                             reasoning: finalReasoning
                         };
-                        return { ...i, messages: newMessages };
+                        return { ...i, messages: newMessages, hasUnsavedChanges: true };
                     }
                     return i;
                 });
@@ -1037,7 +1173,7 @@ Expected Output Format:
                 finalValue = extracted.answer || newValue;
             }
 
-            const updatedItem = { ...itemForRewrite, [field]: finalValue };
+            const updatedItem = { ...itemForRewrite, [field]: finalValue, hasUnsavedChanges: true };
 
             setData((prev: VerifierItem[]) => prev.map(i =>
                 i.id === itemId
@@ -1105,7 +1241,7 @@ Expected Output Format:
             // If we only have answer key (mapped from 'response'), assume it's Reasoning (since we asked for reasoning rewrite primarily).
             const finalAnswer = (extracted.reasoning && extracted.answer) ? extracted.answer : item.answer;
 
-            const updatedItem = { ...item, reasoning: finalReasoning, answer: finalAnswer };
+            const updatedItem = { ...item, reasoning: finalReasoning, answer: finalAnswer, hasUnsavedChanges: true };
 
             setData((prev: VerifierItem[]) => prev.map(i =>
                 i.id === itemId
@@ -1248,7 +1384,7 @@ Based on the criteria above, provide a 1-5 score.`;
                         const finalAnswer = (extracted.reasoning && extracted.answer) ? extracted.answer : item.answer;
 
                         setData((prev: VerifierItem[]) => prev.map(i =>
-                            i.id === item.id ? { ...i, reasoning: finalReasoning, answer: finalAnswer } : i
+                            i.id === item.id ? { ...i, reasoning: finalReasoning, answer: finalAnswer, hasUnsavedChanges: true } : i
                         ));
                     } else {
                         // Single field: Reasoning or Answer
@@ -1274,7 +1410,7 @@ Based on the criteria above, provide a 1-5 score.`;
                         }
 
                         // Prepare updated item for state and auto-save
-                        const updatedItem = { ...item, [mode]: finalValue };
+                        const updatedItem = { ...item, [mode]: finalValue, hasUnsavedChanges: true };
 
                         setData((prev: VerifierItem[]) => prev.map(i =>
                             i.id === item.id ? updatedItem : i
@@ -1441,12 +1577,16 @@ Based on the criteria above, provide a 1-5 score.`;
 
     const filteredData = useMemo(() => {
         return data.filter(item => {
-            if (item.isDiscarded) return false;
+            // If showing unsaved only, allow discarded items if they have changes
+            // Otherwise, hide discarded items
+            if (item.isDiscarded && !(showUnsavedOnly && item.hasUnsavedChanges)) return false;
+
+            if (showUnsavedOnly && !item.hasUnsavedChanges) return false;
             if (showDuplicatesOnly && !item.isDuplicate) return false;
             if (filterScore !== null && item.score !== filterScore) return false;
             return true;
         });
-    }, [data, showDuplicatesOnly, filterScore]);
+    }, [data, showDuplicatesOnly, filterScore, showUnsavedOnly]);
 
     // Pagination Logic
     const totalPages = Math.ceil(filteredData.length / pageSize);
@@ -1987,6 +2127,10 @@ Based on the criteria above, provide a 1-5 score.`;
                                 <GitBranch className="w-3.5 h-3.5" /> Duplicates
                             </button>
 
+                            <button onClick={() => setShowUnsavedOnly(!showUnsavedOnly)} className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${showUnsavedOnly ? 'bg-orange-500/20 text-orange-400' : 'text-slate-500 hover:text-white'}`}>
+                                <AlertCircle className="w-3.5 h-3.5" /> Unsaved
+                            </button>
+
                             <div className="flex items-center gap-2">
                                 <Filter className="w-3.5 h-3.5 text-slate-500" />
                                 <select value={filterScore === null ? 'all' : filterScore} onChange={e => setFilterScore(e.target.value === 'all' ? null : Number(e.target.value))} className="bg-slate-900 border border-slate-700 text-xs text-slate-300 rounded px-2 py-1 outline-none">
@@ -2017,184 +2161,104 @@ Based on the criteria above, provide a 1-5 score.`;
                                 <option value="100">100 / page</option>
                             </select>
                             <div className="h-4 w-px bg-slate-800 mx-2"></div>
+                            <button
+                                onClick={() => setShowChat(!showChat)}
+                                className={`p-1.5 rounded transition-colors ${showChat ? 'bg-purple-600 text-white' : 'text-slate-500 hover:text-purple-400'}`}
+                                title="Toggle AI Assistant"
+                            >
+                                <Sparkles className="w-4 h-4" />
+                            </button>
+                            <div className="h-4 w-px bg-slate-800 mx-2"></div>
                             <button onClick={() => setViewMode('list')} className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-teal-600 text-white' : 'text-slate-500'}`}><List className="w-4 h-4" /></button>
                             <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-teal-600 text-white' : 'text-slate-500'}`}><LayoutGrid className="w-4 h-4" /></button>
                         </div>
                     </div>
 
-                    {/* Grid / List */}
-                    <div className={`grid gap-4 overflow-y-auto max-h-[600px] pr-2 ${viewMode === 'grid' ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'}`}>
-                        {currentItems.map(item => (
-                            <div key={item.id} className={`bg-slate-900 border relative group transition-all rounded-xl p-4 flex flex-col gap-3 ${item.isDuplicate ? 'border-amber-500/30' : 'border-slate-800 hover:border-teal-500/30'}`}>
+                    {/* Content Area with Chat Split View */}
+                    {/* Content Area with Chat Split View */}
+                    <div className="flex gap-4 h-[calc(100vh-220px)] min-h-[500px]">
+                        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                            <div className={`flex-1 overflow-y-auto pr-2 grid gap-4 ${viewMode === 'grid' ? 'grid-cols-2 lg:grid-cols-3 content-start' : 'grid-cols-1 content-start'}`}>
 
-                                {item.isDuplicate && (
-                                    <button
-                                        onClick={() => toggleDuplicateStatus(item.id)}
-                                        className="absolute top-2 right-2 text-amber-500 hover:text-amber-400 transition-colors z-10"
-                                        title="Duplicate Detected. Click to unmark."
-                                    >
-                                        <AlertTriangle className="w-4 h-4" />
-                                    </button>
-                                )}
+                                {currentItems.map(item => (
+                                    <div key={item.id} className={`bg-slate-900 border relative group transition-all rounded-xl p-4 flex flex-col gap-3 ${item.hasUnsavedChanges
+                                        ? 'border-orange-500/80 shadow-[0_0_15px_-3px_rgba(249,115,22,0.3)]'
+                                        : item.isDuplicate
+                                            ? 'border-amber-500/30'
+                                            : 'border-slate-800 hover:border-teal-500/30'
+                                        }`}>
 
-                                <div className="flex justify-between items-start">
-                                    <div className="flex items-center gap-3">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedItemIds.has(item.id)}
-                                            onChange={() => toggleSelection(item.id)}
-                                            className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-teal-600 focus:ring-offset-slate-900 cursor-pointer"
-                                        />
-                                        <div className="flex gap-1">
-                                            {[1, 2, 3, 4, 5].map(star => (
-                                                <button key={star} onClick={() => setScore(item.id, star)} className="focus:outline-none transition-transform active:scale-90">
-                                                    <Star className={`w-4 h-4 ${item.score >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        {dataSource === 'db' && (
-                                            <>
-                                                <button
-                                                    onClick={() => handleDbUpdate(item)}
-                                                    disabled={itemStates[item.id] === 'saving'}
-                                                    className={`transition-colors ${itemStates[item.id] === 'saved' ? 'text-emerald-500' : 'text-slate-600 hover:text-teal-400'}`}
-                                                    title={itemStates[item.id] === 'saved' ? "Saved!" : "Update in DB"}
-                                                >
-                                                    {itemStates[item.id] === 'saving' ? (
-                                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                                    ) : itemStates[item.id] === 'saved' ? (
-                                                        <Check className="w-4 h-4 animate-in zoom-in spin-in-180" />
-                                                    ) : (
-                                                        <Save className="w-4 h-4" />
-                                                    )}
-                                                </button>
-                                                <button onClick={() => handleDbRollback(item)} className="text-slate-600 hover:text-amber-400 transition-colors" title="Discard Changes (Reload from DB)">
-                                                    <RotateCcw className="w-4 h-4" />
-                                                </button>
-                                                <button onClick={() => initiateDelete([item.id])} className="text-slate-600 hover:text-red-500 transition-colors" title="Permanently Delete from DB">
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </>
-                                        )}
-                                        {dataSource !== 'db' && (
-                                            <button onClick={() => toggleDiscard(item.id)} className="text-slate-600 hover:text-red-400 transition-colors" title="Remove from list">
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* Query Section */}
-                                <div className="flex-1 min-h-0">
-                                    <div className="flex items-center justify-between mb-1">
-                                        <h4 className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
-                                            Query
-                                            {item.isMultiTurn && <MessageCircle className="w-3 h-3 text-cyan-400" />}
-                                        </h4>
-                                        <div className="flex items-center gap-1">
-                                            {editingField?.itemId === item.id && editingField.field === 'query' ? (
-                                                <>
-                                                    <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
-                                                        <Check className="w-3 h-3" />
-                                                    </button>
-                                                    <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
-                                                        <X className="w-3 h-3" />
-                                                    </button>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <button onClick={() => startEditing(item.id, 'query', item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
-                                                        <Edit3 className="w-3 h-3" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleFieldRewrite(item.id, 'query')}
-                                                        disabled={rewritingField?.itemId === item.id && rewritingField.field === 'query'}
-                                                        className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
-                                                        title="AI Rewrite"
-                                                    >
-                                                        {rewritingField?.itemId === item.id && rewritingField.field === 'query' ? (
-                                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                                        ) : (
-                                                            <RotateCcw className="w-3 h-3" />
-                                                        )}
-                                                    </button>
-                                                </>
-                                            )}
-                                        </div>
-                                    </div>
-                                    {editingField?.itemId === item.id && editingField.field === 'query' ? (
-                                        <textarea
-                                            value={editValue}
-                                            onChange={e => setEditValue(e.target.value)}
-                                            onBlur={saveEditing}
-                                            autoFocus
-                                            className="w-full bg-slate-900 border border-teal-500 rounded p-2 text-xs text-slate-200 font-medium resize-none min-h-[60px] outline-none"
-                                        />
-                                    ) : (
-                                        <p className="text-xs text-slate-200 line-clamp-2 font-medium">{item.query || (item as any).QUERY || item.full_seed || '(No query)'}</p>
-                                    )}
-                                </div>
-
-                                {/* Multi-turn Conversation View */}
-                                {item.isMultiTurn && item.messages && item.messages.length > 0 ? (
-                                    <div className="bg-slate-950/30 p-3 rounded border border-cyan-800/30 my-2">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <h4 className="text-[10px] uppercase font-bold text-cyan-500 flex items-center gap-1">
-                                                <MessageCircle className="w-3 h-3" /> Conversation ({item.messages.length} messages)
-                                            </h4>
+                                        {item.isDuplicate && (
                                             <button
-                                                onClick={() => toggleConversationExpand(item.id)}
-                                                className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-cyan-400 transition-colors uppercase font-bold"
+                                                onClick={() => toggleDuplicateStatus(item.id)}
+                                                className="absolute top-2 right-2 text-amber-500 hover:text-amber-400 transition-colors z-10"
+                                                title="Duplicate Detected. Click to unmark."
                                             >
-                                                {expandedConversations.has(item.id) ? (
-                                                    <><Minimize2 className="w-3 h-3" /> Collapse</>
-                                                ) : (
-                                                    <><Maximize2 className="w-3 h-3" /> Expand</>
-                                                )}
+                                                <AlertTriangle className="w-4 h-4" />
                                             </button>
+                                        )}
+
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex items-center gap-3">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedItemIds.has(item.id)}
+                                                    onChange={() => toggleSelection(item.id)}
+                                                    className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-teal-600 focus:ring-offset-slate-900 cursor-pointer"
+                                                />
+                                                <span className="text-[10px] font-mono text-slate-500 bg-slate-800/50 px-1.5 py-0.5 rounded border border-slate-700/50" title="Index in dataset (0-based)">
+                                                    #{data.indexOf(item)}
+                                                </span>
+                                                <div className="flex gap-1">
+                                                    {[1, 2, 3, 4, 5].map(star => (
+                                                        <button key={star} onClick={() => setScore(item.id, star)} className="focus:outline-none transition-transform active:scale-90">
+                                                            <Star className={`w-4 h-4 ${item.score >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {dataSource === 'db' && (
+                                                    <>
+                                                        <button
+                                                            onClick={() => handleDbUpdate(item)}
+                                                            disabled={itemStates[item.id] === 'saving'}
+                                                            className={`transition-colors ${itemStates[item.id] === 'saved' ? 'text-emerald-500' : 'text-slate-600 hover:text-teal-400'}`}
+                                                            title={itemStates[item.id] === 'saved' ? "Saved!" : "Update in DB"}
+                                                        >
+                                                            {itemStates[item.id] === 'saving' ? (
+                                                                <Loader2 className="w-4 h-4 animate-spin" />
+                                                            ) : itemStates[item.id] === 'saved' ? (
+                                                                <Check className="w-4 h-4 animate-in zoom-in spin-in-180" />
+                                                            ) : (
+                                                                <Save className="w-4 h-4" />
+                                                            )}
+                                                        </button>
+                                                        <button onClick={() => handleDbRollback(item)} className="text-slate-600 hover:text-amber-400 transition-colors" title="Discard Changes (Reload from DB)">
+                                                            <RotateCcw className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => initiateDelete([item.id])} className="text-slate-600 hover:text-red-500 transition-colors" title="Permanently Delete from DB">
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </>
+                                                )}
+                                                {dataSource !== 'db' && (
+                                                    <button onClick={() => toggleDiscard(item.id)} className="text-slate-600 hover:text-red-400 transition-colors" title="Remove from list">
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
-                                        <div className={expandedConversations.has(item.id) ? '' : 'max-h-48 overflow-y-auto'}>
-                                            <ConversationView
-                                                messages={item.messages}
-                                                onEditStart={(idx, content) => {
-                                                    setEditingField({ itemId: item.id, field: 'message', messageIndex: idx, originalValue: content });
-                                                    setEditValue(content);
-                                                }}
-                                                onEditSave={saveEditing}
-                                                onEditCancel={cancelEditing}
-                                                onEditChange={setEditValue}
-                                                onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
-                                                onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
-                                                onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
-                                                onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
-                                                editingIndex={editingField?.itemId === item.id && editingField.field === 'message' ? editingField.messageIndex : undefined}
-                                                editValue={editValue}
-                                                rewritingIndex={
-                                                    rewritingField?.itemId === item.id &&
-                                                        (rewritingField.field === 'message' || rewritingField.field === 'message_reasoning' || rewritingField.field === 'message_both' || rewritingField.field === 'message_query')
-                                                        ? rewritingField.messageIndex
-                                                        : undefined
-                                                }
-                                                streamingContent={rewritingField?.itemId === item.id ? streamingContent : undefined}
-                                                streamingField={
-                                                    rewritingField?.field === 'message_reasoning' ? 'reasoning' :
-                                                        rewritingField?.field === 'message' ? 'answer' :
-                                                            rewritingField?.field === 'message_both' ? 'both' :
-                                                                rewritingField?.field === 'message_query' ? 'query' : undefined
-                                                }
-                                            />
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <>
-                                        {/* Reasoning Section */}
-                                        <div className="bg-slate-950/30 p-2 rounded border border-slate-800/50 my-2">
+
+                                        {/* Query Section */}
+                                        <div className="flex-1 min-h-0">
                                             <div className="flex items-center justify-between mb-1">
-                                                <h4 className="text-[10px] uppercase font-bold text-slate-500">Reasoning Trace</h4>
-                                                <div className="flex items-center gap-1 relative">
-                                                    {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                <h4 className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                                                    Query
+                                                    {item.isMultiTurn && <MessageCircle className="w-3 h-3 text-cyan-400" />}
+                                                </h4>
+                                                <div className="flex items-center gap-1">
+                                                    {editingField?.itemId === item.id && editingField.field === 'query' ? (
                                                         <>
                                                             <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
                                                                 <Check className="w-3 h-3" />
@@ -2205,170 +2269,292 @@ Based on the criteria above, provide a 1-5 score.`;
                                                         </>
                                                     ) : (
                                                         <>
-                                                            <button onClick={() => startEditing(item.id, 'reasoning', item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                            <button onClick={() => startEditing(item.id, 'query', item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
                                                                 <Edit3 className="w-3 h-3" />
                                                             </button>
-                                                            <div className="relative">
-                                                                <button
-                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(showRegenerateDropdown === item.id ? null : item.id); }}
-                                                                    disabled={rewritingField?.itemId === item.id}
-                                                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
-                                                                    title="AI Regenerate"
-                                                                >
-                                                                    {rewritingField?.itemId === item.id ? (
-                                                                        <Loader2 className="w-3 h-3 animate-spin" />
-                                                                    ) : (
-                                                                        <Sparkles className="w-3 h-3" />
-                                                                    )}
-                                                                </button>
-                                                                {showRegenerateDropdown === item.id && (
-                                                                    <div
-                                                                        className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 py-1 min-w-[140px]"
-                                                                        onClick={(e) => e.stopPropagation()}
-                                                                    >
-                                                                        <button
-                                                                            onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'reasoning'); }}
-                                                                            className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
-                                                                        >
-                                                                            <RotateCcw className="w-3 h-3" /> Reasoning Only
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'answer'); }}
-                                                                            className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
-                                                                        >
-                                                                            <RotateCcw className="w-3 h-3" /> Answer Only
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleBothRewrite(item.id); }}
-                                                                            className="w-full px-3 py-2 text-left text-xs text-teal-400 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700"
-                                                                        >
-                                                                            <Sparkles className="w-3 h-3" /> Both Together
-                                                                        </button>
-                                                                    </div>
+                                                            <button
+                                                                onClick={() => handleFieldRewrite(item.id, 'query')}
+                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === 'query'}
+                                                                className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                                title="AI Rewrite"
+                                                            >
+                                                                {rewritingField?.itemId === item.id && rewritingField.field === 'query' ? (
+                                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                                ) : (
+                                                                    <RotateCcw className="w-3 h-3" />
                                                                 )}
-                                                            </div>
-                                                            {showRegenerateDropdown === item.id && (
-                                                                <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {editingField?.itemId === item.id && editingField.field === 'query' ? (
+                                                <AutoResizeTextarea
+                                                    value={editValue}
+                                                    onChange={e => setEditValue(e.target.value)}
+                                                    onBlur={saveEditing}
+                                                    autoFocus
+                                                    className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[60px]"
+                                                    placeholder="Enter query..."
+                                                />
+                                            ) : (<p className="text-xs text-slate-200 line-clamp-2 font-medium">{item.query || (item as any).QUERY || item.full_seed || '(No query)'}</p>
+                                            )}
+                                        </div>
+
+                                        {/* Multi-turn Conversation View */}
+                                        {item.isMultiTurn && item.messages && item.messages.length > 0 ? (
+                                            <div className="bg-slate-950/30 p-3 rounded border border-cyan-800/30 my-2">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <h4 className="text-[10px] uppercase font-bold text-cyan-500 flex items-center gap-1">
+                                                        <MessageCircle className="w-3 h-3" /> Conversation ({item.messages.length} messages)
+                                                    </h4>
+                                                    <button
+                                                        onClick={() => toggleConversationExpand(item.id)}
+                                                        className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-cyan-400 transition-colors uppercase font-bold"
+                                                    >
+                                                        {expandedConversations.has(item.id) ? (
+                                                            <><Minimize2 className="w-3 h-3" /> Collapse</>
+                                                        ) : (
+                                                            <><Maximize2 className="w-3 h-3" /> Expand</>
+                                                        )}
+                                                    </button>
+                                                </div>
+                                                <div className={expandedConversations.has(item.id) ? '' : 'max-h-48 overflow-y-auto'}>
+                                                    <ConversationView
+                                                        messages={item.messages}
+                                                        onEditStart={(idx, content) => {
+                                                            setEditingField({ itemId: item.id, field: 'message', messageIndex: idx, originalValue: content });
+                                                            setEditValue(content);
+                                                        }}
+                                                        onEditSave={saveEditing}
+                                                        onEditCancel={cancelEditing}
+                                                        onEditChange={setEditValue}
+                                                        onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
+                                                        onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
+                                                        onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
+                                                        onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
+                                                        editingIndex={editingField?.itemId === item.id && editingField.field === 'message' ? editingField.messageIndex : undefined}
+                                                        editValue={editValue}
+                                                        rewritingIndex={
+                                                            rewritingField?.itemId === item.id &&
+                                                                (rewritingField.field === 'message' || rewritingField.field === 'message_reasoning' || rewritingField.field === 'message_both' || rewritingField.field === 'message_query')
+                                                                ? rewritingField.messageIndex
+                                                                : undefined
+                                                        }
+                                                        streamingContent={rewritingField?.itemId === item.id ? streamingContent : undefined}
+                                                        streamingField={
+                                                            rewritingField?.field === 'message_reasoning' ? 'reasoning' :
+                                                                rewritingField?.field === 'message' ? 'answer' :
+                                                                    rewritingField?.field === 'message_both' ? 'both' :
+                                                                        rewritingField?.field === 'message_query' ? 'query' : undefined
+                                                        }
+                                                    />
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                {/* Reasoning Section */}
+                                                <div className="bg-slate-950/30 p-2 rounded border border-slate-800/50 my-2">
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <h4 className="text-[10px] uppercase font-bold text-slate-500">Reasoning Trace</h4>
+                                                        <div className="flex items-center gap-1 relative">
+                                                            {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                                <>
+                                                                    <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                                        <Check className="w-3 h-3" />
+                                                                    </button>
+                                                                    <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                                        <X className="w-3 h-3" />
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <button onClick={() => startEditing(item.id, 'reasoning', item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                        <Edit3 className="w-3 h-3" />
+                                                                    </button>
+                                                                    <div className="relative">
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(showRegenerateDropdown === item.id ? null : item.id); }}
+                                                                            disabled={rewritingField?.itemId === item.id}
+                                                                            className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                                            title="AI Regenerate"
+                                                                        >
+                                                                            {rewritingField?.itemId === item.id ? (
+                                                                                <Loader2 className="w-3 h-3 animate-spin" />
+                                                                            ) : (
+                                                                                <Sparkles className="w-3 h-3" />
+                                                                            )}
+                                                                        </button>
+                                                                        {showRegenerateDropdown === item.id && (
+                                                                            <div
+                                                                                className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 py-1 min-w-[140px]"
+                                                                                onClick={(e) => e.stopPropagation()}
+                                                                            >
+                                                                                <button
+                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'reasoning'); }}
+                                                                                    className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                                >
+                                                                                    <RotateCcw className="w-3 h-3" /> Reasoning Only
+                                                                                </button>
+                                                                                <button
+                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'answer'); }}
+                                                                                    className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                                >
+                                                                                    <RotateCcw className="w-3 h-3" /> Answer Only
+                                                                                </button>
+                                                                                <button
+                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleBothRewrite(item.id); }}
+                                                                                    className="w-full px-3 py-2 text-left text-xs text-teal-400 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700"
+                                                                                >
+                                                                                    <Sparkles className="w-3 h-3" /> Both Together
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                    {showRegenerateDropdown === item.id && (
+                                                                        <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
+                                                                    )}
+                                                                </>
                                                             )}
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
-                                                <textarea
-                                                    value={editValue}
-                                                    onChange={e => setEditValue(e.target.value)}
-                                                    onBlur={saveEditing}
-                                                    autoFocus
-                                                    className="w-full bg-slate-900 border border-teal-500 rounded p-2 text-[10px] text-slate-400 font-mono resize-none min-h-[100px] outline-none"
-                                                />
-                                            ) : rewritingField?.itemId === item.id && rewritingField.field === 'reasoning' && streamingContent ? (
-                                                <div className="max-h-32 overflow-y-auto text-[10px] text-teal-300 font-mono animate-pulse">
-                                                    {streamingContent}
-                                                    <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
-                                                </div>
-                                            ) : (
-                                                <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
-                                                    <ReasoningHighlighter text={item.reasoning} />
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {/* Answer Section */}
-                                        <div className="bg-slate-950/50 p-2 rounded border border-slate-800/50">
-                                            <div className="flex items-center justify-between mb-1">
-                                                <h4 className="text-[10px] uppercase font-bold text-slate-500">Answer Preview</h4>
-                                                <div className="flex items-center gap-1">
-                                                    {editingField?.itemId === item.id && editingField.field === 'answer' ? (
-                                                        <>
-                                                            <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
-                                                                <Check className="w-3 h-3" />
-                                                            </button>
-                                                            <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
-                                                                <X className="w-3 h-3" />
-                                                            </button>
-                                                        </>
+                                                        </div>
+                                                    </div>
+                                                    {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                        <AutoResizeTextarea
+                                                            value={editValue}
+                                                            onChange={e => setEditValue(e.target.value)}
+                                                            onBlur={saveEditing}
+                                                            autoFocus
+                                                            className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[100px] font-mono text-xs"
+                                                        />
+                                                    ) : (rewritingField?.itemId === item.id && rewritingField.field === 'reasoning' && streamingContent ? (
+                                                        <div className="max-h-32 overflow-y-auto text-[10px] text-teal-300 font-mono animate-pulse">
+                                                            {streamingContent}
+                                                            <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                                        </div>
                                                     ) : (
-                                                        <button onClick={() => startEditing(item.id, 'answer', item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
-                                                            <Edit3 className="w-3 h-3" />
-                                                        </button>
+                                                        <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
+                                                            <ReasoningHighlighter text={item.reasoning} />
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {/* Answer Section */}
+                                                <div className="bg-slate-950/50 p-2 rounded border border-slate-800/50">
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <h4 className="text-[10px] uppercase font-bold text-slate-500">Answer Preview</h4>
+                                                        <div className="flex items-center gap-1">
+                                                            {editingField?.itemId === item.id && editingField.field === 'answer' ? (
+                                                                <>
+                                                                    <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                                        <Check className="w-3 h-3" />
+                                                                    </button>
+                                                                    <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                                        <X className="w-3 h-3" />
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <button onClick={() => startEditing(item.id, 'answer', item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                    <Edit3 className="w-3 h-3" />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    {editingField?.itemId === item.id && editingField.field === 'answer' ? (
+                                                        <AutoResizeTextarea
+                                                            value={editValue}
+                                                            onChange={e => setEditValue(e.target.value)}
+                                                            onBlur={saveEditing}
+                                                            autoFocus
+                                                            className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[80px]"
+                                                        />
+                                                    ) : rewritingField?.itemId === item.id && rewritingField.field === 'answer' && streamingContent ? (
+                                                        <div className="max-h-32 overflow-y-auto">
+                                                            <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
+                                                                {streamingContent}
+                                                                <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                                            </p>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="max-h-32 overflow-y-auto">
+                                                            <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{item.answer}</p>
+                                                        </div>
                                                     )}
                                                 </div>
-                                            </div>
-                                            {editingField?.itemId === item.id && editingField.field === 'answer' ? (
-                                                <textarea
-                                                    value={editValue}
-                                                    onChange={e => setEditValue(e.target.value)}
-                                                    onBlur={saveEditing}
-                                                    autoFocus
-                                                    className="w-full bg-slate-900 border border-teal-500 rounded p-2 text-[10px] text-slate-400 font-mono resize-none min-h-[80px] outline-none"
-                                                />
-                                            ) : rewritingField?.itemId === item.id && rewritingField.field === 'answer' && streamingContent ? (
-                                                <div className="max-h-32 overflow-y-auto">
-                                                    <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
-                                                        {streamingContent}
-                                                        <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
-                                                    </p>
-                                                </div>
-                                            ) : (
-                                                <div className="max-h-32 overflow-y-auto">
-                                                    <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{item.answer}</p>
-                                                </div>
-                                            )}
+                                            </>
+                                        )}
+
+                                        <div className="flex justify-between items-center text-[10px] text-slate-600 border-t border-slate-800/50 pt-2 mt-1">
+                                            <span className="truncate max-w-[150px]">{item.modelUsed}</span>
+                                            {item.deepMetadata && <span className="bg-teal-900/20 text-teal-400 px-1.5 py-0.5 rounded">Deep</span>}
                                         </div>
-                                    </>
-                                )}
-
-                                <div className="flex justify-between items-center text-[10px] text-slate-600 border-t border-slate-800/50 pt-2 mt-1">
-                                    <span className="truncate max-w-[150px]">{item.modelUsed}</span>
-                                    {item.deepMetadata && <span className="bg-teal-900/20 text-teal-400 px-1.5 py-0.5 rounded">Deep</span>}
-                                </div>
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
 
-                    {/* Pagination Controls */}
-                    {totalPages > 1 && (
-                        <div className="flex items-center justify-center gap-4 mt-2 p-3 bg-slate-900/50 rounded-xl border border-slate-800">
-                            <button
-                                onClick={() => setCurrentPage(1)}
-                                disabled={currentPage === 1}
-                                className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
-                                title="First Page"
-                            >
-                                <ChevronsLeft className="w-5 h-5" />
-                            </button>
-                            <button
-                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                disabled={currentPage === 1}
-                                className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
-                                title="Previous Page"
-                            >
-                                <ChevronLeft className="w-5 h-5" />
-                            </button>
 
-                            <span className="text-xs font-mono text-slate-400">
-                                Page <span className="text-white font-bold">{currentPage}</span> of {totalPages}
-                            </span>
+                            {/* Fetch More Button for DB */}
+                            {dataSource === 'db' && (
+                                <div className="flex justify-center p-4 mt-2 border-t border-slate-800 bg-slate-900/50 rounded-xl">
+                                    <button
+                                        onClick={() => handleFetchMore(0, 0)}
+                                        className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors border border-slate-700"
+                                        disabled={isImporting}
+                                    >
+                                        {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                                        <span>Fetch More Rows</span>
+                                    </button>
+                                </div>
+                            )}
 
-                            <button
-                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                disabled={currentPage === totalPages}
-                                className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
-                                title="Next Page"
-                            >
-                                <ChevronRight className="w-5 h-5" />
-                            </button>
-                            <button
-                                onClick={() => setCurrentPage(totalPages)}
-                                disabled={currentPage === totalPages}
-                                className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
-                                title="Last Page"
-                            >
-                                <ChevronsRight className="w-5 h-5" />
-                            </button>
+                            {/* Pagination Controls */}
+                            {totalPages > 1 && (
+                                <div className="flex items-center justify-center gap-4 mt-2 p-3 bg-slate-900/50 rounded-xl border border-slate-800">
+                                    <button
+                                        onClick={() => setCurrentPage(1)}
+                                        disabled={currentPage === 1}
+                                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
+                                        title="First Page"
+                                    >
+                                        <ChevronsLeft className="w-5 h-5" />
+                                    </button>
+                                    <button
+                                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                        disabled={currentPage === 1}
+                                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
+                                        title="Previous Page"
+                                    >
+                                        <ChevronLeft className="w-5 h-5" />
+                                    </button>
+
+                                    <span className="text-xs font-mono text-slate-400">
+                                        Page <span className="text-white font-bold">{currentPage}</span> of {totalPages}
+                                    </span>
+
+                                    <button
+                                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                        disabled={currentPage === totalPages}
+                                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
+                                        title="Next Page"
+                                    >
+                                        <ChevronRight className="w-5 h-5" />
+                                    </button>
+                                    <button
+                                        onClick={() => setCurrentPage(totalPages)}
+                                        disabled={currentPage === totalPages}
+                                        className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
+                                        title="Last Page"
+                                    >
+                                        <ChevronsRight className="w-5 h-5" />
+                                    </button>
+                                </div>
+                            )}
                         </div>
-                    )}
+                        {showChat && (
+                            <div className="w-[400px] shrink-0 h-full border-l border-slate-800/50 pl-4">
+                                <ChatPanel data={data} setData={setData} modelConfig={modelConfig} toolExecutor={toolExecutorRef.current || undefined} />
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 

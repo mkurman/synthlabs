@@ -2481,6 +2481,13 @@ export default function App() {
                     <VerifierPanel
                         onImportFromDb={async () => { /* Managed internally by VerifierPanel but could be lifted */ }}
                         currentSessionUid={sessionUid}
+                        modelConfig={{
+                            provider: provider,
+                            externalProvider: externalProvider,
+                            externalModel: externalModel,
+                            apiKey: provider === 'external' ? externalApiKey : '', // Or handle appropriately
+                            externalApiKey: externalApiKey
+                        }}
                     />
                 </main>
             ) : (

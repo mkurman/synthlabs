@@ -1,9 +1,12 @@
 
 // ChatML Message Structure for multi-turn conversations
+// ChatML Message Structure for multi-turn conversations
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'model' | 'tool'; // Added model/tool for agentic chat
   content: string;
   reasoning?: string; // For assistant messages, store the thinking trace
+  toolCalls?: any[]; // For tool usage history
+  toolCallId?: string; // For tool results
 }
 
 export interface SynthLogItem {
@@ -58,6 +61,8 @@ export interface VerifierItem extends SynthLogItem {
   duplicateGroupId?: string;
   isDiscarded?: boolean;
   verifiedTimestamp?: string;
+  _doc?: any; // Firestore QueryDocumentSnapshot for cursor-based pagination
+  hasUnsavedChanges?: boolean; // UI-only flag
 }
 
 export type ProviderType = 'gemini' | 'external';

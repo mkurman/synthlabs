@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings, Edit3, RotateCcw, Check, X, Loader2 } from 'lucide-react';
 import { ChatMessage } from '../types';
 import ReasoningHighlighter from './ReasoningHighlighter';
+import AutoResizeTextarea from './AutoResizeTextarea';
 
 interface ConversationViewProps {
     messages: ChatMessage[];
@@ -266,10 +267,10 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                 )}
 
                                 {isEditing ? (
-                                    <textarea
-                                        value={editValue}
+                                    <AutoResizeTextarea
+                                        value={editValue || ''}
                                         onChange={e => onEditChange?.(e.target.value)}
-                                        className="w-full bg-slate-900/50 border border-cyan-500/50 rounded p-2 text-inherit resize-none outline-none min-h-[100px]"
+                                        className="w-full bg-slate-900/50 border border-cyan-500/50 rounded p-2 text-inherit outline-none min-h-[100px]"
                                         autoFocus
                                     />
                                 ) : rewritingIndex === idx && streamingContent && (streamingField === 'answer' || streamingField === 'both' || streamingField === 'query') ? (

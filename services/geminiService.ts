@@ -87,6 +87,40 @@ function cleanAndParseJSON(text: string | undefined): any {
   }
 }
 
+// ... (existing generateGeminiTopic)
+
+export const generateContentStream = async (
+  prompt: string,
+  model: string,
+  onChunk: (chunk: string, accumulated: string) => void,
+  abortSignal?: AbortSignal
+): Promise<string> => {
+  if (!API_KEY) throw new Error("Missing Gemini API Key");
+
+  try {
+    const result = await ai.models.generateContentStream({
+      model: model,
+      contents: prompt,
+    });
+
+    let accumulated = '';
+    for await (const chunk of result.stream) {
+      if (abortSignal?.aborted) {
+        throw new Error('Aborted by user');
+      }
+      const text = chunk.text();
+      if (text) {
+        accumulated += text;
+        onChunk(text, accumulated);
+      }
+    }
+    return accumulated;
+  } catch (error) {
+    console.error("Gemini Streaming Error", error);
+    throw error;
+  }
+};
+
 export const generateGeminiTopic = async (category: string, model?: string): Promise<string> => {
   if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
 
