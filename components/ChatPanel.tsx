@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-    Bot, Loader2, Sparkles,
-    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2
+    Bot, Sparkles,
+    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, Brain
 } from 'lucide-react';
 import { ChatService, ChatMessage } from '../services/chatService';
 import { ChatStorageService } from '../services/chatStorageService';
@@ -60,13 +60,13 @@ const ToolCallView = ({ toolCall, result }: { toolCall: any, result?: string }) 
     const isCompleted = result !== undefined;
 
     return (
-        <div className="my-2 border border-slate-700/50 rounded-lg overflow-hidden bg-slate-900/30">
+        <div className="my-2 border border-slate-700/50 rounded-lg overflow-hidden bg-slate-900/30 w-full">
             {/* Header */}
             <div
-                className="flex items-center justify-between p-2 cursor-pointer hover:bg-slate-800/50 transition-colors"
+                className="flex items-center justify-between p-2 cursor-pointer hover:bg-slate-800/50 transition-colors w-full"
                 onClick={() => setIsCollapsed(!isCollapsed)}
             >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full">
                     {isCollapsed ? <ChevronRight size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
                     <span className="font-bold text-xs text-slate-200">{toolCall.name}</span>
                 </div>
@@ -133,6 +133,18 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
     const [showHistory, setShowHistory] = useState(false);
     const [historySessions, setHistorySessions] = useState<{ id: string, title: string, updatedAt: number }[]>([]);
+
+    // Scroll State
+    const [autoScroll, setAutoScroll] = useState(true);
+    const [showScrollButton, setShowScrollButton] = useState(false);
+    const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+    // Continue Button State
+    const [showContinueButton, setShowContinueButton] = useState(false);
+
+    // Usage Tracking State
+    const [totalTokens, setTotalTokens] = useState(0);
+    const [totalCost, setTotalCost] = useState(0);
 
     // Model Selection State
     const [activeModel, setActiveModel] = useState({
@@ -305,9 +317,59 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
-    useEffect(() => {
+    const handleScrollToBottom = () => {
         scrollToBottom();
+        setAutoScroll(true);
+        setShowScrollButton(false);
+    };
+
+    const checkIfNearBottom = () => {
+        const container = messagesContainerRef.current;
+        if (!container) return true;
+
+        const threshold = 50;
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+        return isNearBottom;
+    };
+
+    useEffect(() => {
+        if (autoScroll) {
+            scrollToBottom();
+        }
     }, [messages]);
+
+    useEffect(() => {
+        const container = messagesContainerRef.current;
+        if (!container) return;
+
+        const handleScroll = () => {
+            const isNearBottom = checkIfNearBottom();
+            setAutoScroll(isNearBottom);
+        };
+
+        container.addEventListener('scroll', handleScroll);
+        return () => container.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    useEffect(() => {
+        if (messages.length > 0 && !autoScroll && !isStreaming) {
+            setShowScrollButton(true);
+        } else if (autoScroll || isStreaming) {
+            setShowScrollButton(false);
+        }
+    }, [messages.length, autoScroll, isStreaming]);
+
+    // Show Continue button when streaming finishes and there are messages
+    useEffect(() => {
+        setShowContinueButton(!isStreaming && messages.length > 0);
+    }, [isStreaming, messages.length]);
+
+    // Hide Continue button when user types in input
+    useEffect(() => {
+        if (input.trim()) {
+            setShowContinueButton(false);
+        }
+    }, [input]);
 
     // State for abort controller
     const abortControllerRef = useRef<AbortController | null>(null);
@@ -322,6 +384,9 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         const newHistory = [...messages, { role: 'user', content: userMsg } as ChatMessage];
         setMessages(newHistory);
         chatServiceRef.current.addUserMessage(userMsg);
+
+        // Hide continue button when sending new message
+        setShowContinueButton(false);
 
         // Reset abort controller
         if (abortControllerRef.current) {
@@ -348,6 +413,33 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         setIsStreaming(false);
     };
 
+    const handleContinue = async () => {
+        if (isStreaming || !chatServiceRef.current) return;
+
+        const continueMsg = 'continue';
+        setIsStreaming(true);
+
+        const newHistory = [...messages, { role: 'user', content: continueMsg } as ChatMessage];
+        setMessages(newHistory);
+        chatServiceRef.current.addUserMessage(continueMsg);
+
+        // Reset abort controller
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortController();
+
+        try {
+            await processTurn();
+        } catch (e) {
+            console.error(e);
+            setMessages(prev => [...prev, { role: 'model', content: "Error: " + String(e) } as ChatMessage]);
+        } finally {
+            setIsStreaming(false);
+            abortControllerRef.current = null;
+        }
+    };
+
     const processTurn = async () => {
         // Use prop executor or local ref
         const executor = toolExecutor || toolExecutorRef.current;
@@ -363,13 +455,21 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             let fullText = "";
             let thinking = "";
 
-            await chatServiceRef.current.streamResponse(
+                await chatServiceRef.current.streamResponse(
                 activeModel,
                 toolsEnabled,
-                (_chunk, accumulated) => {
+                (_chunk, accumulated, usage) => {
+                    console.log('ChatPanel streamResponse callback - chunk length:', _chunk?.length || 0, 'accumulated length:', accumulated?.length || 0, 'usage:', usage);
                     fullText = accumulated;
                     const { thinking: think, content, toolCalls } = ChatService.parseResponse(accumulated);
                     thinking = think || '';
+
+                    // Track usage if available
+                    if (usage) {
+                        console.log('Updating totals - tokens:', usage.total_tokens, 'cost:', usage.cost);
+                        setTotalTokens(prev => prev + (usage.total_tokens || 0));
+                        setTotalCost(prev => prev + (usage.cost || 0));
+                    }
 
                     setMessages(prev => {
                         const next = [...prev];
@@ -459,7 +559,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
         return (
             <div key={idx} className={`flex gap-3 my-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className={`flex flex-col gap-2 max-w-[100%] ${isUser ? 'items-end' : 'items-start'}`}>
+                <div className={`flex flex-col gap-2 w-full ${isUser ? 'items-end' : 'items-start'}`}>
                     {isModel && msg.reasoning && (
                         <div className="w-full max-w-xl">
                             <ReasoningAccordion content={msg.reasoning} />
@@ -487,7 +587,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
                     {/* Only render text bubble if there is content or if it's currently streaming */}
                     {(msg.content?.trim() || (isStreaming && idx === messages.length - 1)) && (
-                        <div className={`relative group px-4 py-2 rounded-2xl whitespace-pre-wrap break-words break-all ${isUser
+                        <div className={`relative group px-4 py-2 rounded-2xl text-[14px] whitespace-pre-wrap break-words break-all ${isUser
                             ? 'bg-blue-600 text-white'
                             : 'bg-slate-800 text-slate-200 border border-slate-700'
                             }`}>
@@ -530,7 +630,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     };
 
     return (
-        <div className="flex flex-col h-full bg-slate-950 border-l border-slate-800 w-[400px]">
+        <div className="flex flex-col h-full bg-slate-950 border-l border-slate-800 w-[400px] relative">
             {/* Header */}
             <div className="h-14 border-b border-slate-800 flex items-center justify-between px-4 bg-slate-900/50">
                 <div className="flex items-center gap-2 text-slate-200 font-medium">
@@ -592,7 +692,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar" ref={messagesContainerRef}>
                 {messages.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-0 animate-in fade-in zoom-in duration-500">
                         <h2 className="text-3xl font-serif text-slate-200 mb-2">Hi, how are you?</h2>
@@ -600,11 +700,11 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                     </div>
                 ) : (
                     messages.map((msg, idx) => {
-                        // We skip rendering tool outputs directly as they are embedded in the tool call view
+                        // We skip rendering tool outputs directly as they are embedded in tool call view
                         if (msg.role === 'tool') return null;
 
                         return (
-                            <div key={idx}>
+                            <div key={idx} className="w-full">
                                 {renderMessage(msg, idx)}
                             </div>
                         );
@@ -612,6 +712,44 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                 )}
                 <div ref={messagesEndRef} />
             </div>
+
+            {/* Scroll to Bottom Button - Outside scrollable area, absolute to panel */}
+            {showScrollButton && (
+                <div className="bottom-4 flex justify-center bg-transparent">
+                    <button
+                        onClick={handleScrollToBottom}
+                        className='w-max-[50%] w-[50%] bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-full shadow-lg shadow-purple-500/30 flex items-center gap-2 text-sm font-medium animate-in fade-in slide-in-from-bottom-4 transition-all hover:scale-105 z-20'
+                        title="Scroll to bottom"
+                    >
+                        <ArrowDown size={16} />
+                        New messages
+                    </button>
+                </div>
+            )}
+
+            {/* Continue Button */}
+            {showContinueButton && (
+                <div className="flex justify-end py-2 pr-4">
+                    <button
+                        onClick={handleContinue}
+                        className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-md shadow-lg flex items-center gap-2 text-xs font-medium transition-all hover:scale-105"
+                        title="Continue generation"
+                    >
+                        Continue
+                    </button>
+                </div>
+            )}
+
+            {/* Usage Info */}
+            {(totalTokens > 0 || totalCost > 0) && (
+                <div className="px-4 py-2 border-t border-slate-800 bg-slate-950">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span>{totalTokens.toLocaleString()} tokens used</span>
+                        <span>${totalCost.toFixed(4)} spent</span>
+                    </div>
+                </div>
+            )}
+
             {/* Input */}
             <div className="p-4 border-t border-slate-800 bg-slate-900/30">
                 <div className="relative bg-slate-900 border border-slate-700 rounded-xl focus-within:ring-1 focus-within:ring-purple-500 focus-within:border-purple-500 transition-all">
@@ -729,10 +867,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 }
 
 function ReasoningAccordion({ content }: { content: string }) {
-    const [isOpen, setIsOpen] = useState(false); // Default collapsed
-
-    // Auto-expand if content is very short or just starting? 
-    // Usually collapsed is better to reduce noise.
+    const [isOpen, setIsOpen] = useState(false);
 
     return (
         <div className="mb-2 border border-slate-700/50 rounded-lg overflow-hidden bg-slate-900/30">
@@ -740,8 +875,9 @@ function ReasoningAccordion({ content }: { content: string }) {
                 onClick={() => setIsOpen(!isOpen)}
                 className="w-full h-7 flex items-center gap-2 px-3 text-xs text-slate-400 hover:text-slate-300 hover:bg-slate-800/50 transition-colors"
             >
-                {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                <span className="font-mono uppercase tracking-wider text-[10px]">Reasoning Process</span>
+                <Brain size={14} className="text-purple-400" />
+                <span className="font-mono uppercase tracking-wider text-[10px]">thinking</span>
+                {isOpen ? <ChevronDown size={12} /> : null}
                 {content.length > 0 && <span className="ml-auto opacity-50">{content.length} chars</span>}
             </button>
 

@@ -23,6 +23,8 @@ export interface ExternalApiConfig {
   streamPhase?: StreamPhase;
   // Tool support
   tools?: any[];
+  // Optional max tokens (omit to let model use default/maximum)
+  maxTokens?: number;
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -32,9 +34,10 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function processStreamResponse(
   response: Response,
   provider: ExternalProvider,
-  onChunk: (chunk: string, accumulated: string) => void,
+  onChunk: (chunk: string, accumulated: string, usage?: any) => void,
   signal?: AbortSignal
 ): Promise<string> {
+  console.log('🔴 externalApiService: processStreamResponse STARTED');
   const reader = response.body?.getReader();
   if (!reader) throw new Error('No response body for streaming');
 
@@ -46,8 +49,13 @@ async function processStreamResponse(
   // Track tool calls accumulation
   let toolCalls: Record<number, { name: string, args: string, id?: string }> = {};
 
+  // Track usage data
+  let usageData: any = null;
+
+  let chunkCount = 0;
   try {
     while (true) {
+      chunkCount++;
       if (signal?.aborted) {
         reader.cancel();
         throw new DOMException('Aborted', 'AbortError');
@@ -64,11 +72,32 @@ async function processStreamResponse(
         const trimmed = line.trim();
         if (!trimmed || trimmed === 'data: [DONE]') continue;
 
-        if (trimmed.startsWith('data: ')) {
+        // Handle SSE format: "message\t{json}" or "data: {json}"
+        let dataStart = trimmed.startsWith('data: ') ? 6 : -1;
+        if (dataStart === -1) {
+          // Try to find "data: " after "message\t" prefix
+          const messagePrefix = 'message\t';
+          if (trimmed.startsWith(messagePrefix)) {
+            dataStart = trimmed.indexOf('data: ');
+            if (dataStart !== -1) {
+              dataStart = dataStart + 6; // Skip past "data: "
+            }
+          }
+        }
+
+        if (dataStart !== -1) {
           try {
-            const json = JSON.parse(trimmed.slice(6));
+            const json = JSON.parse(trimmed.slice(dataStart));
+            console.log('externalApiService: Parsed JSON chunk, has usage:', !!json.usage);
+
             let chunk = '';
             let isReasoningChunk = false;
+
+            // Capture usage data if present
+            if (json.usage) {
+              usageData = json.usage;
+              console.log('externalApiService: Captured usage data:', usageData);
+            }
 
             if (provider === 'anthropic') {
               // Anthropic format: delta.text or content_block_delta
@@ -126,18 +155,19 @@ async function processStreamResponse(
             if (isReasoningChunk && !isReasoning) {
               const startTag = '<think>';
               accumulated += startTag;
-              onChunk(startTag, accumulated);
+              onChunk(startTag, accumulated, usageData);
               isReasoning = true;
             } else if (!isReasoningChunk && isReasoning && chunk) {
               const endTag = '</think>';
               accumulated += endTag;
-              onChunk(endTag, accumulated);
+              onChunk(endTag, accumulated, usageData);
               isReasoning = false;
             }
 
-            if (chunk) {
-              accumulated += chunk;
-              onChunk(chunk, accumulated);
+            if (chunk || usageData) {
+              if (chunk) accumulated += chunk;
+              console.log('externalApiService: calling onChunk with chunk length:', chunk?.length || 0, 'usage:', usageData);
+              onChunk(chunk, accumulated, usageData);
             }
           } catch (e) {
             // Skip malformed JSON lines
@@ -169,17 +199,18 @@ async function processStreamResponse(
         // Construct our internal representation
         const toolXml = `\n<tool_call>\n${JSON.stringify({ name: tc.name, arguments: JSON.parse(tc.args || '{}') }, null, 2)}\n</tool_call>\n`;
         accumulated += toolXml;
-        onChunk(toolXml, accumulated);
+        onChunk(toolXml, accumulated, usageData);
       } catch (e) {
         console.warn("Failed to parse tool args at end of stream", tc.args);
         // Dump raw if parsing fails, aiming for best effort
         const rawXml = `\n<tool_call>\n{"name": "${tc.name}", "arguments": ${tc.args}}\n</tool_call>\n`;
         accumulated += rawXml;
-        onChunk(rawXml, accumulated);
+        onChunk(rawXml, accumulated, usageData);
       }
     }
   }
 
+  console.log('🔴 externalApiService: Stream finished, total chunks:', chunkCount, 'final usage:', usageData);
   return accumulated;
 }
 
@@ -249,7 +280,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     url = `${baseUrl}/messages`;
     payload = {
       model,
-      max_tokens: 8192,
+      ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
       temperature: cleanGenParams.temperature ?? 0.8,
@@ -267,7 +298,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     payload = {
       model,
       messages: finalMessages,
-      max_tokens: 8192,
+      ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       response_format: structuredOutput ? { type: responseFormat } : undefined,
       stream: shouldStream,
       ...(tools && tools.length > 0 ? { tools } : {}),
@@ -313,7 +344,10 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         const rawContent = await processStreamResponse(
           response,
           provider,
-          (chunk, accumulated) => onStreamChunk!(chunk, accumulated, streamPhase),
+          (chunk, accumulated, usage) => {
+            console.log('externalApiService callExternalApi wrapper - usage:', usage);
+            onStreamChunk!(chunk, accumulated, streamPhase, usage);
+          },
           signal
         );
 

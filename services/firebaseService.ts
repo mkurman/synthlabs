@@ -520,7 +520,8 @@ export const saveFinalDataset = async (items: VerifierItem[], collectionName = '
         let count = 0;
         for (const item of items) {
             const docRef = doc(coll); // Auto ID
-            const { id, isDuplicate, duplicateGroupId, isDiscarded, ...dataToSave } = item; // Strip internal flags, keep data
+            // Strip internal flags and non-serializable fields, keep data
+            const { id, isDuplicate, duplicateGroupId, isDiscarded, _doc, hasUnsavedChanges, ...dataToSave } = item;
             batch.set(docRef, {
                 ...dataToSave,
                 verifiedAt: new Date().toISOString(),

@@ -654,11 +654,53 @@ export default function App() {
         }
     };
 
-    const handleConfigChange = (newConfig: string) => {
+    const handleConfigChange = async (newConfig: string) => {
         const splits = hfStructure.splits[newConfig] || [];
         const newSplit = splits.includes('train') ? 'train' : (splits[0] || '');
-        setHfConfig({ ...hfConfig, config: newConfig, split: newSplit });
+        const updatedConfig = { ...hfConfig, config: newConfig, split: newSplit };
+        setHfConfig(updatedConfig);
         setAvailableColumns([]);
+
+        // Refresh preview data and columns for the new config/split
+        if (hfConfig.dataset) {
+            setIsLoadingHfPreview(true);
+            try {
+                const [previewRows, datasetInfo] = await Promise.all([
+                    fetchHuggingFaceRows(updatedConfig, 0, 5),
+                    getDatasetInfo(hfConfig.dataset, newConfig, newSplit)
+                ]);
+                setHfPreviewData(previewRows);
+                setHfTotalRows(datasetInfo.totalRows);
+                prefetchColumns(updatedConfig);
+            } catch (e) {
+                console.error('Failed to refresh HF preview on config change:', e);
+            } finally {
+                setIsLoadingHfPreview(false);
+            }
+        }
+    };
+
+    const handleSplitChange = async (newSplit: string) => {
+        const updatedConfig = { ...hfConfig, split: newSplit };
+        setHfConfig(updatedConfig);
+
+        // Refresh preview data and columns for the new split
+        if (hfConfig.dataset && hfConfig.config) {
+            setIsLoadingHfPreview(true);
+            try {
+                const [previewRows, datasetInfo] = await Promise.all([
+                    fetchHuggingFaceRows(updatedConfig, 0, 5),
+                    getDatasetInfo(hfConfig.dataset, hfConfig.config, newSplit)
+                ]);
+                setHfPreviewData(previewRows);
+                setHfTotalRows(datasetInfo.totalRows);
+                prefetchColumns(updatedConfig);
+            } catch (e) {
+                console.error('Failed to refresh HF preview on split change:', e);
+            } finally {
+                setIsLoadingHfPreview(false);
+            }
+        }
     };
 
     const handleDataSourceModeChange = (mode: 'synthetic' | 'huggingface' | 'manual') => {
@@ -1137,7 +1179,7 @@ export default function App() {
             const { extractJsonFields } = await import('./utils/jsonFieldExtractor');
 
             // Initialize streaming conversation state
-            const initStreamingState = (totalMessages: number, userMessage?: string): StreamingConversationState => ({
+            const initStreamingState = (totalMessages: number, userMessage?: string, isSinglePrompt: boolean = false): StreamingConversationState => ({
                 id: generationId,
                 phase: 'waiting_for_response',
                 currentMessageIndex: 0,
@@ -1147,7 +1189,8 @@ export default function App() {
                 currentReasoning: '',
                 currentAnswer: '',
                 useOriginalAnswer: false,
-                rawAccumulated: ''
+                rawAccumulated: '',
+                isSinglePrompt
             });
 
             // Progressive streaming callback that parses JSON fields
@@ -1346,6 +1389,11 @@ export default function App() {
                         enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
                     }
 
+                    // Initialize streaming state for regular mode (non-chat input)
+                    const regularStreamState = initStreamingState(1, promptInput, true);
+                    streamingConversationsRef.current.set(generationId, regularStreamState);
+                    setStreamingConversations(new Map(streamingConversationsRef.current));
+
                     result = await ExternalApiService.callExternalApi({
                         provider: externalProvider,
                         apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
@@ -1412,6 +1460,12 @@ export default function App() {
 
                 // REMOVED: Intelligent Sync. We now strictly respect the deepConfig.phases.writer.systemPrompt
                 // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
+
+                // Initialize streaming state for deep mode (non-chat input)
+                const deepStreamState = initStreamingState(1, inputPayload, true);
+                streamingConversationsRef.current.set(generationId, deepStreamState);
+                setStreamingConversations(new Map(streamingConversationsRef.current));
+
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
                     originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
@@ -3021,7 +3075,7 @@ export default function App() {
                                     {/* ... (HF Config Inputs) ... */}
                                     <div className="flex gap-2">
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Config</label>{hfStructure.configs.length > 0 ? (<select value={hfConfig.config || ''} onChange={e => handleConfigChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.configs.map(c => <option key={c} value={c}>{c}</option>)}</select>) : (<input type="text" value={hfConfig.config || ''} onChange={e => setHfConfig({ ...hfConfig, config: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
-                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Split</label>{hfStructure.splits[hfConfig.config]?.length > 0 ? (<select value={hfConfig.split || ''} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.splits[hfConfig.config].map(s => <option key={s} value={s}>{s}</option>)}</select>) : (<input type="text" value={hfConfig.split || ''} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
+                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Split</label>{hfStructure.splits[hfConfig.config]?.length > 0 ? (<select value={hfConfig.split || ''} onChange={e => handleSplitChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.splits[hfConfig.config].map(s => <option key={s} value={s}>{s}</option>)}</select>) : (<input type="text" value={hfConfig.split || ''} onChange={e => handleSplitChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
                                     </div>
                                     <div className="flex gap-2">
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Rows to Fetch</label><input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" /></div>

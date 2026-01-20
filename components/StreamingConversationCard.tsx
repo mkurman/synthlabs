@@ -101,6 +101,88 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
         );
     };
 
+    // Single-prompt mode: render simpler card without conversation bubbles
+    if (streamState.isSinglePrompt) {
+        return (
+            <div className="bg-gradient-to-br from-indigo-950/40 to-slate-900/80 backdrop-blur-sm rounded-xl border border-indigo-500/30 overflow-hidden shadow-lg shadow-indigo-500/5">
+                {/* Header */}
+                <div className="bg-slate-950/50 p-3 border-b border-indigo-500/20 flex items-center gap-3">
+                    <Loader className="w-4 h-4 text-indigo-400 animate-spin" />
+                    <span className="text-xs font-medium text-indigo-300">
+                        Generating Response
+                    </span>
+                    <span className="text-[10px] text-slate-500 ml-auto font-mono capitalize">
+                        {phase.replace(/_/g, ' ')}
+                    </span>
+                </div>
+
+                {/* Two-column layout like log cards */}
+                <div className="grid lg:grid-cols-2">
+                    {/* Left: Reasoning Trace */}
+                    <div className="p-4 border-r border-slate-800 bg-slate-950/20">
+                        <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                            {phase === 'extracting_reasoning' ? (
+                                <>
+                                    <Sparkles className="w-3 h-3 text-emerald-400 animate-pulse" />
+                                    Extracting Reasoning...
+                                </>
+                            ) : (
+                                'Stenographic Trace'
+                            )}
+                        </h4>
+                        <div className="text-sm text-slate-300 font-mono">
+                            {currentReasoning ? (
+                                <>
+                                    <ReasoningHighlighter text={currentReasoning} />
+                                    {phase === 'extracting_reasoning' && (
+                                        <span className="inline-block w-1.5 h-4 bg-emerald-400/60 ml-0.5 animate-pulse" />
+                                    )}
+                                </>
+                            ) : phase === 'waiting_for_response' ? (
+                                <div className="flex items-center gap-2 text-slate-500">
+                                    <Loader className="w-3 h-3 animate-spin" />
+                                    <span>Waiting for response...</span>
+                                </div>
+                            ) : (
+                                <span className="text-slate-600 italic">No reasoning yet...</span>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Right: Final Answer */}
+                    <div className="p-4 bg-slate-950/20">
+                        <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            {phase === 'extracting_answer' ? (
+                                <>
+                                    <Sparkles className="w-3 h-3 text-emerald-400 animate-pulse" />
+                                    Extracting Answer...
+                                </>
+                            ) : (
+                                'Final Output'
+                            )}
+                        </h4>
+                        <div className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+                            {currentAnswer ? (
+                                <>
+                                    {currentAnswer}
+                                    {phase === 'extracting_answer' && (
+                                        <span className="inline-block w-1.5 h-4 bg-emerald-400/60 ml-0.5 animate-pulse" />
+                                    )}
+                                </>
+                            ) : phase === 'extracting_answer' ? (
+                                <span className="text-slate-600 italic">Generating answer...</span>
+                            ) : (
+                                <span className="text-slate-600 italic">Waiting...</span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="bg-gradient-to-br from-indigo-950/40 to-slate-900/80 backdrop-blur-sm rounded-xl border border-indigo-500/30 overflow-hidden shadow-lg shadow-indigo-500/5">
             {/* Header */}

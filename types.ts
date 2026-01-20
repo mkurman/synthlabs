@@ -208,10 +208,19 @@ export interface FirebaseConfig {
 
 // Streaming callback for real-time generation updates
 export type StreamPhase = 'writer' | 'rewriter' | 'user_followup' | 'regular';
+
+export interface UsageData {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost: number;
+}
+
 export type StreamChunkCallback = (
   chunk: string,
   accumulated: string,
-  phase?: StreamPhase
+  phase?: StreamPhase,
+  usage?: UsageData
 ) => void;
 
 // Progressive conversation streaming state
@@ -238,6 +247,8 @@ export interface StreamingConversationState {
   originalAnswer?: string;
   // Raw accumulated JSON for parsing
   rawAccumulated: string;
+  // Flag to indicate single-prompt mode (not multi-turn conversation)
+  isSinglePrompt?: boolean;
 }
 
 export const CATEGORIES = [

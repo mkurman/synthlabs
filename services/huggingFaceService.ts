@@ -1,16 +1,10 @@
 
 import { HuggingFaceConfig } from "../types";
-// @ts-ignore
-import * as hyparquet from 'hyparquet';
 import { createRepo, uploadFile } from "@huggingface/hub";
 import { logger } from '../utils/logger';
 
 const MAX_BATCH_SIZE = 100;
 const MAX_CONCURRENT_FETCHES = 3;
-
-// Handle import compatibility (ESM/CJS fallback)
-// @ts-ignore
-const parquetWrite = hyparquet.parquetWrite || hyparquet.default?.parquetWrite;
 
 export const searchDatasets = async (query: string): Promise<string[]> => {
     if (!query || query.length < 2) return [];
@@ -137,98 +131,76 @@ const fetchSingleBatch = async (
     }
 };
 
-// --- Hyparquet Helpers ---
+// --- Hyparquet Writer Helpers ---
 
-function inferSchema(data: any[]): any[] {
+/**
+ * Convert row-oriented data to column-oriented format for hyparquet-writer
+ */
+function rowsToColumns(data: any[]): { name: string; data: any[]; type: string }[] {
     if (!data || data.length === 0) return [];
 
-    // Sample first non-null values for each key
+    // Collect all unique keys
     const keys = new Set<string>();
     data.forEach(d => Object.keys(d).forEach(k => keys.add(k)));
 
-    const schema: any[] = [];
+    // Build column data
+    const columns: { name: string; data: any[]; type: 'STRING' | 'BOOLEAN' | 'INT32' | 'DOUBLE' }[] = [];
 
     keys.forEach(key => {
-        let type = 'BYTE_ARRAY';
-        let originalType = 'UTF8'; // Default to String
-
-        for (const row of data) {
+        // Extract column values
+        const values = data.map(row => {
             const val = row[key];
-            if (val !== null && val !== undefined) {
+            if (val === null || val === undefined) return null;
+            // Stringify objects/arrays for storage as strings
+            if (typeof val === 'object') return JSON.stringify(val);
+            return val;
+        });
+
+        // Infer type from first non-null value
+        let type = 'STRING';
+        for (const val of values) {
+            if (val !== null) {
                 if (typeof val === 'boolean') {
                     type = 'BOOLEAN';
-                    originalType = undefined as any;
-                }
-                else if (typeof val === 'number') {
-                    type = 'DOUBLE';
-                    originalType = undefined as any;
+                } else if (typeof val === 'number') {
+                    type = Number.isInteger(val) ? 'INT32' : 'DOUBLE';
                 }
                 break;
             }
         }
 
-        const colDef: any = {
+        columns.push({
             name: key,
-            type: type,
-            optional: true
-        };
-
-        if (originalType) {
-            colDef.originalType = originalType;
-        }
-
-        schema.push(colDef);
-    });
-
-    return schema;
-}
-
-function dataToRowGroups(data: any[], schema: any[]): any[][] {
-    // Hyparquet expects array of rows, where each row is an array of values in schema order
-    return data.map(row => {
-        return schema.map(col => {
-            const val = row[col.name];
-            if (val === null || val === undefined) return null;
-            if (col.type === 'BYTE_ARRAY' && typeof val !== 'string') return JSON.stringify(val);
-            return val;
+            data: values,
+            type: type as 'STRING' | 'BOOLEAN' | 'INT32' | 'DOUBLE'
         });
     });
+
+    return columns;
 }
 
 /**
- * Generates Parquet bytes using hyparquet (pure JS).
+ * Generates Parquet bytes using hyparquet-writer (pure JS).
  */
 export const generateParquetBuffer = async (data: any[]): Promise<Uint8Array> => {
+    // Dynamic import to get parquetWriteBuffer - it returns ArrayBuffer directly
+    const { parquetWriteBuffer } = await import('hyparquet-writer');
+
     try {
         logger.log(`Generating Parquet from ${data.length} rows...`);
         if (!data || data.length === 0) throw new Error("No data to convert");
 
-        // 1. Infer Schema
-        const schema = inferSchema(data);
+        // Convert row data to column format
+        const columnData = rowsToColumns(data);
 
-        // 2. Convert to Row Format (Array of Arrays)
-        const rows = dataToRowGroups(data, schema);
-
-        // 3. Write
-        return new Promise((resolve, reject) => {
-            try {
-                if (!parquetWrite) {
-                    // Try to debug what IS available
-                    console.error("Available hyparquet exports:", Object.keys(hyparquet));
-                    throw new Error("parquetWrite function not found in hyparquet import");
-                }
-
-                parquetWrite({
-                    schema,
-                    rowGroups: [rows], // Array of RowGroups (which are Array of Rows)
-                    onComplete: (buffer: ArrayBuffer) => {
-                        resolve(new Uint8Array(buffer));
-                    }
-                });
-            } catch (e) {
-                reject(e);
-            }
+        // Write to buffer - cast to any to avoid TypeScript issues with library types
+        const buffer = parquetWriteBuffer({
+            columnData: columnData as any,
+            // Use UNCOMPRESSED for maximum browser compatibility
+            codec: 'UNCOMPRESSED'
         });
+
+        return new Uint8Array(buffer);
     } catch (e: any) {
         console.error("Parquet Generation Error:", e);
         throw new Error("Failed during Parquet conversion: " + e.message);
@@ -278,7 +250,7 @@ export const uploadToHuggingFace = async (
     if (format === 'parquet') {
         try {
             const parquetBytes = await generateParquetBuffer(data);
-            blob = new Blob([parquetBytes], { type: 'application/octet-stream' });
+            blob = new Blob([parquetBytes.buffer as ArrayBuffer], { type: 'application/octet-stream' });
             if (!finalFilename.endsWith('.parquet')) finalFilename = finalFilename.replace(/\.jsonl$/, '') + '.parquet';
         } catch (e: any) {
             throw new Error("Parquet conversion failed: " + e.message);

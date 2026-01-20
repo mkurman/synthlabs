@@ -27,6 +27,7 @@
     "@tauri-apps/api": "^2.9.1",
     "firebase": "^12.7.0",
     "hyparquet": "1.24.0",
+    "hyparquet-writer": "^0.11.2",
     "json-repair-js": "^1.0.0",
     "lucide-react": "^0.561.0",
     "react": "^19.2.3",

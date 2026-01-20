@@ -184,7 +184,7 @@ ${JSON.stringify(definitions, null, 2)}
     public async streamResponse(
         modelConfig: { provider: string, model: string, apiKey?: string },
         includeTools: boolean,
-        onChunk: (chunk: string, accumulated: string) => void,
+        onChunk: (chunk: string, accumulated: string, usage?: any) => void,
         abortSignal?: AbortSignal
     ): Promise<string> {
         const systemPrompt = this.buildSystemPrompt();
@@ -266,7 +266,10 @@ ${JSON.stringify(definitions, null, 2)}
                 messages: messages,
                 tools: tools,
                 stream: true,
-                onStreamChunk: (chunk: string, accumulated: string) => onChunk(chunk, accumulated),
+                onStreamChunk: (chunk: string, accumulated: string, _phase?: any, usage?: any) => {
+                    console.log('chatService onStreamChunk - usage:', usage);
+                    onChunk(chunk, accumulated, usage);
+                },
                 structuredOutput: false,
                 signal: abortSignal
             }));
