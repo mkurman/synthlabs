@@ -462,7 +462,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             let fullText = "";
             let thinking = "";
 
-            await chatServiceRef.current.streamResponse(
+                await chatServiceRef.current.streamResponse(
                 activeModel,
                 toolsEnabled,
                 (_chunk, accumulated, usage) => {
