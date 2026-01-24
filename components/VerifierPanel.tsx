@@ -99,6 +99,9 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
     // Regenerate Dropdown State
     const [showRegenerateDropdown, setShowRegenerateDropdown] = useState<string | null>(null);
 
+    // Regenerate Dropdown State
+    const [showRegenerateDropdown, setShowRegenerateDropdown] = useState<string | null>(null);
+
     // Rewriter Config State
     const [isRewriterPanelOpen, setIsRewriterPanelOpen] = useState(false);
     const [rewriterConfig, setRewriterConfig] = useState<VerifierRewriterService.RewriterConfig>(() => {
@@ -2168,6 +2171,24 @@ Based on the criteria above, provide a 1-5 score.`;
                                     <option value="5">5 Stars</option>
                                 </select>
                             </div>
+
+                            <button
+                                onClick={handleAutoscoreAll}
+                                disabled={isAutoscoring || filteredData.length === 0}
+                                className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${isAutoscoring ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 text-emerald-500 hover:bg-emerald-600/20'}`}
+                            >
+                                {isAutoscoring ? (
+                                    <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        Scoring {autoscoreProgress.current}/{autoscoreProgress.total}
+                                    </>
+                                ) : (
+                                    <>
+                                        <Star className="w-3.5 h-3.5" />
+                                        Autoscore All
+                                    </>
+                                )}
+                            </button>
                         </div>
 
                         <div className="flex items-center gap-2">
@@ -2308,7 +2329,10 @@ Based on the criteria above, provide a 1-5 score.`;
                                                                 ) : (
                                                                     <RotateCcw className="w-3 h-3" />
                                                                 )}
-                                                            </button>
+                                                            </div>
+                                                            {showRegenerateDropdown === item.id && (
+                                                                <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
+                                                            )}
                                                         </>
                                                     )}
                                                 </div>
