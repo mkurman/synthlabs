@@ -409,7 +409,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         if (!structuredOutput) {
           return rawContent;
         }
-        
+
         // For other providers with structuredOutput, parse the JSON content
         const parsed = parseJsonContent(rawContent);
         return parsed;
@@ -463,7 +463,7 @@ export const generateSyntheticSeeds = async (
     if (result && Array.isArray(result.paragraphs)) {
       return result.paragraphs.map(String);
     }
-    
+
     // Try to extract array from response content if it's a string
     if (typeof result === 'string') {
       try {
@@ -558,7 +558,7 @@ function parseJsonContent(content: string): any {
     // We match from the first '{' to the last '}' or first '[' to last ']'
     const jsonObjectMatch = cleanContent.match(/\{[\s\S]*\}/);
     const jsonArrayMatch = cleanContent.match(/\[[\s\S]*\]/);
-    
+
     // Prefer array match if both exist (for seed generation)
     if (jsonArrayMatch) {
       try {
@@ -567,7 +567,7 @@ function parseJsonContent(content: string): any {
         // Fall through to object match or repair
       }
     }
-    
+
     if (jsonObjectMatch) {
       try {
         return JSON.parse(jsonObjectMatch[0]);
@@ -668,7 +668,7 @@ export async function fetchOllamaModels(baseUrl: string = 'http://localhost:1143
     // Ollama uses /api/tags endpoint to list models (not /v1/models like OpenAI)
     const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/tags`;
     logger.log(`Fetching Ollama models from: ${url}`);
-    
+
     const response = await fetch(url, {
       method: 'GET',
       headers: {
