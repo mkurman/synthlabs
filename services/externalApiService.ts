@@ -403,8 +403,6 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         // we disabled response_format for arrays. So we need to parse it.
         if (structuredOutput && provider === 'ollama') {
           const parsed = parseJsonContent(rawContent);
-          console.log("Ollama structured output - rawContent:", rawContent);
-          console.log("Ollama structured output - parsed:", parsed, "type:", typeof parsed);
           return parsed;
         }
 
@@ -455,19 +453,14 @@ export const generateSyntheticSeeds = async (
       userPrompt: prompt
     });
 
-    console.log("Ollama generateSyntheticSeeds result:", result, "type:", typeof result);
-
     // Handle cases where the model might return { "seeds": [...] } instead of just [...]
     if (Array.isArray(result)) {
-      console.log("Result is array, returning:", result.length, "items");
       return result.map(String);
     }
     if (result && Array.isArray(result.seeds)) {
-      console.log("Result has seeds array, returning:", result.seeds.length, "items");
       return result.seeds.map(String);
     }
     if (result && Array.isArray(result.paragraphs)) {
-      console.log("Result has paragraphs array, returning:", result.paragraphs.length, "items");
       return result.paragraphs.map(String);
     }
     
@@ -476,15 +469,12 @@ export const generateSyntheticSeeds = async (
       try {
         const parsed = JSON.parse(result);
         if (Array.isArray(parsed)) {
-          console.log("Parsed string as array, returning:", parsed.length, "items");
           return parsed.map(String);
         }
         if (parsed && Array.isArray(parsed.seeds)) {
-          console.log("Parsed string has seeds array, returning:", parsed.seeds.length, "items");
           return parsed.seeds.map(String);
         }
         if (parsed && Array.isArray(parsed.paragraphs)) {
-          console.log("Parsed string has paragraphs array, returning:", parsed.paragraphs.length, "items");
           return parsed.paragraphs.map(String);
         }
       } catch (parseError) {
@@ -497,7 +487,6 @@ export const generateSyntheticSeeds = async (
       try {
         const parsed = typeof result.content === 'string' ? JSON.parse(result.content) : result.content;
         if (Array.isArray(parsed)) {
-          console.log("Result.content is array, returning:", parsed.length, "items");
           return parsed.map(String);
         }
       } catch (parseError) {
