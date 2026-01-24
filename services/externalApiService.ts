@@ -454,7 +454,7 @@ export const generateSyntheticSeeds = async (
   }
 };
 
-// Helper to safely parse JSON from LLM output, handling markdown blocks and malformed JSON
+// Helper to safely parse JSON from LLM output, handling markdown blocks
 function parseJsonContent(content: string): any {
   let cleanContent = content.trim();
 
@@ -512,45 +512,19 @@ function parseJsonContent(content: string): any {
       try {
         return JSON.parse(jsonMatch[0]);
       } catch (e2) {
-        // Fall through to repair
+        // Fall through
       }
     }
 
-    // 5. Try JSONL format (multiple JSON objects separated by newlines)
-    const lines = cleanContent.split('\n').filter(line => line.trim());
-    if (lines.length > 1) {
-      const jsonlResults: any[] = [];
-      let allParsed = true;
-      for (const line of lines) {
-        try {
-          jsonlResults.push(JSON.parse(line.trim()));
-        } catch {
-          allParsed = false;
-          break;
-        }
-      }
-      if (allParsed && jsonlResults.length > 0) {
-        // If single result, return it directly; otherwise return array
-        return jsonlResults.length === 1 ? jsonlResults[0] : jsonlResults;
-      }
-    }
-
-    // 6. Try to repair the JSON using json-repair-js
-    try {
-      const repaired = jsonrepair(cleanContent);
-      logger.log("JSON repaired successfully");
-      return JSON.parse(repaired);
-    } catch (repairError) {
-      // Also try repairing the matched object if found
-      if (jsonMatch) {
-        try {
-          const repairedMatch = jsonrepair(jsonMatch[0]);
-          logger.log("JSON object repaired successfully");
-          return JSON.parse(repairedMatch);
-        } catch {
-          // Fall through
-        }
-      }
+    // 7. Try robust field extraction (regex-based) matching the streaming logic
+    const extracted = extractJsonFields(cleanContent);
+    if (extracted.reasoning || extracted.answer) {
+      logger.log("JSON parsing failed, but field extraction succeeded");
+      return {
+        answer: extracted.answer || cleanContent.trim(), // fallback to raw if no answer found but reasoning exists
+        reasoning: extracted.reasoning || "",
+        follow_up_question: "" // optional
+      };
     }
 
     // 7. Try robust field extraction (regex-based) matching the streaming logic
