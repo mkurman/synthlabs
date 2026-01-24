@@ -1896,13 +1896,16 @@ export default function App() {
                         // Pass externalModel (which acts as the active model input) to Gemini
                         batchSeeds = await GeminiService.generateSyntheticSeeds(geminiTopic, countForBatch, externalModel);
                     } else {
+                        // For Ollama, we don't use structuredOutput because it only supports json_object, not arrays
+                        // Instead, we rely on the prompt to generate JSON array format
+                        const useStructuredOutput = externalProvider !== 'ollama';
                         batchSeeds = await ExternalApiService.generateSyntheticSeeds({
                             provider: externalProvider,
                             apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
                             model: externalModel,
                             customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
                             signal: abortControllerRef.current?.signal || undefined,
-                            structuredOutput: true,
+                            structuredOutput: useStructuredOutput,
                         }, geminiTopic, countForBatch);
                     }
                     collectedSeeds = [...collectedSeeds, ...batchSeeds];

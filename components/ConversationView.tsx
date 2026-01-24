@@ -184,7 +184,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                     ) : (
                                                         <Sparkles className="w-3 h-3" />
                                                     )}
-                                                </div>
+                                                </button>
                                             )}
                                             {/* Assistant messages: dropdown with options */}
                                             {msg.role === 'assistant' && onRewrite && (

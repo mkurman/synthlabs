@@ -300,7 +300,9 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       model,
       messages: finalMessages,
       ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
-      response_format: structuredOutput ? { type: responseFormat } : undefined,
+      // Ollama doesn't support response_format for arrays, only json_object or text
+      // So we disable structuredOutput for Ollama when we need arrays
+      response_format: structuredOutput && provider !== 'ollama' ? { type: responseFormat } : undefined,
       stream: shouldStream,
       ...(tools && tools.length > 0 ? { tools } : {}),
       ...cleanGenParams
@@ -397,10 +399,22 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           throw new Error("Provider returned empty content (check console for details)");
         }
 
+        // For Ollama with structuredOutput, we still get text (not json_object) because
+        // we disabled response_format for arrays. So we need to parse it.
+        if (structuredOutput && provider === 'ollama') {
+          const parsed = parseJsonContent(rawContent);
+          console.log("Ollama structured output - rawContent:", rawContent);
+          console.log("Ollama structured output - parsed:", parsed, "type:", typeof parsed);
+          return parsed;
+        }
+
         if (!structuredOutput) {
           return rawContent;
         }
-        return parseJsonContent(rawContent);
+        
+        // For other providers with structuredOutput, parse the JSON content
+        const parsed = parseJsonContent(rawContent);
+        return parsed;
       }
 
     } catch (err: any) {
@@ -441,11 +455,57 @@ export const generateSyntheticSeeds = async (
       userPrompt: prompt
     });
 
-    // Handle cases where the model might return { "seeds": [...] } instead of just [...]
-    if (Array.isArray(result)) return result.map(String);
-    if (result && Array.isArray(result.seeds)) return result.seeds.map(String);
-    if (result && Array.isArray(result.paragraphs)) return result.paragraphs.map(String);
+    console.log("Ollama generateSyntheticSeeds result:", result, "type:", typeof result);
 
+    // Handle cases where the model might return { "seeds": [...] } instead of just [...]
+    if (Array.isArray(result)) {
+      console.log("Result is array, returning:", result.length, "items");
+      return result.map(String);
+    }
+    if (result && Array.isArray(result.seeds)) {
+      console.log("Result has seeds array, returning:", result.seeds.length, "items");
+      return result.seeds.map(String);
+    }
+    if (result && Array.isArray(result.paragraphs)) {
+      console.log("Result has paragraphs array, returning:", result.paragraphs.length, "items");
+      return result.paragraphs.map(String);
+    }
+    
+    // Try to extract array from response content if it's a string
+    if (typeof result === 'string') {
+      try {
+        const parsed = JSON.parse(result);
+        if (Array.isArray(parsed)) {
+          console.log("Parsed string as array, returning:", parsed.length, "items");
+          return parsed.map(String);
+        }
+        if (parsed && Array.isArray(parsed.seeds)) {
+          console.log("Parsed string has seeds array, returning:", parsed.seeds.length, "items");
+          return parsed.seeds.map(String);
+        }
+        if (parsed && Array.isArray(parsed.paragraphs)) {
+          console.log("Parsed string has paragraphs array, returning:", parsed.paragraphs.length, "items");
+          return parsed.paragraphs.map(String);
+        }
+      } catch (parseError) {
+        console.error("Failed to parse result string as JSON:", parseError);
+      }
+    }
+
+    // If result is an object with a content field (common in some API responses)
+    if (result && typeof result === 'object' && result.content) {
+      try {
+        const parsed = typeof result.content === 'string' ? JSON.parse(result.content) : result.content;
+        if (Array.isArray(parsed)) {
+          console.log("Result.content is array, returning:", parsed.length, "items");
+          return parsed.map(String);
+        }
+      } catch (parseError) {
+        console.error("Failed to parse result.content:", parseError);
+      }
+    }
+
+    console.warn("Ollama generateSyntheticSeeds: Could not extract array from result:", result);
     return [];
   } catch (e) {
     console.error("External Seed Gen failed", e);
@@ -505,12 +565,23 @@ function parseJsonContent(content: string): any {
     }
     return parsed;
   } catch (e) {
-    // 4. Try to find the first valid { ... } object in the text
-    // We match from the first '{' to the last '}'
-    const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
+    // 4. Try to find the first valid { ... } object or [ ... ] array in the text
+    // We match from the first '{' to the last '}' or first '[' to last ']'
+    const jsonObjectMatch = cleanContent.match(/\{[\s\S]*\}/);
+    const jsonArrayMatch = cleanContent.match(/\[[\s\S]*\]/);
+    
+    // Prefer array match if both exist (for seed generation)
+    if (jsonArrayMatch) {
       try {
-        return JSON.parse(jsonMatch[0]);
+        return JSON.parse(jsonArrayMatch[0]);
+      } catch (e2) {
+        // Fall through to object match or repair
+      }
+    }
+    
+    if (jsonObjectMatch) {
+      try {
+        return JSON.parse(jsonObjectMatch[0]);
       } catch (e2) {
         // Fall through to repair
       }
@@ -541,11 +612,12 @@ function parseJsonContent(content: string): any {
       logger.log("JSON repaired successfully");
       return JSON.parse(repaired);
     } catch (repairError) {
-      // Also try repairing the matched object if found
-      if (jsonMatch) {
+      // Also try repairing the matched object/array if found
+      const matchToRepair = jsonArrayMatch || jsonObjectMatch;
+      if (matchToRepair) {
         try {
-          const repairedMatch = jsonrepair(jsonMatch[0]);
-          logger.log("JSON object repaired successfully");
+          const repairedMatch = jsonrepair(matchToRepair[0]);
+          logger.log("JSON object/array repaired successfully");
           return JSON.parse(repairedMatch);
         } catch {
           // Fall through
