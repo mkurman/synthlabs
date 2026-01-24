@@ -146,6 +146,34 @@ export const LogStorageService = {
         }
     },
 
+    // Delete a specific log item
+    deleteLog: async (sessionUid: string, logId: string): Promise<boolean> => {
+        try {
+            const db = await getDB();
+            const tx = db.transaction([LOGS_STORE, INDEX_STORE], 'readwrite');
+            const store = tx.objectStore(LOGS_STORE);
+            const indexStore = tx.objectStore(INDEX_STORE);
+
+            // Delete the log
+            await wrapRequest(store.delete([sessionUid, logId]));
+
+            // Decrement session count
+            const existingIndex = await wrapRequest(indexStore.get(sessionUid)) as LogIndex | undefined;
+            if (existingIndex && existingIndex.totalCount > 0) {
+                const newIndex: LogIndex = {
+                    ...existingIndex,
+                    totalCount: existingIndex.totalCount - 1
+                };
+                await wrapRequest(indexStore.put(newIndex));
+            }
+
+            return true;
+        } catch (e) {
+            console.error('IndexedDB delete failed:', e);
+            return false;
+        }
+    },
+
     getTotalCount: async (sessionUid: string): Promise<number> => {
         try {
             const db = await getDB();

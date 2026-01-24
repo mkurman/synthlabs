@@ -4,7 +4,7 @@ import { SettingsService } from './settingsService';
 import { ToolExecutor } from './toolService';
 
 export interface ChatMessage {
-    role: 'user' | 'model' | 'tool';
+    role: 'user' | 'model' | 'tool' | 'assistant' | 'system';
     content: string;
     toolCallId?: string; // For tool results
     reasoning?: string;  // Parsed <think> content
@@ -182,7 +182,7 @@ ${JSON.stringify(definitions, null, 2)}
 
     // Call the AI model (using GeminiService as the backend for now, flexible to others)
     public async streamResponse(
-        modelConfig: { provider: string, model: string, apiKey?: string },
+        modelConfig: { provider: string, model: string, apiKey?: string, customBaseUrl?: string },
         includeTools: boolean,
         onChunk: (chunk: string, accumulated: string, usage?: any) => void,
         abortSignal?: AbortSignal
@@ -254,7 +254,9 @@ ${JSON.stringify(definitions, null, 2)}
             const tools = includeTools ? this.toolExecutor.getOpenAIToolDefinitions() : undefined;
 
             const settings = SettingsService.getSettings();
-            const customEndpoint = settings.customEndpointUrl;
+            const customEndpoint = modelConfig.customBaseUrl || settings.customEndpointUrl;
+            const defaultGenerationParams = settings.defaultGenerationParams;
+            const generationParams = defaultGenerationParams;
 
             await import('./externalApiService').then(m => m.callExternalApi({
                 provider: config.provider as ExternalProvider,
@@ -271,7 +273,8 @@ ${JSON.stringify(definitions, null, 2)}
                     onChunk(chunk, accumulated, usage);
                 },
                 structuredOutput: false,
-                signal: abortSignal
+                signal: abortSignal,
+                generationParams: generationParams
             }));
             return '';
         }

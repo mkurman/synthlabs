@@ -58,7 +58,7 @@ export class ToolExecutor {
                 properties: {
                     start: { type: 'number', description: 'Start index (0-based)' },
                     end: { type: 'number', description: 'End index (exclusive)' },
-                    field: { type: 'string', enum: ['query', 'reasoning', 'answer', 'all'], description: 'Specific field to retrieve. Defaults to "all" if not specified.' }
+                    field: { type: 'string', enum: ['query', 'reasoning', 'answer', 'all', 'messages'], description: 'Specific field to retrieve. Defaults to "all" if not specified.' }
                 },
                 required: ['start']
             }
@@ -77,13 +77,23 @@ export class ToolExecutor {
             }
 
             // Return a summary by default to avoid huge token usage
-            return items.map((item, idx) => ({
-                index: safeStart + idx,
-                id: item.id,
-                query: item.query ? item.query : '',
-                reasoning_length: item.reasoning?.length || 0,
-                answer: item.answer ? item.answer : ''
-            }));
+            return items.map((item, idx) => {
+                if (item.messages && item.messages?.length > 0) {
+                    return {
+                        index: safeStart + idx,
+                        id: item.id,
+                        messages: item.messages
+                    }
+                }
+
+                return {
+                    index: safeStart + idx,
+                    id: item.id,
+                    query: item.query ? item.query : '',
+                    reasoning_length: item.reasoning?.length || 0,
+                    answer: item.answer ? item.answer : ''
+                }
+            });
         });
 
         // 3. getItem
@@ -103,6 +113,15 @@ export class ToolExecutor {
                 return { error: `Index ${index} out of bounds. Total items: ${data.length}` };
             }
             const item = data[index] as any;
+
+            if (item.messages && item.messages?.length > 0) {
+                return {
+                    index,
+                    id: item.id,
+                    messages: item.messages
+                }
+            }
+
             return {
                 query: item.query,
                 reasoning: item.reasoning,
@@ -216,6 +235,7 @@ export class ToolExecutor {
                     query: item.query,
                     reasoning: item.reasoning,
                     answer: item.answer,
+                    messages: item.messages,
                     // We don't save score/verifier specific fields to the raw log usually, but we could if needed. 
                     // Keeping consistent with existing VerifierPanel logic.
                 })

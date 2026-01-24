@@ -29,19 +29,45 @@ export function extractJsonFields(rawJson: string): ExtractedFields {
         hasAnswerEnd: false,
     };
 
-    // Clean markdown code blocks if present
-    // Clean markdown code blocks if present
     let content = rawJson.trim();
 
-    // Robustly extract content from markdown code blocks if present
-    // Matches ```json ... ``` or ``` ... ``` anywhere in the string
-    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)(?:```|$)/);
+    // Extract content from markdown code blocks if present
+    // Only extract if the code block is at the START of the content
+    // This prevents matching ``` markers that appear inside JSON string values
+    const codeBlockMatch = content.match(/^```(?:json)?\s*([\s\S]*?)(?:```|$)/);
     if (codeBlockMatch && codeBlockMatch[1]) {
-        content = codeBlockMatch[1].trim();
+        const extracted = codeBlockMatch[1].trim();
+        // Only use the extracted content if it looks like valid JSON (starts with { and ends with })
+        // This prevents issues when the model contains ``` markers inside string values
+        const trimmedExtracted = extracted.replace(/^[\s\n\r]+/, '');
+        if (trimmedExtracted.startsWith('{') && trimmedExtracted.endsWith('}')) {
+            content = extracted;
+        }
     }
 
     // Sanitize smart quotes to straight quotes
     content = content.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
+
+    // Handle double-encoded JSON (if the content itself is a JSON string literal)
+    // e.g. "{\"reasoning\":...}"
+    // We detect this if it starts with a quote, and we try to unescape it slightly to peek inside
+    if (content.startsWith('"') && !content.trim().startsWith('"{')) {
+        try {
+            // Try to parse it as a string to unwrap one level
+            // If it's a partial stream, JSON.parse might fail, so we might need manual unescaping
+            // Simple heuristic: if it looks like "{\" or "{\n", unescape manually
+            if (content.match(/^"\\?\{/)) {
+                // It's likely a JSON string.
+                // We can't use JSON.parse on partial content.
+                // So we manually remove the surrounding quotes and unescape common chars.
+                let inner = content.slice(1);
+                if (inner.endsWith('"')) inner = inner.slice(0, -1);
+                content = unescapeJsonString(inner);
+            }
+        } catch (e) {
+            // Ignore
+        }
+    }
 
     // Try to find "reasoning" field
     const reasoningPatterns = [

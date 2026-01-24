@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload } from 'lucide-react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload, Trash2 } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import StreamingConversationCard from './StreamingConversationCard';
@@ -15,6 +15,7 @@ interface LogFeedProps {
   onRetry?: (id: string) => void;
   onRetrySave?: (id: string) => void;
   onSaveToDb?: (id: string) => void;
+  onDelete?: (id: string) => void;
   retryingIds?: Set<string>;
   savingIds?: Set<string>;
   isProdMode?: boolean;
@@ -24,7 +25,7 @@ interface LogFeedProps {
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
-  onRetry, onRetrySave, onSaveToDb, retryingIds, savingIds, isProdMode,
+  onRetry, onRetrySave, onSaveToDb, onDelete, retryingIds, savingIds, isProdMode,
   streamingConversations
 }) => {
   const [showLatestOnly, setShowLatestOnly] = useState(false);
@@ -55,7 +56,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
     return (
       <div className="space-y-4">
         {Array.from(streamingConversations.values()).map(streamState => (
-          <StreamingConversationCard key={streamState.id} streamState={streamState} />
+          <StreamingConversationCard key={streamState.id} streamState={streamState} onDelete={onDelete} />
         ))}
       </div>
     );
@@ -102,7 +103,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
           {Array.from(streamingConversations!.values())
             .filter(s => s.phase !== 'idle')
             .map(streamState => (
-              <StreamingConversationCard key={streamState.id} streamState={streamState} />
+              <StreamingConversationCard key={streamState.id} streamState={streamState} onDelete={onDelete} />
             ))}
         </div>
       )}
@@ -188,6 +189,21 @@ const LogFeed: React.FC<LogFeedProps> = ({
                 >
                   <Upload className={`w-3 h-3 ${savingIds?.has(item.id) ? 'animate-pulse' : ''}`} />
                   <span className="hidden sm:inline">Save to DB</span>
+                </button>
+              )}
+
+              {/* Delete Button */}
+              {onDelete && (
+                <button
+                  onClick={() => {
+                    if (window.confirm("Are you sure you want to delete this log?")) {
+                      onDelete(item.id);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 bg-slate-800/50 hover:bg-red-950/30 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/30 text-[10px] px-2 py-1 rounded-md transition-all"
+                  title="Delete Log"
+                >
+                  <Trash2 className="w-3 h-3" />
                 </button>
               )}
             </div>

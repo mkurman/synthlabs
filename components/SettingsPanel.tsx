@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot } from 'lucide-react';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders } from 'lucide-react';
 import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, WorkflowDefaults, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG, EMPTY_DEEP_DEFAULTS } from '../services/settingsService';
+import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING, TaskType } from '../services/taskClassifierService';
 import { PROVIDER_URLS } from '../constants';
@@ -36,7 +37,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
     const [saved, setSaved] = useState(false);
     const [confirmClear, setConfirmClear] = useState(false);
-    const [activeTab, setActiveTab] = useState<'providers' | 'huggingface' | 'firebase' | 'storage' | 'prompts'>('providers');
+    const [activeTab, setActiveTab] = useState<'providers' | 'generation' | 'huggingface' | 'firebase' | 'storage' | 'prompts'>('providers');
     const [apiSubTab, setApiSubTab] = useState<'keys' | 'defaults'>('keys');
     const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ generalPurpose: true, generator: true, converter: false });
     const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
@@ -91,13 +92,12 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
         }));
     };
 
-    // Helper to update workflow defaults
     const updateWorkflowDefault = (
         workflow: 'generator' | 'converter',
         mode: 'regular' | 'deep',
         step: keyof DeepModeDefaults | null,
         field: keyof StepModelConfig,
-        value: string
+        value: any
     ) => {
         setSettings(prev => {
             const current = prev.workflowDefaults || DEFAULT_WORKFLOW_DEFAULTS;
@@ -166,6 +166,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                 <div className="flex border-b border-slate-800">
                     {[
                         { id: 'providers', label: 'API Keys', icon: Key },
+                        { id: 'generation', label: 'Generation', icon: Sliders },
                         { id: 'prompts', label: 'Prompts', icon: FileText },
                         { id: 'huggingface', label: 'HuggingFace', icon: Cloud },
                         { id: 'firebase', label: 'Firebase', icon: Database },
@@ -358,6 +359,21 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         />
                                                     </div>
                                                     <p className="text-[10px] text-slate-500">Used for general tasks that don't require specialized prompts (e.g., optimization)</p>
+                                                    <div className="mt-2">
+                                                        <GenerationParamsInput
+                                                            params={settings.generalPurposeModel?.generationParams}
+                                                            onChange={(newParams) => {
+                                                                updateSetting('generalPurposeModel', {
+                                                                    ...settings.generalPurposeModel,
+                                                                    ...EMPTY_STEP_CONFIG,
+                                                                    generationParams: newParams,
+                                                                    provider: settings.generalPurposeModel?.provider || 'gemini',
+                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || '',
+                                                                    model: settings.generalPurposeModel?.model || ''
+                                                                });
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </div>
                                             </div>
                                         )}
@@ -398,29 +414,40 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         />
                                                     </div>
+                                                    <GenerationParamsInput
+                                                        params={settings.workflowDefaults?.generator.regular.generationParams}
+                                                        onChange={(newParams) => updateWorkflowDefault('generator', 'regular', null, 'generationParams', newParams)}
+                                                    />
                                                 </div>
 
                                                 {/* Deep Mode Steps */}
                                                 <div className="space-y-2">
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Deep Mode Steps</label>
                                                     {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
-                                                        <div key={step} className="flex items-center gap-2">
-                                                            <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
-                                                            <select
-                                                                value={settings.workflowDefaults?.generator.deep[step]?.provider || 'gemini'}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', 'deep', step, 'provider', e.target.value)}
-                                                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
-                                                            >
-                                                                {allProviders.map(p => (
-                                                                    <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
-                                                                ))}
-                                                            </select>
-                                                            <input
-                                                                type="text"
-                                                                value={settings.workflowDefaults?.generator.deep[step]?.model || ''}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateWorkflowDefault('generator', 'deep', step, 'model', e.target.value)}
-                                                                placeholder="Model"
-                                                                className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                        <div key={step} className="space-y-2 p-2 bg-slate-900/30 rounded border border-slate-800">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
+                                                                <select
+                                                                    value={settings.workflowDefaults?.generator.deep[step]?.provider || 'gemini'}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', 'deep', step, 'provider', e.target.value)}
+                                                                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                >
+                                                                    {allProviders.map(p => (
+                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                    ))}
+                                                                </select>
+                                                                <input
+                                                                    type="text"
+                                                                    value={settings.workflowDefaults?.generator.deep[step]?.model || ''}
+                                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateWorkflowDefault('generator', 'deep', step, 'model', e.target.value)}
+                                                                    placeholder="Model"
+                                                                    className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                />
+                                                            </div>
+                                                            <GenerationParamsInput
+                                                                params={settings.workflowDefaults?.generator.deep[step]?.generationParams}
+                                                                onChange={(newParams) => updateWorkflowDefault('generator', 'deep', step, 'generationParams', newParams)}
+                                                                label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
                                                             />
                                                         </div>
                                                     ))}
@@ -464,29 +491,40 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         />
                                                     </div>
+                                                    <GenerationParamsInput
+                                                        params={settings.workflowDefaults?.converter.regular.generationParams}
+                                                        onChange={(newParams) => updateWorkflowDefault('converter', 'regular', null, 'generationParams', newParams)}
+                                                    />
                                                 </div>
 
                                                 {/* Deep Mode Steps */}
                                                 <div className="space-y-2">
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Deep Mode Steps</label>
                                                     {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
-                                                        <div key={step} className="flex items-center gap-2">
-                                                            <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
-                                                            <select
-                                                                value={settings.workflowDefaults?.converter.deep[step]?.provider || 'gemini'}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', 'deep', step, 'provider', e.target.value)}
-                                                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
-                                                            >
-                                                                {allProviders.map(p => (
-                                                                    <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
-                                                                ))}
-                                                            </select>
-                                                            <input
-                                                                type="text"
-                                                                value={settings.workflowDefaults?.converter.deep[step]?.model || ''}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateWorkflowDefault('converter', 'deep', step, 'model', e.target.value)}
-                                                                placeholder="Model"
-                                                                className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                        <div key={step} className="space-y-2 p-2 bg-slate-900/30 rounded border border-slate-800">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
+                                                                <select
+                                                                    value={settings.workflowDefaults?.converter.deep[step]?.provider || 'gemini'}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', 'deep', step, 'provider', e.target.value)}
+                                                                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                >
+                                                                    {allProviders.map(p => (
+                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                    ))}
+                                                                </select>
+                                                                <input
+                                                                    type="text"
+                                                                    value={settings.workflowDefaults?.converter.deep[step]?.model || ''}
+                                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateWorkflowDefault('converter', 'deep', step, 'model', e.target.value)}
+                                                                    placeholder="Model"
+                                                                    className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                />
+                                                            </div>
+                                                            <GenerationParamsInput
+                                                                params={settings.workflowDefaults?.converter.deep[step]?.generationParams}
+                                                                onChange={(newParams) => updateWorkflowDefault('converter', 'deep', step, 'generationParams', newParams)}
+                                                                label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
                                                             />
                                                         </div>
                                                     ))}
@@ -496,6 +534,163 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {activeTab === 'generation' && (
+                        <div className="space-y-6">
+                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                    <Sliders className="w-4 h-4 text-purple-400" />
+                                    Default Generation Parameters
+                                </h3>
+                                <p className="text-xs text-slate-500 mb-4">
+                                    Configure default parameters for LLM generation. These can be overridden per-request in the chat interface.
+                                </p>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-1">
+                                        <label htmlFor="temperature" className="text-[10px] text-slate-400 font-bold uppercase">
+                                            Temperature: {((settings.defaultGenerationParams?.temperature ?? 0.8)).toFixed(2)}
+                                        </label>
+                                        <input
+                                            id="temperature"
+                                            type="range"
+                                            min="0"
+                                            max="2"
+                                            step="0.01"
+                                            value={settings.defaultGenerationParams?.temperature ?? 0.8}
+                                            onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                ...(settings.defaultGenerationParams || {}),
+                                                temperature: parseFloat(e.target.value)
+                                            })}
+                                            aria-valuetext={`Temperature: ${((settings.defaultGenerationParams?.temperature ?? 0.8)).toFixed(2)}`}
+                                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                        />
+                                        <p className="text-[9px] text-slate-500">Lower = more focused, Higher = more creative</p>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label htmlFor="topP" className="text-[10px] text-slate-400 font-bold uppercase">
+                                            Top P: {((settings.defaultGenerationParams?.topP ?? 0.9)).toFixed(2)}
+                                        </label>
+                                        <input
+                                            id="topP"
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.01"
+                                            value={settings.defaultGenerationParams?.topP ?? 0.9}
+                                            onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                ...(settings.defaultGenerationParams || {}),
+                                                topP: parseFloat(e.target.value)
+                                            })}
+                                            aria-valuetext={`Top P: ${((settings.defaultGenerationParams?.topP ?? 0.9)).toFixed(2)}`}
+                                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                        />
+                                        <p className="text-[9px] text-slate-500">Nucleus sampling threshold (0-1)</p>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label htmlFor="topK" className="text-[10px] text-slate-400 font-bold uppercase">
+                                            Top K
+                                        </label>
+                                        <input
+                                            id="topK"
+                                            type="number"
+                                            min="1"
+                                            max="1000"
+                                            step="1"
+                                            value={settings.defaultGenerationParams?.topK ?? ''}
+                                            onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                ...(settings.defaultGenerationParams || {}),
+                                                topK: e.target.value ? parseInt(e.target.value) : undefined
+                                            })}
+                                            placeholder="Leave empty for default"
+                                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-purple-500 outline-none"
+                                        />
+                                        <p className="text-[9px] text-slate-500">Sample from top K tokens (optional)</p>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label htmlFor="presencePenalty" className="text-[10px] text-slate-400 font-bold uppercase">
+                                            Presence Penalty: {((settings.defaultGenerationParams?.presencePenalty ?? 0)).toFixed(2)}
+                                        </label>
+                                        <input
+                                            id="presencePenalty"
+                                            type="range"
+                                            min="-2"
+                                            max="2"
+                                            step="0.01"
+                                            value={settings.defaultGenerationParams?.presencePenalty ?? 0}
+                                            onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                ...(settings.defaultGenerationParams || {}),
+                                                presencePenalty: parseFloat(e.target.value)
+                                            })}
+                                            aria-valuetext={`Presence Penalty: ${((settings.defaultGenerationParams?.presencePenalty ?? 0)).toFixed(2)}`}
+                                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                        />
+                                        <p className="text-[9px] text-slate-500">Penalize new topics (-2 to 2)</p>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label htmlFor="frequencyPenalty" className="text-[10px] text-slate-400 font-bold uppercase">
+                                            Frequency Penalty: {((settings.defaultGenerationParams?.frequencyPenalty ?? 0)).toFixed(2)}
+                                        </label>
+                                        <input
+                                            id="frequencyPenalty"
+                                            type="range"
+                                            min="-2"
+                                            max="2"
+                                            step="0.01"
+                                            value={settings.defaultGenerationParams?.frequencyPenalty ?? 0}
+                                            onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                ...(settings.defaultGenerationParams || {}),
+                                                frequencyPenalty: parseFloat(e.target.value)
+                                            })}
+                                            aria-valuetext={`Frequency Penalty: ${((settings.defaultGenerationParams?.frequencyPenalty ?? 0)).toFixed(2)}`}
+                                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                        />
+                                        <p className="text-[9px] text-slate-500">Penalize repetition (-2 to 2)</p>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label htmlFor="maxTokens" className="text-[10px] text-slate-400 font-bold uppercase">
+                                            Max Tokens
+                                        </label>
+                                        <input
+                                            id="maxTokens"
+                                            type="number"
+                                            min="1"
+                                            max="128000"
+                                            step="1"
+                                            value={settings.defaultGenerationParams?.maxTokens ?? ''}
+                                            onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                ...(settings.defaultGenerationParams || {}),
+                                                maxTokens: e.target.value ? parseInt(e.target.value) : undefined
+                                            })}
+                                            placeholder="Leave empty for default"
+                                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-purple-500 outline-none"
+                                        />
+                                        <p className="text-[9px] text-slate-500">Maximum tokens per response (optional)</p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 pt-4 border-t border-slate-800">
+                                    <button
+                                        onClick={() => updateSetting('defaultGenerationParams', {
+                                            temperature: 0.8,
+                                            topP: 0.9,
+                                            topK: undefined,
+                                            presencePenalty: undefined,
+                                            frequencyPenalty: undefined,
+                                            maxTokens: undefined
+                                        })}
+                                        className="text-[10px] text-purple-400 hover:text-purple-300 underline"
+                                    >
+                                        Reset to defaults
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
 

@@ -53,11 +53,26 @@ function cleanAndParseJSON(text: string | undefined): any {
   if (!text) return {};
 
   let cleanContent = text.trim();
-
-  // 1. Try to extract JSON from markdown code blocks
-  const codeBlockMatch = cleanContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (codeBlockMatch) {
-    cleanContent = codeBlockMatch[1].trim();
+ 
+  //1. Try to extract JSON from markdown code blocks (only at start of content)
+  // Validate that extracted content looks like JSON to avoid matching ``` markers inside string values
+  const codeBlockMatch = cleanContent.match(/^```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    const extracted = codeBlockMatch[1].trim();
+    const trimmedExtracted = extracted.replace(/^[\s\n\r]+/, '');
+    // Only use the extracted content if it looks like valid JSON (starts with { and ends with })
+    // This prevents issues when the model returns ``` markers inside JSON string values
+    if (trimmedExtracted.startsWith('{') && trimmedExtracted.endsWith('}')) {
+      cleanContent = extracted;
+    } else {
+      // Extracted doesn't look like valid JSON (probably matched inner ``` inside a string)
+      // Fall back to stripping of ``` wrapper manually
+      cleanContent = cleanContent
+        .replace(/^```json\s*/, '')
+        .replace(/^```\s*/, '')
+        .replace(/\s*```$/, '')
+        .trim();
+    }
   } else {
     // 2. Fallback: try to strip leading ```json and trailing ```
     cleanContent = cleanContent

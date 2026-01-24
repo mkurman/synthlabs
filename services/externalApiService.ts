@@ -2,7 +2,8 @@
 import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase } from '../types';
 import { PROVIDER_URLS } from '../constants';
 import { logger } from '../utils/logger';
-import { jsonrepair } from 'json-repair-js';
+import { extractJsonFields } from '../utils/jsonFieldExtractor';
+import { SettingsService } from './settingsService';
 
 export interface ExternalApiConfig {
   provider: ExternalProvider;
@@ -283,7 +284,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
-      temperature: cleanGenParams.temperature ?? 0.8,
+      temperature: cleanGenParams.temperature,
       top_p: cleanGenParams.top_p,
       top_k: cleanGenParams.top_k,
       stream: shouldStream
@@ -304,9 +305,14 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       ...(tools && tools.length > 0 ? { tools } : {}),
       ...cleanGenParams
     };
-    // If temp was not provided in params, default to 0.8 if strictly needed,
-    // but usually APIs have defaults. We only set it if explicitly passed or fallback logic.
-    if (cleanGenParams.temperature === undefined) payload.temperature = 0.8;
+    // If temp was not provided in params, check settings, otherwise let provider decide (send nothing)
+    if (cleanGenParams.temperature === undefined) {
+      // Use defaults from settings if available
+      const defaults = SettingsService.getSettings().defaultGenerationParams;
+      if (defaults && defaults.temperature !== undefined) {
+        payload.temperature = defaults.temperature;
+      }
+    }
   }
 
   // RETRY LOOP
@@ -440,30 +446,6 @@ export const generateSyntheticSeeds = async (
     if (result && Array.isArray(result.seeds)) return result.seeds.map(String);
     if (result && Array.isArray(result.paragraphs)) return result.paragraphs.map(String);
 
-    // Handle case where model returns an object with string keys and string values
-    // e.g. {"Topic description 1": "Topic description 2", ...}
-    // Extract all unique non-empty strings from both keys and values
-    if (result && typeof result === 'object' && !Array.isArray(result)) {
-      const entries = Object.entries(result);
-      if (entries.length > 0) {
-        const allStrings: string[] = [];
-        for (const [key, value] of entries) {
-          // Add key if it's a substantial string (not just a label like "topic1")
-          if (typeof key === 'string' && key.length > 20) {
-            allStrings.push(key);
-          }
-          // Add value if it's a string
-          if (typeof value === 'string' && value.length > 0) {
-            allStrings.push(value);
-          }
-        }
-        // Return unique values
-        if (allStrings.length > 0) {
-          return [...new Set(allStrings)];
-        }
-      }
-    }
-
     return [];
   } catch (e) {
     console.error("External Seed Gen failed", e);
@@ -472,26 +454,56 @@ export const generateSyntheticSeeds = async (
   }
 };
 
-// Helper to safely parse JSON from LLM output, handling markdown blocks and malformed JSON
+// Helper to safely parse JSON from LLM output, handling markdown blocks
 function parseJsonContent(content: string): any {
   let cleanContent = content.trim();
 
   // 1. Try to extract JSON from markdown code blocks
   const codeBlockMatch = cleanContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (codeBlockMatch) {
-    cleanContent = codeBlockMatch[1].trim();
+    const extracted = codeBlockMatch[1].trim();
+    // Only use the extracted content if it looks like a JSON object or array
+    // This prevents extracting internal code blocks (e.g. inside a "reasoning" string)
+    // while discarding the surrounding JSON structure.
+    if (extracted.startsWith('{') || extracted.startsWith('[')) {
+      cleanContent = extracted;
+    }
   } else {
     // 2. Fallback: try to strip leading ```json and trailing ``` if no full block found
-    cleanContent = cleanContent
-      .replace(/^```json\s*/, '')
-      .replace(/^```\s*/, '')
-      .replace(/\s*```$/, '')
-      .trim();
+    // (Only if it looks like it's trying to be a block)
+    if (cleanContent.startsWith('```')) {
+      cleanContent = cleanContent
+        .replace(/^```json\s*/, '')
+        .replace(/^```\s*/, '')
+        .replace(/\s*```$/, '')
+        .trim();
+    }
   }
 
   // 3. Try direct parse
   try {
-    return JSON.parse(cleanContent);
+    const parsed = JSON.parse(cleanContent);
+    // Handle double-encoded JSON (if parsed result is a string)
+    if (typeof parsed === 'string') {
+      try {
+        const doubleParsed = JSON.parse(parsed);
+        if (typeof doubleParsed === 'object' && doubleParsed !== null) {
+          return doubleParsed;
+        }
+        // If double parsed is still a string (or failed), we might want to try extraction
+        // But if it successfully parsed to a string, it means the model output was a JSON string literal.
+        // We will fall through to catch block logic if we want to try extraction on the inner string?
+        // Actually, let's just use the inner string as content for extraction
+        cleanContent = parsed;
+        throw new Error("Parsed as string, forcing extraction");
+      } catch (e) {
+        // Double parse failed, but we have a string. 
+        // Use this string for extraction
+        cleanContent = parsed;
+        throw new Error("Parsed as string, forcing extraction");
+      }
+    }
+    return parsed;
   } catch (e) {
     // 4. Try to find the first valid { ... } object in the text
     // We match from the first '{' to the last '}'
@@ -500,45 +512,19 @@ function parseJsonContent(content: string): any {
       try {
         return JSON.parse(jsonMatch[0]);
       } catch (e2) {
-        // Fall through to repair
+        // Fall through
       }
     }
 
-    // 5. Try JSONL format (multiple JSON objects separated by newlines)
-    const lines = cleanContent.split('\n').filter(line => line.trim());
-    if (lines.length > 1) {
-      const jsonlResults: any[] = [];
-      let allParsed = true;
-      for (const line of lines) {
-        try {
-          jsonlResults.push(JSON.parse(line.trim()));
-        } catch {
-          allParsed = false;
-          break;
-        }
-      }
-      if (allParsed && jsonlResults.length > 0) {
-        // If single result, return it directly; otherwise return array
-        return jsonlResults.length === 1 ? jsonlResults[0] : jsonlResults;
-      }
-    }
-
-    // 6. Try to repair the JSON using json-repair-js
-    try {
-      const repaired = jsonrepair(cleanContent);
-      logger.log("JSON repaired successfully");
-      return JSON.parse(repaired);
-    } catch (repairError) {
-      // Also try repairing the matched object if found
-      if (jsonMatch) {
-        try {
-          const repairedMatch = jsonrepair(jsonMatch[0]);
-          logger.log("JSON object repaired successfully");
-          return JSON.parse(repairedMatch);
-        } catch {
-          // Fall through
-        }
-      }
+    // 7. Try robust field extraction (regex-based) matching the streaming logic
+    const extracted = extractJsonFields(cleanContent);
+    if (extracted.reasoning || extracted.answer) {
+      logger.log("JSON parsing failed, but field extraction succeeded");
+      return {
+        answer: extracted.answer || cleanContent.trim(), // fallback to raw if no answer found but reasoning exists
+        reasoning: extracted.reasoning || "",
+        follow_up_question: "" // optional
+      };
     }
 
     // If all parsing fails, wrap the raw text as a fallback response

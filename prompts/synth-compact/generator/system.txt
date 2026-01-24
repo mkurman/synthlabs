@@ -48,9 +48,10 @@ Answer: Driving is fastest at ~40 hours vs ~67 hours by train.
 
 ## Output Format
 
-Return valid JSON only:
+Return valid JSON only, with reasoning and answer keys:
 ```json
 {
-  "reasoning": "[Labeled symbol chain with entropy markers]"
+  "reasoning": "[Labeled symbol chain with entropy markers]",
+  "answer": "[Final  rewritten assistant answer]"
 }
 ```

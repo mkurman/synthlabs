@@ -1,8 +1,9 @@
-import { ExternalProvider, VerifierItem } from '../types';
+import { ExternalProvider, GenerationParams, VerifierItem } from '../types';
 import { PromptService } from './promptService';
 import * as ExternalApiService from './externalApiService';
 import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
+import { extractJsonFields } from '../utils/jsonFieldExtractor';
 
 // Streaming callback type for real-time content display
 export type RewriterStreamCallback = (chunk: string, accumulated: string) => void;
@@ -16,6 +17,7 @@ export interface RewriterConfig {
     maxRetries?: number;
     retryDelay?: number;
     systemPrompt?: string;  // Custom system prompt override
+    generationParams?: GenerationParams; // Optional generation parameters
     // Streaming options
     stream?: boolean;
     onStreamChunk?: RewriterStreamCallback;
@@ -195,10 +197,21 @@ function cleanResponse(input: any): string {
             const trimmed = input.trim();
             // Check if it looks like a JSON object using simple heuristic
             if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                content = JSON.parse(input);
+                const parsed = JSON.parse(input);
+                if (typeof parsed === 'object' && parsed !== null) {
+                    content = parsed;
+                } else {
+                    // Parsed as string (or other primitive), force extraction
+                    throw new Error("Parsed as non-object");
+                }
             }
         } catch (e) {
-            // Not valid JSON, treat as raw string
+            // Not valid JSON, try to extract fields robustly
+            const extracted = extractJsonFields(input);
+            if (extracted.answer || extracted.reasoning) {
+                return extracted.answer || extracted.reasoning || input;
+            }
+            // Treat as raw string
             return input;
         }
     }
@@ -221,8 +234,8 @@ function parseRewriteResult(input: any, fallbackReasoning: string, fallbackAnswe
     if (typeof input === 'string') {
         try {
             const trimmed = input.trim();
-            // Remove markdown code blocks if present
-            const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, trimmed];
+            // Remove markdown code blocks if present (only at start of content)
+            const jsonMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```/) || [null, trimmed];
             const jsonStr = jsonMatch[1].trim();
 
             if (jsonStr.startsWith('{') && jsonStr.endsWith('}')) {
@@ -261,7 +274,8 @@ export async function callRewriterAI(
             systemPrompt,
             {
                 maxRetries: config.maxRetries ?? 2,
-                retryDelay: config.retryDelay ?? 1000
+                retryDelay: config.retryDelay ?? 1000,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams()
             }
         );
         // GeminiService returns { query, reasoning, answer }
@@ -280,6 +294,7 @@ export async function callRewriterAI(
             signal,
             maxRetries: config.maxRetries ?? 2,
             retryDelay: config.retryDelay ?? 1000,
+            generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
             structuredOutput: true
         });
 
@@ -307,7 +322,8 @@ export async function callRewriterAIStreaming(
             systemPrompt,
             {
                 maxRetries: config.maxRetries ?? 2,
-                retryDelay: config.retryDelay ?? 1000
+                retryDelay: config.retryDelay ?? 1000,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams()
             }
         );
         const rawText = result.answer || result.reasoning || String(result);
@@ -316,7 +332,6 @@ export async function callRewriterAIStreaming(
         onChunk(cleaned, cleaned);
         return cleaned;
     } else {
-        // External providers support streaming
         const result = await ExternalApiService.callExternalApi({
             provider: config.externalProvider,
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
@@ -327,6 +342,7 @@ export async function callRewriterAIStreaming(
             signal,
             maxRetries: config.maxRetries ?? 2,
             retryDelay: config.retryDelay ?? 1000,
+            generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
             structuredOutput: false,  // Don't parse as JSON during streaming
             stream: true,
             onStreamChunk: (chunk, accumulated) => onChunk(chunk, accumulated)
@@ -351,7 +367,8 @@ async function callRewriterAIRaw(
             systemPrompt,
             {
                 maxRetries: config.maxRetries ?? 2,
-                retryDelay: config.retryDelay ?? 1000
+                retryDelay: config.retryDelay ?? 1000,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams()
             }
         );
         return result.answer || result.reasoning || String(result);
@@ -366,6 +383,7 @@ async function callRewriterAIRaw(
             signal,
             maxRetries: config.maxRetries ?? 2,
             retryDelay: config.retryDelay ?? 1000,
+            generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
             structuredOutput: true
         });
         return result;

@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import {
     Bot, Sparkles,
-    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, Brain
+    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, Brain, RotateCcw, Sliders
 } from 'lucide-react';
-import { ChatService, ChatMessage } from '../services/chatService';
+import { GenerationParams } from '../types';
+import { ChatService } from '../services/chatService';
+import { ChatMessage } from '../types';
 import { ChatStorageService } from '../services/chatStorageService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import { ToolExecutor } from '../services/toolService';
@@ -149,11 +151,16 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     // Model Selection State
     const [activeModel, setActiveModel] = useState({
         provider: modelConfig.provider === 'external' ? modelConfig.externalProvider : 'gemini',
-        model: modelConfig.provider === 'external' ? modelConfig.externalModel : 'gemini-2.0-flash-20240905', // Default fallback
-        apiKey: modelConfig.provider === 'external' ? modelConfig.externalApiKey : modelConfig.apiKey
+        model: modelConfig.provider === 'external' ? modelConfig.externalModel : 'gemini-2.0-flash-20240905',
+        apiKey: modelConfig.provider === 'external' ? modelConfig.externalApiKey : modelConfig.apiKey,
+        customBaseUrl: ''
     });
 
     const [showModelSelector, setShowModelSelector] = useState(false);
+
+    // Generation Params Override
+    const [generationParamsOverride, setGenerationParamsOverride] = useState<GenerationParams | null>(null);
+    const [showGenParams, setShowGenParams] = useState(false);
     const allProviders = ['gemini', ...AVAILABLE_PROVIDERS];
 
     const handleProviderChange = (newProvider: string) => {
@@ -247,7 +254,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             // Let's do:
             ChatStorageService.getSession(currentSessionId).then(session => {
                 if (session) {
-                    session.messages = messages;
+                    session.messages = messages as any;
                     ChatStorageService.saveSession(session);
                 }
             });
@@ -455,7 +462,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             let fullText = "";
             let thinking = "";
 
-                await chatServiceRef.current.streamResponse(
+            await chatServiceRef.current.streamResponse(
                 activeModel,
                 toolsEnabled,
                 (_chunk, accumulated, usage) => {
@@ -554,6 +561,8 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         const isUser = msg.role === 'user';
         const isTool = msg.role === 'tool';
         const isModel = msg.role === 'model';
+        const isAssistant = msg.role === 'assistant';
+        const isAssistantMessage = isModel || isAssistant;
 
         if (isTool) return null;
 
@@ -606,6 +615,45 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                     >
                                         <Copy size={12} />
                                     </button>
+                                    {isAssistantMessage && (
+                                        <button
+                                            onClick={() => {
+                                                const userMsgIndex = idx - 1;
+                                                if (userMsgIndex >= 0 && messages[userMsgIndex]?.role === 'user') {
+                                                    const newMessages = messages.slice(0, idx);
+                                                    setMessages(newMessages);
+                                                    setInput('');
+                                                    setIsStreaming(true);
+                                                    if (abortControllerRef.current) abortControllerRef.current.abort();
+                                                    abortControllerRef.current = new AbortController();
+                                                    if (chatServiceRef.current) {
+                                                        chatServiceRef.current.clearHistory();
+                                                        newMessages.forEach(m => {
+                                                            if (m.role === 'user') {
+                                                                chatServiceRef.current!.addUserMessage(m.content);
+                                                            } else if (m.role === 'tool') {
+                                                                (chatServiceRef.current as any).history.push(m);
+                                                            } else {
+                                                                (chatServiceRef.current as any).history.push({ ...m, role: 'model' });
+                                                            }
+                                                        });
+                                                        processTurn().then(() => {
+                                                            setIsStreaming(false);
+                                                            abortControllerRef.current = null;
+                                                        }).catch(err => {
+                                                            console.error(err);
+                                                            setIsStreaming(false);
+                                                            abortControllerRef.current = null;
+                                                        });
+                                                    }
+                                                }
+                                            }}
+                                            className="p-1 text-slate-400 hover:text-teal-400 transition-colors"
+                                            title="Regenerate"
+                                        >
+                                            <RotateCcw size={12} />
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => {
                                             const newMessages = messages.filter((_, i) => i !== idx);
@@ -826,9 +874,23 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                     />
                                                 </div>
                                             )}
+
+                                            {activeModel.provider === 'other' && (
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-slate-400">Base URL (Optional override)</label>
+                                                    <input
+                                                        type="text"
+                                                        value={activeModel.customBaseUrl || ''}
+                                                        onChange={(e) => setActiveModel(prev => ({ ...prev, customBaseUrl: e.target.value }))}
+                                                        placeholder="e.g. https://api.example.com/v1"
+                                                        className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-purple-500 outline-none"
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
                                     </>
                                 )}
+
                             </div>
 
                             {/* Tools Toggle */}

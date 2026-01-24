@@ -24,6 +24,7 @@ import AutoResizeTextarea from './AutoResizeTextarea';
 import { AutoscoreConfig } from '../types';
 import { toast } from '../services/toastService';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
+import GenerationParamsInput from './GenerationParamsInput';
 
 interface VerifierPanelProps {
     onImportFromDb: () => Promise<void>;
@@ -113,7 +114,8 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
             retryDelay: 2000,
             systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite'),
             concurrency: 1,
-            delayMs: 0
+            delayMs: 0,
+            generationParams: SettingsService.getDefaultGenerationParams()
         };
     });
     const [isRewritingAll, setIsRewritingAll] = useState(false);
@@ -143,7 +145,8 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
             concurrency: 5,
             sleepTime: 0,
             maxRetries: 3,
-            retryDelay: 2000
+            retryDelay: 2000,
+            generationParams: SettingsService.getDefaultGenerationParams()
         };
     });
     const [isAutoscoring, setIsAutoscoring] = useState(false);
@@ -1279,7 +1282,7 @@ Expected Output Format:
     // --- Logic: Autoscore ---
 
     const autoscoreSingleItem = async (item: VerifierItem, signal?: AbortSignal): Promise<number> => {
-        const { provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt, maxRetries, retryDelay } = autoscoreConfig;
+        const { provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt, maxRetries, retryDelay, generationParams } = autoscoreConfig;
 
         const effectiveApiKey = apiKey || SettingsService.getApiKey(provider === 'external' ? externalProvider : 'gemini');
         const effectiveBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
@@ -1297,7 +1300,8 @@ Based on the criteria above, provide a 1-5 score.`;
         if (provider === 'gemini') {
             const result = await GeminiService.generateReasoningTrace(userPrompt, systemPrompt, {
                 maxRetries: maxRetries,
-                retryDelay: retryDelay
+                retryDelay: retryDelay,
+                generationParams: generationParams || SettingsService.getDefaultGenerationParams()
             });
             rawResult = result.answer || result.reasoning || String(result);
         } else {
@@ -1311,7 +1315,8 @@ Based on the criteria above, provide a 1-5 score.`;
                 signal,
                 maxRetries: maxRetries,
                 retryDelay: retryDelay,
-                structuredOutput: false
+                structuredOutput: false,
+                generationParams: generationParams || SettingsService.getDefaultGenerationParams()
             });
             rawResult = typeof result === 'string' ? result : JSON.stringify(result);
         }
@@ -2010,6 +2015,12 @@ Based on the criteria above, provide a 1-5 score.`;
                                             spellCheck={false}
                                         />
                                     </details>
+                                </div>
+                                <div className="col-span-1 md:col-span-4 border-t border-slate-800 pt-4">
+                                    <GenerationParamsInput
+                                        params={autoscoreConfig.generationParams}
+                                        onChange={(newParams) => setAutoscoreConfig(prev => ({ ...prev, generationParams: newParams }))}
+                                    />
                                 </div>
                             </div>
                         )}

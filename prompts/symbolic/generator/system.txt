@@ -62,7 +62,8 @@ Use the `[Concept] : [Value] >> [Effect]` structure.
 (Integrate `∫` >> Verify [T:1] >> ∴ Final Truth)
 
 # Output
-Output valid JSON only:
+Return valid JSON only, with reasoning and answer keys:
 {
-  "reasoning": "[Full reasoning trace with sections and symbols]"
+  "reasoning": "[Full reasoning trace with sections and symbols]",
+  "answer": "[Final  rewritten assistant answer]"
 }

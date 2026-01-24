@@ -109,9 +109,10 @@ Comparing options under ground-only constraint:
 
 ## Output Format
 
-Return valid JSON only:
+Return valid JSON only, with reasoning and answer keys:
 ```json
 {
-  "reasoning": "[Full reasoning trace with sections and symbols]"
+  "reasoning": "[Full reasoning trace with sections and symbols]",
+  "answer": "[Final  rewritten assistant answer]"
 }
 ```

@@ -1,11 +1,13 @@
 import React from 'react';
-import { User, Bot, Loader, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { User, Bot, Loader, ChevronDown, ChevronUp, Sparkles, X } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import { ChatMessage, StreamingConversationState } from '../types';
 
 interface StreamingConversationCardProps {
     /** Streaming conversation state from App.tsx */
     streamState: StreamingConversationState;
+    /** Optional handler to delete/dismiss this card */
+    onDelete?: (id: string) => void;
 }
 
 // Role styling
@@ -30,7 +32,8 @@ const getRoleStyles = (role: string) => {
 };
 
 const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
-    streamState
+    streamState,
+    onDelete
 }) => {
     const [expandedReasoning, setExpandedReasoning] = React.useState<Set<number>>(new Set());
 
@@ -114,6 +117,15 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                     <span className="text-[10px] text-slate-500 ml-auto font-mono capitalize">
                         {phase.replace(/_/g, ' ')}
                     </span>
+                    {onDelete && (
+                        <button
+                            onClick={() => onDelete(streamState.id)}
+                            className="ml-2 text-slate-500 hover:text-red-400 transition-colors"
+                            title="Remove"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    )}
                 </div>
 
                 {/* Two-column layout like log cards */}
@@ -194,6 +206,15 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                 <span className="text-[10px] text-slate-500 ml-auto font-mono capitalize">
                     {phase.replace(/_/g, ' ')}
                 </span>
+                {onDelete && (
+                    <button
+                        onClick={() => onDelete(streamState.id)}
+                        className="ml-2 text-slate-500 hover:text-red-400 transition-colors"
+                        title="Remove"
+                    >
+                        <X className="w-4 h-4" />
+                    </button>
+                )}
             </div>
 
             {/* Messages Container */}

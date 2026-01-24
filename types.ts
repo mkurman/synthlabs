@@ -93,6 +93,7 @@ export interface GenerationParams {
   topK?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
+  maxTokens?: number;
 }
 
 export interface GenerationConfig {
@@ -156,6 +157,7 @@ export interface StepModelConfig {
   provider: 'gemini' | 'external' | 'other';
   externalProvider: string;
   model: string;
+  generationParams?: GenerationParams;
 }
 
 export interface AutoscoreConfig {
@@ -169,6 +171,7 @@ export interface AutoscoreConfig {
   sleepTime: number;
   maxRetries: number;
   retryDelay: number;
+  generationParams?: GenerationParams;
 }
 
 export interface HuggingFaceConfig {
