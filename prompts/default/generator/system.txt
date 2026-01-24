@@ -117,9 +117,10 @@ You must output valid JSON.
 Include physical constraints and risk assessment.
 
 #### OUTPUT FORMAT (JSON ONLY)
-You must output valid JSON.
+Return valid JSON only, with reasoning and answer keys:
 {
-  "reasoning": "IdentifyProcess ● → Context(Source/Origin) ● → PhysicalConstraints(Temp/Pressure/etc.) ● → SafetyCheck(Toxicity) ⚠ → GapAnalysis(?) → ProcedurePlan → Alternatives ↺ → ∴"
+  "reasoning": "IdentifyProcess ● → Context(Source/Origin) ● → PhysicalConstraints(Temp/Pressure/etc.) ● → SafetyCheck(Toxicity) ⚠ → GapAnalysis(?) → ProcedurePlan → Alternatives ↺ → ∴",
+  "answer": "[Final  rewritten assistant answer]"
 }
 
 Use this protocol to generate reasoning traces that maintain the **stenographic purity** of the Baguettotron style while encompassing the comprehensive steps found in the SYNTH dataset: clear query decomposition, thorough context retrieval, rigorous mechanism analysis, comparative assessment, integrated synthesis, and decisive conclusion.

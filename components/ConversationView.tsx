@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings, Edit3, RotateCcw, Check, X, Loader2 } from 'lucide-react';
 import { ChatMessage } from '../types';
 import ReasoningHighlighter from './ReasoningHighlighter';
+import AutoResizeTextarea from './AutoResizeTextarea';
 
 interface ConversationViewProps {
     messages: ChatMessage[];
@@ -12,9 +13,12 @@ interface ConversationViewProps {
     onRewrite?: (index: number) => void;
     onRewriteReasoning?: (index: number) => void;
     onRewriteBoth?: (index: number) => void;
+    onRewriteQuery?: (index: number) => void;  // For user message query rewrite
     editingIndex?: number;
     editValue?: string;
     rewritingIndex?: number;
+    streamingContent?: string;  // Real-time streaming content to display
+    streamingField?: 'reasoning' | 'answer' | 'both' | 'query';  // Which field is being streamed
 }
 
 // Helper to parse <think> tags from content
@@ -71,9 +75,12 @@ const ConversationView: React.FC<ConversationViewProps> = ({
     onRewrite,
     onRewriteReasoning,
     onRewriteBoth,
+    onRewriteQuery,
     editingIndex,
     editValue,
-    rewritingIndex
+    rewritingIndex,
+    streamingContent,
+    streamingField
 }) => {
     console.log('ConversationView rendered, messages length:', messages?.length);
     React.useEffect(() => {
@@ -164,7 +171,23 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                             >
                                                 <Edit3 className="w-3 h-3" />
                                             </button>
-                                            {onRewrite && (
+                                            {/* User messages: simple rewrite button */}
+                                            {msg.role === 'user' && onRewriteQuery && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); onRewriteQuery(idx); }}
+                                                    disabled={rewritingIndex === idx}
+                                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                    title="Rewrite Query"
+                                                >
+                                                    {rewritingIndex === idx ? (
+                                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                                    ) : (
+                                                        <Sparkles className="w-3 h-3" />
+                                                    )}
+                                                </div>
+                                            )}
+                                            {/* Assistant messages: dropdown with options */}
+                                            {msg.role === 'assistant' && onRewrite && (
                                                 <div className="relative">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(showRewriteDropdown === idx ? null : idx); }}
@@ -214,7 +237,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                 </div>
 
                                 {/* Reasoning Toggle for Assistant Messages */}
-                                {msg.role === 'assistant' && displayReasoning && !isEditing && (
+                                {msg.role === 'assistant' && (displayReasoning || (rewritingIndex === idx && streamingField === 'reasoning')) && !isEditing && (
                                     <div className="mt-2 text-left">
                                         <button
                                             onClick={() => toggleReasoning(idx)}
@@ -228,21 +251,33 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                 <ChevronDown className="w-3 h-3" />
                                             )}
                                         </button>
-                                        {expandedReasoning.has(idx) && (
+                                        {(expandedReasoning.has(idx) || (rewritingIndex === idx && streamingContent)) && (
                                             <div className="mt-2 bg-slate-900/50 border border-slate-800 rounded-lg p-3">
-                                                <ReasoningHighlighter text={displayReasoning} />
+                                                {rewritingIndex === idx && streamingContent && streamingField === 'reasoning' ? (
+                                                    <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
+                                                        {streamingContent}
+                                                        <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                                    </p>
+                                                ) : (
+                                                    <ReasoningHighlighter text={displayReasoning!} />
+                                                )}
                                             </div>
                                         )}
                                     </div>
                                 )}
 
                                 {isEditing ? (
-                                    <textarea
-                                        value={editValue}
+                                    <AutoResizeTextarea
+                                        value={editValue || ''}
                                         onChange={e => onEditChange?.(e.target.value)}
-                                        className="w-full bg-slate-900/50 border border-cyan-500/50 rounded p-2 text-inherit resize-none outline-none min-h-[100px]"
+                                        className="w-full bg-slate-900/50 border border-cyan-500/50 rounded p-2 text-inherit outline-none min-h-[100px]"
                                         autoFocus
                                     />
+                                ) : rewritingIndex === idx && streamingContent && (streamingField === 'answer' || streamingField === 'both' || streamingField === 'query') ? (
+                                    <p className="text-teal-300 whitespace-pre-wrap animate-pulse">
+                                        {streamingContent}
+                                        <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                    </p>
                                 ) : (
                                     <p className="whitespace-pre-wrap">{displayContent}</p>
                                 )}

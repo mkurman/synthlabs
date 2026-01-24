@@ -53,11 +53,26 @@ function cleanAndParseJSON(text: string | undefined): any {
   if (!text) return {};
 
   let cleanContent = text.trim();
-
-  // 1. Try to extract JSON from markdown code blocks
-  const codeBlockMatch = cleanContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (codeBlockMatch) {
-    cleanContent = codeBlockMatch[1].trim();
+ 
+  //1. Try to extract JSON from markdown code blocks (only at start of content)
+  // Validate that extracted content looks like JSON to avoid matching ``` markers inside string values
+  const codeBlockMatch = cleanContent.match(/^```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    const extracted = codeBlockMatch[1].trim();
+    const trimmedExtracted = extracted.replace(/^[\s\n\r]+/, '');
+    // Only use the extracted content if it looks like valid JSON (starts with { and ends with })
+    // This prevents issues when the model returns ``` markers inside JSON string values
+    if (trimmedExtracted.startsWith('{') && trimmedExtracted.endsWith('}')) {
+      cleanContent = extracted;
+    } else {
+      // Extracted doesn't look like valid JSON (probably matched inner ``` inside a string)
+      // Fall back to stripping of ``` wrapper manually
+      cleanContent = cleanContent
+        .replace(/^```json\s*/, '')
+        .replace(/^```\s*/, '')
+        .replace(/\s*```$/, '')
+        .trim();
+    }
   } else {
     // 2. Fallback: try to strip leading ```json and trailing ```
     cleanContent = cleanContent
@@ -86,6 +101,40 @@ function cleanAndParseJSON(text: string | undefined): any {
     return {};
   }
 }
+
+// ... (existing generateGeminiTopic)
+
+export const generateContentStream = async (
+  prompt: string,
+  model: string,
+  onChunk: (chunk: string, accumulated: string) => void,
+  abortSignal?: AbortSignal
+): Promise<string> => {
+  if (!API_KEY) throw new Error("Missing Gemini API Key");
+
+  try {
+    const result = await ai.models.generateContentStream({
+      model: model,
+      contents: prompt,
+    });
+
+    let accumulated = '';
+    for await (const chunk of result.stream) {
+      if (abortSignal?.aborted) {
+        throw new Error('Aborted by user');
+      }
+      const text = chunk.text();
+      if (text) {
+        accumulated += text;
+        onChunk(text, accumulated);
+      }
+    }
+    return accumulated;
+  } catch (error) {
+    console.error("Gemini Streaming Error", error);
+    throw error;
+  }
+};
 
 export const generateGeminiTopic = async (category: string, model?: string): Promise<string> => {
   if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");

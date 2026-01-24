@@ -1,9 +1,12 @@
 
 // ChatML Message Structure for multi-turn conversations
+// ChatML Message Structure for multi-turn conversations
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'model' | 'tool'; // Added model/tool for agentic chat
   content: string;
   reasoning?: string; // For assistant messages, store the thinking trace
+  toolCalls?: any[]; // For tool usage history
+  toolCallId?: string; // For tool results
 }
 
 export interface SynthLogItem {
@@ -44,6 +47,12 @@ export interface SynthLogItem {
   }>;
   storageError?: string;
   savedToDb?: boolean; // Track if this item has been synced to Firebase
+  // Verifier fields (optional in base log, required in VerifierItem)
+  score?: number;
+  isDuplicate?: boolean;
+  duplicateGroupId?: string;
+  isDiscarded?: boolean;
+  verifiedTimestamp?: string;
 }
 
 export interface VerifierItem extends SynthLogItem {
@@ -52,6 +61,8 @@ export interface VerifierItem extends SynthLogItem {
   duplicateGroupId?: string;
   isDiscarded?: boolean;
   verifiedTimestamp?: string;
+  _doc?: any; // Firestore QueryDocumentSnapshot for cursor-based pagination
+  hasUnsavedChanges?: boolean; // UI-only flag
 }
 
 export type ProviderType = 'gemini' | 'external';
@@ -82,6 +93,7 @@ export interface GenerationParams {
   topK?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
+  maxTokens?: number;
 }
 
 export interface GenerationConfig {
@@ -145,6 +157,7 @@ export interface StepModelConfig {
   provider: 'gemini' | 'external' | 'other';
   externalProvider: string;
   model: string;
+  generationParams?: GenerationParams;
 }
 
 export interface AutoscoreConfig {
@@ -158,6 +171,7 @@ export interface AutoscoreConfig {
   sleepTime: number;
   maxRetries: number;
   retryDelay: number;
+  generationParams?: GenerationParams;
 }
 
 export interface HuggingFaceConfig {
@@ -197,10 +211,19 @@ export interface FirebaseConfig {
 
 // Streaming callback for real-time generation updates
 export type StreamPhase = 'writer' | 'rewriter' | 'user_followup' | 'regular';
+
+export interface UsageData {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost: number;
+}
+
 export type StreamChunkCallback = (
   chunk: string,
   accumulated: string,
-  phase?: StreamPhase
+  phase?: StreamPhase,
+  usage?: UsageData
 ) => void;
 
 // Progressive conversation streaming state
@@ -227,6 +250,8 @@ export interface StreamingConversationState {
   originalAnswer?: string;
   // Raw accumulated JSON for parsing
   rawAccumulated: string;
+  // Flag to indicate single-prompt mode (not multi-turn conversation)
+  isSinglePrompt?: boolean;
 }
 
 export const CATEGORIES = [
@@ -242,3 +267,15 @@ export const CATEGORIES = [
   "Environmental Science",
   "Psychology & Neuroscience"
 ];
+
+// Electron API types for renderer process
+export interface ElectronAPI {
+  getAppVersion: () => Promise<string>;
+  platform: string;
+}
+
+declare global {
+  interface Window {
+    electronAPI?: ElectronAPI;
+  }
+}

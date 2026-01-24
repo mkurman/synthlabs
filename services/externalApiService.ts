@@ -2,7 +2,8 @@
 import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase } from '../types';
 import { PROVIDER_URLS } from '../constants';
 import { logger } from '../utils/logger';
-import { jsonrepair } from 'json-repair-js';
+import { extractJsonFields } from '../utils/jsonFieldExtractor';
+import { SettingsService } from './settingsService';
 
 export interface ExternalApiConfig {
   provider: ExternalProvider;
@@ -11,6 +12,7 @@ export interface ExternalApiConfig {
   customBaseUrl?: string;
   systemPrompt: string;
   userPrompt: string;
+  messages?: any[]; // Allow passing full history
   signal?: AbortSignal;
   maxRetries?: number;
   retryDelay?: number;
@@ -20,26 +22,41 @@ export interface ExternalApiConfig {
   stream?: boolean;
   onStreamChunk?: StreamChunkCallback;
   streamPhase?: StreamPhase;
+  // Tool support
+  tools?: any[];
+  // Optional max tokens (omit to let model use default/maximum)
+  maxTokens?: number;
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Helper to parse SSE stream and extract content chunks
+// Helper to parse SSE stream and extract content chunks
 async function processStreamResponse(
   response: Response,
   provider: ExternalProvider,
-  onChunk: (chunk: string, accumulated: string) => void,
+  onChunk: (chunk: string, accumulated: string, usage?: any) => void,
   signal?: AbortSignal
 ): Promise<string> {
+  console.log('🔴 externalApiService: processStreamResponse STARTED');
   const reader = response.body?.getReader();
   if (!reader) throw new Error('No response body for streaming');
 
   const decoder = new TextDecoder();
   let accumulated = '';
   let buffer = '';
+  let isReasoning = false;
 
+  // Track tool calls accumulation
+  let toolCalls: Record<number, { name: string, args: string, id?: string }> = {};
+
+  // Track usage data
+  let usageData: any = null;
+
+  let chunkCount = 0;
   try {
     while (true) {
+      chunkCount++;
       if (signal?.aborted) {
         reader.cancel();
         throw new DOMException('Aborted', 'AbortError');
@@ -56,13 +73,37 @@ async function processStreamResponse(
         const trimmed = line.trim();
         if (!trimmed || trimmed === 'data: [DONE]') continue;
 
-        if (trimmed.startsWith('data: ')) {
+        // Handle SSE format: "message\t{json}" or "data: {json}"
+        let dataStart = trimmed.startsWith('data: ') ? 6 : -1;
+        if (dataStart === -1) {
+          // Try to find "data: " after "message\t" prefix
+          const messagePrefix = 'message\t';
+          if (trimmed.startsWith(messagePrefix)) {
+            dataStart = trimmed.indexOf('data: ');
+            if (dataStart !== -1) {
+              dataStart = dataStart + 6; // Skip past "data: "
+            }
+          }
+        }
+
+        if (dataStart !== -1) {
           try {
-            const json = JSON.parse(trimmed.slice(6));
+            const json = JSON.parse(trimmed.slice(dataStart));
+            console.log('externalApiService: Parsed JSON chunk, has usage:', !!json.usage);
+
             let chunk = '';
+            let isReasoningChunk = false;
+
+            // Capture usage data if present
+            if (json.usage) {
+              usageData = json.usage;
+              console.log('externalApiService: Captured usage data:', usageData);
+            }
 
             if (provider === 'anthropic') {
               // Anthropic format: delta.text or content_block_delta
+              // Note: Anthropic uses a different stream event structure for tools (content_block_start etc).
+              // For simplicity, we assume this logic primarily targets OpenRouter/OpenAI-compatible endpoints where tools are passed directly via delta.tools_calls.
               if (json.type === 'content_block_delta') {
                 chunk = json.delta?.text || '';
               } else if (json.delta?.text) {
@@ -70,16 +111,64 @@ async function processStreamResponse(
               }
             } else {
               // OpenAI-compatible format
-              chunk = json.choices?.[0]?.delta?.content || '';
-              // Also handle reasoning_content for reasoning models
-              if (!chunk) {
-                chunk = json.choices?.[0]?.delta?.reasoning_content || '';
+              const delta = json.choices?.[0]?.delta;
+              if (delta) {
+                // Check for various reasoning field names
+                const reasoningVal = delta.reasoning_content || delta.reasoning;
+
+                // Check for tool calls
+                if (delta.tool_calls) {
+                  for (const tc of delta.tool_calls) {
+                    const idx = tc.index;
+                    if (!toolCalls[idx]) {
+                      toolCalls[idx] = { name: '', args: '', id: tc.id };
+                    }
+                    if (tc.function?.name) toolCalls[idx].name += tc.function.name;
+                    if (tc.function?.arguments) toolCalls[idx].args += tc.function.arguments;
+                  }
+                  // For streaming tool calls, we don't necessarily emit a text chunk immediately,
+                  // but we need to eventually serialize this into the returned "accumulated" string 
+                  // or let the parser handle it. 
+                  // Our current chat parser looks for <tool_call> JSON </tool_call>.
+                  // So we can synthesize this on the fly or just rely on the final object construction.
+                  // HOWEVER, `onChunk` expects (chunk, accumulated). 
+                  // We should probably serialise completed tool calls into the stream for the UI/Parser.
+
+                  // Simple approach: When we see tool calls, we don't output text chunks, 
+                  // but we append the construction to the accumulation at the end?
+                  // Actually, to make "streamResponse" return a single string compatible with our parser,
+                  // we should convert the tool calls to our internal XML format as they complete?
+                  // Or since we only return the final string, we can verify what "accumulated" means.
+                  // The UI updates based on 'accumulated'. If we want the UI to "see" the tool call happening, 
+                  // we might need to stream it.
+
+                  // But waiting until the end is safer for valid JSON.
+                } else if (reasoningVal) {
+                  chunk = reasoningVal;
+                  isReasoningChunk = true;
+                } else if (delta.content) {
+                  chunk = delta.content;
+                }
               }
             }
 
-            if (chunk) {
-              accumulated += chunk;
-              onChunk(chunk, accumulated);
+            // State transition logic for reasoning tags
+            if (isReasoningChunk && !isReasoning) {
+              const startTag = '<think>';
+              accumulated += startTag;
+              onChunk(startTag, accumulated, usageData);
+              isReasoning = true;
+            } else if (!isReasoningChunk && isReasoning && chunk) {
+              const endTag = '</think>';
+              accumulated += endTag;
+              onChunk(endTag, accumulated, usageData);
+              isReasoning = false;
+            }
+
+            if (chunk || usageData) {
+              if (chunk) accumulated += chunk;
+              console.log('externalApiService: calling onChunk with chunk length:', chunk?.length || 0, 'usage:', usageData);
+              onChunk(chunk, accumulated, usageData);
             }
           } catch (e) {
             // Skip malformed JSON lines
@@ -92,6 +181,37 @@ async function processStreamResponse(
     reader.releaseLock();
   }
 
+  // Close reasoning tag if still open at end of stream
+  if (isReasoning) {
+    const endTag = '</think>';
+    accumulated += endTag;
+    onChunk(endTag, accumulated);
+  }
+
+  // Append collected tool calls to accumulated string in our internal format
+  // so that ChatService.parseResponse can pick them up cleanly.
+  // We utilize the <tool_call> format we defined.
+  const toolIndices = Object.keys(toolCalls).sort();
+  if (toolIndices.length > 0) {
+    for (const idx of toolIndices) {
+      const tc = toolCalls[Number(idx)];
+      try {
+        // Validate JSON if complete (optional, just raw dump is usually fine for our parser if valid)
+        // Construct our internal representation
+        const toolXml = `\n<tool_call>\n${JSON.stringify({ name: tc.name, arguments: JSON.parse(tc.args || '{}') }, null, 2)}\n</tool_call>\n`;
+        accumulated += toolXml;
+        onChunk(toolXml, accumulated, usageData);
+      } catch (e) {
+        console.warn("Failed to parse tool args at end of stream", tc.args);
+        // Dump raw if parsing fails, aiming for best effort
+        const rawXml = `\n<tool_call>\n{"name": "${tc.name}", "arguments": ${tc.args}}\n</tool_call>\n`;
+        accumulated += rawXml;
+        onChunk(rawXml, accumulated, usageData);
+      }
+    }
+  }
+
+  console.log('🔴 externalApiService: Stream finished, total chunks:', chunkCount, 'final usage:', usageData);
   return accumulated;
 }
 
@@ -99,7 +219,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   const {
     provider, apiKey, model, customBaseUrl, systemPrompt, userPrompt, signal,
     maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
-    stream = false, onStreamChunk, streamPhase
+    stream = false, onStreamChunk, streamPhase, tools
   } = config;
 
   let baseUrl = provider === 'other' ? customBaseUrl : PROVIDER_URLS[provider];
@@ -161,30 +281,38 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     url = `${baseUrl}/messages`;
     payload = {
       model,
-      max_tokens: 8192,
+      ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
-      temperature: cleanGenParams.temperature ?? 0.8,
+      temperature: cleanGenParams.temperature,
       top_p: cleanGenParams.top_p,
       top_k: cleanGenParams.top_k,
       stream: shouldStream
     };
   } else {
     url = baseUrl;
+    const finalMessages = config.messages || [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ];
+
     payload = {
       model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      max_tokens: 8192,
-      response_format: { type: responseFormat },
+      messages: finalMessages,
+      ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
+      response_format: structuredOutput ? { type: responseFormat } : undefined,
       stream: shouldStream,
+      ...(tools && tools.length > 0 ? { tools } : {}),
       ...cleanGenParams
     };
-    // If temp was not provided in params, default to 0.8 if strictly needed,
-    // but usually APIs have defaults. We only set it if explicitly passed or fallback logic.
-    if (cleanGenParams.temperature === undefined) payload.temperature = 0.8;
+    // If temp was not provided in params, check settings, otherwise let provider decide (send nothing)
+    if (cleanGenParams.temperature === undefined) {
+      // Use defaults from settings if available
+      const defaults = SettingsService.getSettings().defaultGenerationParams;
+      if (defaults && defaults.temperature !== undefined) {
+        payload.temperature = defaults.temperature;
+      }
+    }
   }
 
   // RETRY LOOP
@@ -222,7 +350,10 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         const rawContent = await processStreamResponse(
           response,
           provider,
-          (chunk, accumulated) => onStreamChunk!(chunk, accumulated, streamPhase),
+          (chunk, accumulated, usage) => {
+            console.log('externalApiService callExternalApi wrapper - usage:', usage);
+            onStreamChunk!(chunk, accumulated, streamPhase, usage);
+          },
           signal
         );
 
@@ -248,8 +379,17 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         const message = choice?.message;
 
         let rawContent = message?.content;
-        if (!rawContent) {
+        if (!rawContent && !message?.tool_calls) {
           rawContent = message?.reasoning || message?.reasoning_content || "";
+        }
+
+        // Check for tool calls in non-streaming response
+        if (message?.tool_calls) {
+          // Append tool calls in our internal XML format
+          rawContent = rawContent || "";
+          for (const tc of message.tool_calls) {
+            rawContent += `\n<tool_call>\n${JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments) }, null, 2)}\n</tool_call>\n`;
+          }
         }
 
         if (!rawContent) {
@@ -306,30 +446,6 @@ export const generateSyntheticSeeds = async (
     if (result && Array.isArray(result.seeds)) return result.seeds.map(String);
     if (result && Array.isArray(result.paragraphs)) return result.paragraphs.map(String);
 
-    // Handle case where model returns an object with string keys and string values
-    // e.g. {"Topic description 1": "Topic description 2", ...}
-    // Extract all unique non-empty strings from both keys and values
-    if (result && typeof result === 'object' && !Array.isArray(result)) {
-      const entries = Object.entries(result);
-      if (entries.length > 0) {
-        const allStrings: string[] = [];
-        for (const [key, value] of entries) {
-          // Add key if it's a substantial string (not just a label like "topic1")
-          if (typeof key === 'string' && key.length > 20) {
-            allStrings.push(key);
-          }
-          // Add value if it's a string
-          if (typeof value === 'string' && value.length > 0) {
-            allStrings.push(value);
-          }
-        }
-        // Return unique values
-        if (allStrings.length > 0) {
-          return [...new Set(allStrings)];
-        }
-      }
-    }
-
     return [];
   } catch (e) {
     console.error("External Seed Gen failed", e);
@@ -345,19 +461,49 @@ function parseJsonContent(content: string): any {
   // 1. Try to extract JSON from markdown code blocks
   const codeBlockMatch = cleanContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (codeBlockMatch) {
-    cleanContent = codeBlockMatch[1].trim();
+    const extracted = codeBlockMatch[1].trim();
+    // Only use the extracted content if it looks like a JSON object or array
+    // This prevents extracting internal code blocks (e.g. inside a "reasoning" string)
+    // while discarding the surrounding JSON structure.
+    if (extracted.startsWith('{') || extracted.startsWith('[')) {
+      cleanContent = extracted;
+    }
   } else {
     // 2. Fallback: try to strip leading ```json and trailing ``` if no full block found
-    cleanContent = cleanContent
-      .replace(/^```json\s*/, '')
-      .replace(/^```\s*/, '')
-      .replace(/\s*```$/, '')
-      .trim();
+    // (Only if it looks like it's trying to be a block)
+    if (cleanContent.startsWith('```')) {
+      cleanContent = cleanContent
+        .replace(/^```json\s*/, '')
+        .replace(/^```\s*/, '')
+        .replace(/\s*```$/, '')
+        .trim();
+    }
   }
 
   // 3. Try direct parse
   try {
-    return JSON.parse(cleanContent);
+    const parsed = JSON.parse(cleanContent);
+    // Handle double-encoded JSON (if parsed result is a string)
+    if (typeof parsed === 'string') {
+      try {
+        const doubleParsed = JSON.parse(parsed);
+        if (typeof doubleParsed === 'object' && doubleParsed !== null) {
+          return doubleParsed;
+        }
+        // If double parsed is still a string (or failed), we might want to try extraction
+        // But if it successfully parsed to a string, it means the model output was a JSON string literal.
+        // We will fall through to catch block logic if we want to try extraction on the inner string?
+        // Actually, let's just use the inner string as content for extraction
+        cleanContent = parsed;
+        throw new Error("Parsed as string, forcing extraction");
+      } catch (e) {
+        // Double parse failed, but we have a string. 
+        // Use this string for extraction
+        cleanContent = parsed;
+        throw new Error("Parsed as string, forcing extraction");
+      }
+    }
+    return parsed;
   } catch (e) {
     // 4. Try to find the first valid { ... } object in the text
     // We match from the first '{' to the last '}'
@@ -405,6 +551,17 @@ function parseJsonContent(content: string): any {
           // Fall through
         }
       }
+    }
+
+    // 7. Try robust field extraction (regex-based) matching the streaming logic
+    const extracted = extractJsonFields(cleanContent);
+    if (extracted.reasoning || extracted.answer) {
+      logger.log("JSON parsing failed, but field extraction succeeded");
+      return {
+        answer: extracted.answer || cleanContent.trim(), // fallback to raw if no answer found but reasoning exists
+        reasoning: extracted.reasoning || "",
+        follow_up_question: "" // optional
+      };
     }
 
     // If all parsing fails, wrap the raw text as a fallback response

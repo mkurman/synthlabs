@@ -1,12 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
+    PlusCircle, Plus, FileX, RefreshCcw, X, FileEdit, CloudUpload, CloudDownload, Calendar,
+    LayoutDashboard, Bookmark, Beaker, User, Bot, Loader, ChevronDown, ChevronUp, Sparkles,
     Play, Pause, Download, Settings, Database, Cpu, Terminal,
     AlertCircle, CheckCircle2, ArrowRight, RefreshCw, Code,
-    Sparkles, Wand2, Dice5, Trash2, Upload, Save, FileJson, ArrowLeftRight,
+    Wand2, Dice5, Trash2, Upload, Save, FileJson, ArrowLeftRight,
     Cloud, Laptop, ShieldCheck, Globe, Archive, FileText, Server, BrainCircuit,
     Timer, RotateCcw, MessageSquare, Table, Layers, Search, PenTool, GitBranch,
-    PlusCircle, Plus, FileX, RefreshCcw, Copy, X, FileEdit, CloudUpload, CloudDownload, Calendar,
-    LayoutDashboard, Bookmark, Beaker, List, Info
+    List, Info
 } from 'lucide-react';
 
 import {
@@ -34,6 +35,7 @@ import VerifierPanel from './components/VerifierPanel';
 import DataPreviewTable from './components/DataPreviewTable';
 import SettingsPanel from './components/SettingsPanel';
 import ColumnSelector from './components/ColumnSelector';
+import GenerationParamsInput from './components/GenerationParamsInput';
 import { ToastContainer } from './components/Toast';
 
 export default function App() {
@@ -71,29 +73,25 @@ export default function App() {
     const [customBaseUrl, setCustomBaseUrl] = useState('');
 
     // --- State: Generation Params ---
-    const [temperature, setTemperature] = useState<string>('');
-    const [topP, setTopP] = useState<string>('');
-    const [topK, setTopK] = useState<string>('');
-    const [frequencyPenalty, setFrequencyPenalty] = useState<string>('');
-    const [presencePenalty, setPresencePenalty] = useState<string>('');
+    const [generationParams, setGenerationParams] = useState<GenerationParams>({});
 
     // --- State: Deep Config ---
     const [deepConfig, setDeepConfig] = useState<DeepConfig>({
         phases: {
             meta: {
-                id: 'meta', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'meta')
+                id: 'meta', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'meta'), structuredOutput: true
             },
             retrieval: {
-                id: 'retrieval', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'retrieval')
+                id: 'retrieval', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'retrieval'), structuredOutput: true
             },
             derivation: {
-                id: 'derivation', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'derivation')
+                id: 'derivation', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'derivation'), structuredOutput: true
             },
             writer: {
-                id: 'writer', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'writer')
+                id: 'writer', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'writer'), structuredOutput: true
             },
             rewriter: {
-                id: 'rewriter', enabled: false, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'rewriter')
+                id: 'rewriter', enabled: false, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'rewriter'), structuredOutput: true
             }
         }
     });
@@ -120,7 +118,8 @@ export default function App() {
         apiKey: '',
         model: 'gemini-3-flash-preview',
         customBaseUrl: '',
-        systemPrompt: PromptService.getPrompt('generator', 'user_agent')
+        systemPrompt: PromptService.getPrompt('generator', 'user_agent'),
+        structuredOutput: true
     });
 
     // --- State: Conversation Trace Rewriting ---
@@ -654,11 +653,53 @@ export default function App() {
         }
     };
 
-    const handleConfigChange = (newConfig: string) => {
+    const handleConfigChange = async (newConfig: string) => {
         const splits = hfStructure.splits[newConfig] || [];
         const newSplit = splits.includes('train') ? 'train' : (splits[0] || '');
-        setHfConfig({ ...hfConfig, config: newConfig, split: newSplit });
+        const updatedConfig = { ...hfConfig, config: newConfig, split: newSplit };
+        setHfConfig(updatedConfig);
         setAvailableColumns([]);
+
+        // Refresh preview data and columns for the new config/split
+        if (hfConfig.dataset) {
+            setIsLoadingHfPreview(true);
+            try {
+                const [previewRows, datasetInfo] = await Promise.all([
+                    fetchHuggingFaceRows(updatedConfig, 0, 5),
+                    getDatasetInfo(hfConfig.dataset, newConfig, newSplit)
+                ]);
+                setHfPreviewData(previewRows);
+                setHfTotalRows(datasetInfo.totalRows);
+                prefetchColumns(updatedConfig);
+            } catch (e) {
+                console.error('Failed to refresh HF preview on config change:', e);
+            } finally {
+                setIsLoadingHfPreview(false);
+            }
+        }
+    };
+
+    const handleSplitChange = async (newSplit: string) => {
+        const updatedConfig = { ...hfConfig, split: newSplit };
+        setHfConfig(updatedConfig);
+
+        // Refresh preview data and columns for the new split
+        if (hfConfig.dataset && hfConfig.config) {
+            setIsLoadingHfPreview(true);
+            try {
+                const [previewRows, datasetInfo] = await Promise.all([
+                    fetchHuggingFaceRows(updatedConfig, 0, 5),
+                    getDatasetInfo(hfConfig.dataset, hfConfig.config, newSplit)
+                ]);
+                setHfPreviewData(previewRows);
+                setHfTotalRows(datasetInfo.totalRows);
+                prefetchColumns(updatedConfig);
+            } catch (e) {
+                console.error('Failed to refresh HF preview on split change:', e);
+            } finally {
+                setIsLoadingHfPreview(false);
+            }
+        }
     };
 
     const handleDataSourceModeChange = (mode: 'synthetic' | 'huggingface' | 'manual') => {
@@ -909,14 +950,7 @@ export default function App() {
     };
 
     const getGenerationParams = (): GenerationParams | undefined => {
-        const params: GenerationParams = {};
-        let hasParams = false;
-        if (temperature !== '') { params.temperature = parseFloat(temperature); hasParams = true; }
-        if (topP !== '') { params.topP = parseFloat(topP); hasParams = true; }
-        if (topK !== '') { params.topK = parseInt(topK); hasParams = true; }
-        if (frequencyPenalty !== '') { params.frequencyPenalty = parseFloat(frequencyPenalty); hasParams = true; }
-        if (presencePenalty !== '') { params.presencePenalty = parseFloat(presencePenalty); hasParams = true; }
-        return hasParams ? params : undefined;
+        return Object.keys(generationParams).length > 0 ? generationParams : undefined;
     };
 
     const getSessionData = () => {
@@ -929,7 +963,7 @@ export default function App() {
                 customBaseUrl, deepConfig, userAgentConfig, concurrency, rowsToFetch, skipRows, sleepTime, maxRetries, retryDelay,
                 feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt, conversationRewriteMode,
                 // NOTE: converterInputText excluded - it can be very large (entire uploaded files)
-                generationParams: { temperature, topP, topK, frequencyPenalty, presencePenalty }
+                generationParams: generationParams
             }
         };
     };
@@ -986,11 +1020,7 @@ export default function App() {
                 if (c.conversationRewriteMode !== undefined) setConversationRewriteMode(c.conversationRewriteMode);
                 if (c.converterInputText) setConverterInputText(c.converterInputText);
                 if (c.generationParams) {
-                    if (c.generationParams.temperature !== undefined) setTemperature(String(c.generationParams.temperature));
-                    if (c.generationParams.topP !== undefined) setTopP(String(c.generationParams.topP));
-                    if (c.generationParams.topK !== undefined) setTopK(String(c.generationParams.topK));
-                    if (c.generationParams.frequencyPenalty !== undefined) setFrequencyPenalty(String(c.generationParams.frequencyPenalty));
-                    if (c.generationParams.presencePenalty !== undefined) setPresencePenalty(String(c.generationParams.presencePenalty));
+                    setGenerationParams(c.generationParams);
                 }
                 setError(null);
             }
@@ -1137,7 +1167,7 @@ export default function App() {
             const { extractJsonFields } = await import('./utils/jsonFieldExtractor');
 
             // Initialize streaming conversation state
-            const initStreamingState = (totalMessages: number, userMessage?: string): StreamingConversationState => ({
+            const initStreamingState = (totalMessages: number, userMessage?: string, isSinglePrompt: boolean = false): StreamingConversationState => ({
                 id: generationId,
                 phase: 'waiting_for_response',
                 currentMessageIndex: 0,
@@ -1147,7 +1177,8 @@ export default function App() {
                 currentReasoning: '',
                 currentAnswer: '',
                 useOriginalAnswer: false,
-                rawAccumulated: ''
+                rawAccumulated: '',
+                isSinglePrompt
             });
 
             // Progressive streaming callback that parses JSON fields
@@ -1346,6 +1377,11 @@ export default function App() {
                         enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
                     }
 
+                    // Initialize streaming state for regular mode (non-chat input)
+                    const regularStreamState = initStreamingState(1, promptInput, true);
+                    streamingConversationsRef.current.set(generationId, regularStreamState);
+                    setStreamingConversations(new Map(streamingConversationsRef.current));
+
                     result = await ExternalApiService.callExternalApi({
                         provider: externalProvider,
                         apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
@@ -1412,6 +1448,12 @@ export default function App() {
 
                 // REMOVED: Intelligent Sync. We now strictly respect the deepConfig.phases.writer.systemPrompt
                 // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
+
+                // Initialize streaming state for deep mode (non-chat input)
+                const deepStreamState = initStreamingState(1, inputPayload, true);
+                streamingConversationsRef.current.set(generationId, deepStreamState);
+                setStreamingConversations(new Map(streamingConversationsRef.current));
+
                 const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                     input: inputPayload,
                     originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
@@ -2147,7 +2189,43 @@ export default function App() {
 
     const stopGeneration = () => {
         abortControllerRef.current?.abort();
+        setStreamingConversations(new Map()); // Clear active streaming views
+        streamingConversationsRef.current.clear(); // Clear ref to prevent resurrection
         setIsRunning(false);
+    };
+
+    const handleDeleteLog = async (id: string) => {
+        // 1. Check if it's a streaming conversation and remove it
+        if (streamingConversations.has(id) || streamingConversationsRef.current.has(id)) {
+            setStreamingConversations(prev => {
+                const next = new Map(prev);
+                next.delete(id);
+                return next;
+            });
+            streamingConversationsRef.current.delete(id);
+        }
+
+        // 2. Check if it's a visible log item
+        const logItem = visibleLogs.find(l => l.id === id);
+        if (logItem) {
+            // Delete from UI immediately
+            setVisibleLogs(prev => prev.filter(l => l.id !== id));
+            setTotalLogCount(prev => Math.max(0, prev - 1));
+
+            // Delete from Local Storage
+            await LogStorageService.deleteLog(sessionUid, id);
+
+            // Delete from Firebase if in Production and Saved
+            if (environment === 'production' && FirebaseService.isFirebaseConfigured() && logItem.savedToDb) {
+                try {
+                    await FirebaseService.deleteLogItem(id);
+                    updateDbStats();
+                } catch (e) {
+                    console.error("Failed to delete log from Firebase:", e);
+                    // We don't restore the item, just log the error
+                }
+            }
+        }
     };
 
     const handleStart = () => {
@@ -2481,6 +2559,13 @@ export default function App() {
                     <VerifierPanel
                         onImportFromDb={async () => { /* Managed internally by VerifierPanel but could be lifted */ }}
                         currentSessionUid={sessionUid}
+                        modelConfig={{
+                            provider: provider,
+                            externalProvider: externalProvider,
+                            externalModel: externalModel,
+                            apiKey: provider === 'external' ? externalApiKey : '', // Or handle appropriately
+                            externalApiKey: externalApiKey
+                        }}
                     />
                 </main>
             ) : (
@@ -2752,6 +2837,15 @@ export default function App() {
                                         )}
                                     </div>
 
+                                    {/* Generation Parameters */}
+                                    <div className="pt-2 border-t border-slate-800/50">
+                                        <GenerationParamsInput
+                                            params={generationParams}
+                                            onChange={setGenerationParams}
+                                            label="Generation Parameters"
+                                        />
+                                    </div>
+
                                     {/* System Prompt */}
                                     <div className="space-y-2">
                                         <div className="flex items-center justify-between">
@@ -2910,7 +3004,7 @@ export default function App() {
                                                         <label className="text-[10px] text-slate-500 font-bold uppercase">Responder</label>
                                                         <select
                                                             value={userAgentConfig.responderPhase}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setUserAgentConfig(prev => ({ ...prev, responderPhase: e.target.value }))}
+                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setUserAgentConfig(prev => ({ ...prev, responderPhase: e.target.value as 'writer' | 'rewriter' | 'responder' }))}
                                                             className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-cyan-500 outline-none"
                                                         >
                                                             <option value="writer">Writer</option>
@@ -3014,7 +3108,7 @@ export default function App() {
                                     {/* ... (HF Config Inputs) ... */}
                                     <div className="flex gap-2">
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Config</label>{hfStructure.configs.length > 0 ? (<select value={hfConfig.config || ''} onChange={e => handleConfigChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.configs.map(c => <option key={c} value={c}>{c}</option>)}</select>) : (<input type="text" value={hfConfig.config || ''} onChange={e => setHfConfig({ ...hfConfig, config: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
-                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Split</label>{hfStructure.splits[hfConfig.config]?.length > 0 ? (<select value={hfConfig.split || ''} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.splits[hfConfig.config].map(s => <option key={s} value={s}>{s}</option>)}</select>) : (<input type="text" value={hfConfig.split || ''} onChange={e => setHfConfig({ ...hfConfig, split: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
+                                        <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Split</label>{hfStructure.splits[hfConfig.config]?.length > 0 ? (<select value={hfConfig.split || ''} onChange={e => handleSplitChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none appearance-none">{hfStructure.splits[hfConfig.config].map(s => <option key={s} value={s}>{s}</option>)}</select>) : (<input type="text" value={hfConfig.split || ''} onChange={e => handleSplitChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" />)}</div>
                                     </div>
                                     <div className="flex gap-2">
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Rows to Fetch</label><input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" /></div>
@@ -3323,6 +3417,7 @@ export default function App() {
                                 onRetry={retryItem}
                                 onRetrySave={retrySave}
                                 onSaveToDb={saveItemToDb}
+                                onDelete={handleDeleteLog}
                                 retryingIds={retryingIds}
                                 savingIds={savingToDbIds}
                                 isProdMode={environment === 'production'}

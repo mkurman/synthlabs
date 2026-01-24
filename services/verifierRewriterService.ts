@@ -1,8 +1,12 @@
-import { ExternalProvider, VerifierItem } from '../types';
+import { ExternalProvider, GenerationParams, VerifierItem } from '../types';
 import { PromptService } from './promptService';
 import * as ExternalApiService from './externalApiService';
 import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
+import { extractJsonFields } from '../utils/jsonFieldExtractor';
+
+// Streaming callback type for real-time content display
+export type RewriterStreamCallback = (chunk: string, accumulated: string) => void;
 
 export interface RewriterConfig {
     provider: 'gemini' | 'external';
@@ -13,6 +17,13 @@ export interface RewriterConfig {
     maxRetries?: number;
     retryDelay?: number;
     systemPrompt?: string;  // Custom system prompt override
+    generationParams?: GenerationParams; // Optional generation parameters
+    // Streaming options
+    stream?: boolean;
+    onStreamChunk?: RewriterStreamCallback;
+    // Batch processing options
+    concurrency?: number;
+    delayMs?: number;
 }
 
 export type RewritableField = 'query' | 'reasoning' | 'answer';
@@ -56,7 +67,14 @@ ${item.answer}
 ---
 TARGET FIELD TO REWRITE: ${targetField.toUpperCase()}
 Current value of ${targetField}:
-${item[targetField]}`;
+${item[targetField]}
+
+IMPORTANT: Respond with a VALID JSON object.
+
+Expected Output Format:
+{
+  "response": "The rewritten content for ${targetField}..."
+}`;
 }
 
 /**
@@ -126,19 +144,35 @@ ${msg.content}`;
     let instructions = '';
     if (targetComponent === 'reasoning') {
         instructions = `TASK: Regenerate ONLY the REASONING TRACE for the target message.
-- Keep the existing ANSWER exactly as it is: "${existingAnswer.substring(0, 200)}${existingAnswer.length > 200 ? '...' : ''}"
-- Generate new, improved reasoning that leads to this answer
-- Your response must be a JSON object: { "reasoning": "your new reasoning", "answer": "${existingAnswer.replace(/"/g, '\\"')}" }`;
+- Keep the existing ANSWER exactly as it is (do not output it).
+- Generate new, improved reasoning that leads to this answer.
+- Your response must be a VALID JSON object.
+
+Expected Output Format:
+{
+  "reasoning": "# 1. Query decomposition..."
+}`;
     } else if (targetComponent === 'answer') {
         instructions = `TASK: Regenerate ONLY the ANSWER for the target message.
-- Keep the existing REASONING TRACE for reference
-- Generate a new, improved answer based on the reasoning
-- Your response must be a JSON object: { "reasoning": "${existingReasoning.replace(/"/g, '\\"').substring(0, 500)}", "answer": "your new answer" }`;
+- Keep the existing REASONING TRACE for reference (do not output it).
+- Generate a new, improved answer based on the reasoning.
+- Your response must be a VALID JSON object.
+
+Expected Output Format:
+{
+  "answer": "Here is the improved answer..."
+}`;
     } else {
         instructions = `TASK: Regenerate BOTH the REASONING TRACE and ANSWER for the target message.
 - Generate new reasoning that thoroughly analyzes the user's request
 - Generate a new answer that follows from the reasoning
-- Your response must be a JSON object: { "reasoning": "your new reasoning", "answer": "your new answer" }`;
+- Your response must be a VALID JSON object.
+
+Expected Output Format:
+{
+  "reasoning": "# 1. Query decomposition...",
+  "answer": "The solution is..."
+}`;
     }
 
     return `## CONVERSATION HISTORY
@@ -163,10 +197,21 @@ function cleanResponse(input: any): string {
             const trimmed = input.trim();
             // Check if it looks like a JSON object using simple heuristic
             if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                content = JSON.parse(input);
+                const parsed = JSON.parse(input);
+                if (typeof parsed === 'object' && parsed !== null) {
+                    content = parsed;
+                } else {
+                    // Parsed as string (or other primitive), force extraction
+                    throw new Error("Parsed as non-object");
+                }
             }
         } catch (e) {
-            // Not valid JSON, treat as raw string
+            // Not valid JSON, try to extract fields robustly
+            const extracted = extractJsonFields(input);
+            if (extracted.answer || extracted.reasoning) {
+                return extracted.answer || extracted.reasoning || input;
+            }
+            // Treat as raw string
             return input;
         }
     }
@@ -189,8 +234,8 @@ function parseRewriteResult(input: any, fallbackReasoning: string, fallbackAnswe
     if (typeof input === 'string') {
         try {
             const trimmed = input.trim();
-            // Remove markdown code blocks if present
-            const jsonMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, trimmed];
+            // Remove markdown code blocks if present (only at start of content)
+            const jsonMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```/) || [null, trimmed];
             const jsonStr = jsonMatch[1].trim();
 
             if (jsonStr.startsWith('{') && jsonStr.endsWith('}')) {
@@ -229,7 +274,8 @@ export async function callRewriterAI(
             systemPrompt,
             {
                 maxRetries: config.maxRetries ?? 2,
-                retryDelay: config.retryDelay ?? 1000
+                retryDelay: config.retryDelay ?? 1000,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams()
             }
         );
         // GeminiService returns { query, reasoning, answer }
@@ -248,10 +294,61 @@ export async function callRewriterAI(
             signal,
             maxRetries: config.maxRetries ?? 2,
             retryDelay: config.retryDelay ?? 1000,
+            generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
             structuredOutput: true
         });
 
         return cleanResponse(result);
+    }
+}
+
+/**
+ * Calls the AI service to rewrite content with streaming support
+ * For external providers: streams tokens in real-time
+ * For Gemini: falls back to non-streaming (simulates streaming with final result)
+ */
+export async function callRewriterAIStreaming(
+    systemPrompt: string,
+    userPrompt: string,
+    config: RewriterConfig,
+    onChunk: RewriterStreamCallback,
+    signal?: AbortSignal
+): Promise<string> {
+    if (config.provider === 'gemini') {
+        // Gemini SDK streaming is complex, fall back to non-streaming
+        // and emit the final result as a single "stream" chunk
+        const result = await GeminiService.generateReasoningTrace(
+            userPrompt,
+            systemPrompt,
+            {
+                maxRetries: config.maxRetries ?? 2,
+                retryDelay: config.retryDelay ?? 1000,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams()
+            }
+        );
+        const rawText = result.answer || result.reasoning || String(result);
+        const cleaned = cleanResponse(rawText);
+        // Simulate streaming by emitting final result
+        onChunk(cleaned, cleaned);
+        return cleaned;
+    } else {
+        const result = await ExternalApiService.callExternalApi({
+            provider: config.externalProvider,
+            apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
+            model: config.model,
+            customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+            systemPrompt,
+            userPrompt,
+            signal,
+            maxRetries: config.maxRetries ?? 2,
+            retryDelay: config.retryDelay ?? 1000,
+            generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
+            structuredOutput: false,  // Don't parse as JSON during streaming
+            stream: true,
+            onStreamChunk: (chunk, accumulated) => onChunk(chunk, accumulated)
+        });
+
+        return typeof result === 'string' ? result : cleanResponse(result);
     }
 }
 
@@ -270,7 +367,8 @@ async function callRewriterAIRaw(
             systemPrompt,
             {
                 maxRetries: config.maxRetries ?? 2,
-                retryDelay: config.retryDelay ?? 1000
+                retryDelay: config.retryDelay ?? 1000,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams()
             }
         );
         return result.answer || result.reasoning || String(result);
@@ -285,6 +383,7 @@ async function callRewriterAIRaw(
             signal,
             maxRetries: config.maxRetries ?? 2,
             retryDelay: config.retryDelay ?? 1000,
+            generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
             structuredOutput: true
         });
         return result;
@@ -310,6 +409,24 @@ export async function rewriteField(params: RewriteFieldParams): Promise<string> 
 }
 
 /**
+ * Rewrites a specific field with streaming support
+ * Streams the AI response in real-time via the onChunk callback
+ */
+export async function rewriteFieldStreaming(
+    params: RewriteFieldParams,
+    onChunk: RewriterStreamCallback
+): Promise<string> {
+    const { item, field, config, signal, promptSet } = params;
+
+    const promptName = `${field}_rewrite`;
+    const systemPrompt = config.systemPrompt || PromptService.getPrompt('verifier', promptName, promptSet);
+    const userPrompt = buildItemContext(item, field);
+
+    const result = await callRewriterAIStreaming(systemPrompt, userPrompt, config, onChunk, signal);
+    return result.trim();
+}
+
+/**
  * Rewrites a specific message in a multi-turn conversation (answer only)
  */
 export async function rewriteMessage(params: RewriteMessageParams): Promise<string> {
@@ -324,6 +441,52 @@ export async function rewriteMessage(params: RewriteMessageParams): Promise<stri
     const userPrompt = buildMessageContext(item, messageIndex);
 
     const result = await callRewriterAI(systemPrompt, userPrompt, config, signal);
+    return result.trim();
+}
+
+/**
+ * Rewrites a specific message with streaming support
+ * Defaults to "answer" component rewrite if not specified
+ */
+export async function rewriteMessageStreaming(
+    params: RewriteMessageParams,
+    onChunk: RewriterStreamCallback
+): Promise<string> {
+    const { item, messageIndex, config, signal } = params;
+
+    if (!item.messages || messageIndex >= item.messages.length) {
+        throw new Error('Invalid message index or no messages in item');
+    }
+
+    const systemPrompt = config.systemPrompt || `You are an expert at improving and correcting AI assistant responses.
+Given a conversation and a target message, regenerate ONLY the ANSWER.
+Keep the existing reasoning trace exactly as provided.`;
+
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'answer');
+
+    const result = await callRewriterAIStreaming(systemPrompt, userPrompt, config, onChunk, signal);
+    return result.trim();
+}
+
+/**
+ * Rewrites both reasoning and answer for a message with streaming support
+ */
+export async function rewriteMessageBothStreaming(
+    params: RewriteMessageParams,
+    onChunk: RewriterStreamCallback
+): Promise<string> {
+    const { item, messageIndex, config, signal } = params;
+
+    if (!item.messages || messageIndex >= item.messages.length) {
+        throw new Error('Invalid message index or no messages in item');
+    }
+
+    const systemPrompt = config.systemPrompt || `You are an expert at generating detailed reasoning traces and answers.
+Given a conversation and a target message, regenerate BOTH the reasoning process AND the final answer.`;
+
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'both');
+
+    const result = await callRewriterAIStreaming(systemPrompt, userPrompt, config, onChunk, signal);
     return result.trim();
 }
 
@@ -355,6 +518,30 @@ Respond with a JSON object: { "reasoning": "your new reasoning", "answer": "pres
 
     const result = await callRewriterAIRaw(systemPrompt, userPrompt, config, signal);
     return parseRewriteResult(result, existingReasoning, existingAnswer);
+}
+
+/**
+ * Rewrites only the reasoning trace for a message with streaming support
+ * Uses the same prompt as rewriteMessageReasoning but with real-time streaming
+ */
+export async function rewriteMessageReasoningStreaming(
+    params: RewriteMessageParams,
+    onChunk: RewriterStreamCallback
+): Promise<string> {
+    const { item, messageIndex, config, signal } = params;
+
+    if (!item.messages || messageIndex >= item.messages.length) {
+        throw new Error('Invalid message index or no messages in item');
+    }
+
+    const systemPrompt = config.systemPrompt || `You are an expert at generating detailed reasoning traces. 
+Given a conversation and a target message, regenerate ONLY the reasoning/thinking process.
+The answer must remain EXACTLY as provided - do not modify it.`;
+
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'reasoning');
+
+    const result = await callRewriterAIStreaming(systemPrompt, userPrompt, config, onChunk, signal);
+    return result.trim();
 }
 
 /**

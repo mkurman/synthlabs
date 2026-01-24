@@ -49,9 +49,10 @@ Comparing these options → driving is significantly faster than train travel, s
 
 ## Output Format
 
-Return valid JSON only:
+Return valid JSON only, with reasoning and answer keys:
 ```json
 {
-  "reasoning": "[Full prose reasoning with embedded symbols as shown above]"
+  "reasoning": "[Full prose reasoning with embedded symbols as shown above]",
+  "answer": "[Final  rewritten assistant answer]"
 }
 ```

@@ -5,6 +5,7 @@
  */
 
 import { EXTERNAL_PROVIDERS, PROVIDER_URLS } from '../constants';
+import { GenerationParams } from '../types';
 
 const DB_NAME = 'SynthLabsSettingsDB';
 const DB_VERSION = 1;
@@ -19,6 +20,7 @@ export interface StepModelConfig {
     provider: 'gemini' | 'external' | 'other';
     externalProvider: string;
     model: string;
+    generationParams?: GenerationParams;
 }
 
 // Deep mode step configurations
@@ -121,6 +123,8 @@ export interface AppSettings {
     autoRouteLlmModel?: string;             // Model to use for LLM classification (empty = use current)
     autoRouteLlmCustomBaseUrl?: string;
     taskPromptMapping?: Record<string, string>;  // Custom task→prompt mappings (overrides defaults)
+    // Default generation parameters for LLM calls
+    defaultGenerationParams?: GenerationParams;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -142,7 +146,16 @@ const DEFAULT_SETTINGS: AppSettings = {
     autoRouteLlmExternalProvider: '',
     autoRouteLlmApiKey: '',
     autoRouteLlmModel: '',
-    autoRouteLlmCustomBaseUrl: ''
+    autoRouteLlmCustomBaseUrl: '',
+    // Default generation parameters
+    defaultGenerationParams: {
+        temperature: 0.8,
+        topP: 0.9,
+        topK: undefined,
+        presencePenalty: undefined,
+        frequencyPenalty: undefined,
+        maxTokens: undefined
+    }
 };
 
 // In-memory cache for synchronous access
@@ -390,6 +403,19 @@ export const SettingsService = {
     // Get custom base URL for 'other' provider
     getCustomBaseUrl: (): string => {
         return settingsCache.customEndpointUrl || '';
+    },
+
+    // Get default generation parameters from settings
+    getDefaultGenerationParams: (): GenerationParams => {
+        const defaults = settingsCache.defaultGenerationParams || DEFAULT_SETTINGS.defaultGenerationParams;
+        return {
+            temperature: defaults?.temperature,
+            topP: defaults?.topP,
+            topK: defaults?.topK,
+            presencePenalty: defaults?.presencePenalty,
+            frequencyPenalty: defaults?.frequencyPenalty,
+            maxTokens: defaults?.maxTokens
+        };
     },
 
     // Get workflow defaults

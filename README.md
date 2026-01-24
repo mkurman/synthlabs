@@ -178,6 +178,108 @@ Seamless Firebase/Firestore support:
 | `bun run bun:build` | Build for production |
 | `bun run bun:preview` | Preview production build |
 
+---
+
+## Electron Desktop App
+
+Build standalone desktop applications for Windows, macOS, and Linux using Electron.
+
+### Electron Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run electron:dev` | Run in development mode (with hot reload) |
+| `npm run electron:build` | Build for all platforms |
+| `npm run electron:build:win` | Build Windows installer (NSIS + portable) |
+| `npm run electron:build:mac` | Build macOS app (DMG + ZIP) |
+
+### Building for Windows
+
+On Windows or cross-platform:
+```bash
+npm run electron:build:win
+```
+
+Output files will be in the `release/` directory:
+- `SynthLabs Reasoning Generator Setup X.X.X.exe` - NSIS installer
+- `SynthLabs Reasoning Generator X.X.X.exe` - Portable executable
+
+### Building for macOS
+
+On macOS:
+```bash
+npm run electron:build:mac
+```
+
+Output files will be in the `release/` directory:
+- `SynthLabs Reasoning Generator-X.X.X.dmg` - Disk image
+- `SynthLabs Reasoning Generator-X.X.X-mac.zip` - ZIP archive
+
+Both builds support:
+- x64 (Intel) architecture
+- arm64 (Apple Silicon) architecture
+- Code signing with hardened runtime
+- Network permissions for API calls
+
+### Building for Linux
+
+```bash
+npm run electron:build
+```
+
+Output files:
+- `SynthLabs Reasoning Generator-X.X.X.AppImage` - Universal Linux app
+- `synthlabs-reasoning-generator_X.X.X_amd64.deb` - Debian/Ubuntu package
+
+### Requirements for Building
+
+**Windows:**
+- Windows 10 or later
+- Node.js 18+
+- No additional dependencies required
+
+**macOS:**
+- macOS 10.15 (Catalina) or later
+- Xcode Command Line Tools: `xcode-select --install`
+- Node.js 18+
+- For code signing: Apple Developer account (optional, for distribution)
+
+**Linux:**
+- Any modern Linux distribution
+- Node.js 18+
+- Build tools: `sudo apt-get install build-essential` (Debian/Ubuntu)
+
+### Development Workflow
+
+1. **Start development server:**
+   ```bash
+   npm run electron:dev
+   ```
+   This runs Vite dev server and Electron concurrently with hot reload.
+
+2. **Build for production:**
+   ```bash
+   npm run electron:build
+   ```
+
+3. **Test the built app:**
+   - Run the installer/exe/dmg from `release/` directory
+   - All features work the same as the web version
+
+### Configuration
+
+Electron settings are in `electron/main.js`:
+- Window size, icon, and appearance
+- Menu configuration
+- Security settings (context isolation enabled)
+- Platform-specific behavior
+
+electron-builder configuration is in `package.json` under the `build` section:
+- Output directories
+- Platform-specific targets
+- Code signing and entitlements
+- Installer options
+
 
 ---
 
