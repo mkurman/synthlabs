@@ -22,6 +22,7 @@ import { PromptService } from './services/promptService';
 import * as GeminiService from './services/geminiService';
 import * as FirebaseService from './services/firebaseService';
 import * as ExternalApiService from './services/externalApiService';
+import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaModel } from './services/externalApiService';
 import * as DeepReasoningService from './services/deepReasoningService';
 import { LogStorageService } from './services/logStorageService';
 import { SettingsService } from './services/settingsService';
@@ -71,6 +72,43 @@ export default function App() {
     const [externalApiKey, setExternalApiKey] = useState('');
     const [externalModel, setExternalModel] = useState('anthropic/claude-3.5-sonnet');
     const [customBaseUrl, setCustomBaseUrl] = useState('');
+    
+    // --- State: Ollama Integration ---
+    const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
+    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+    const [ollamaLoading, setOllamaLoading] = useState(false);
+
+    // Fetch Ollama models
+    const refreshOllamaModels = useCallback(async () => {
+        setOllamaLoading(true);
+        setOllamaStatus('checking');
+        try {
+            const isOnline = await checkOllamaStatus();
+            if (isOnline) {
+                setOllamaStatus('online');
+                const models = await fetchOllamaModels();
+                setOllamaModels(models);
+                // If no model selected and models available, select first one
+                if (models.length > 0 && externalProvider === 'ollama' && !externalModel) {
+                    setExternalModel(models[0].name);
+                }
+            } else {
+                setOllamaStatus('offline');
+                setOllamaModels([]);
+            }
+        } catch {
+            setOllamaStatus('offline');
+            setOllamaModels([]);
+        }
+        setOllamaLoading(false);
+    }, [externalProvider, externalModel]);
+
+    // Auto-fetch Ollama models when Ollama provider is selected
+    useEffect(() => {
+        if (externalProvider === 'ollama') {
+            refreshOllamaModels();
+        }
+    }, [externalProvider]);
 
     // --- State: Generation Params ---
     const [generationParams, setGenerationParams] = useState<GenerationParams>({});
@@ -2814,22 +2852,88 @@ export default function App() {
 
                                     <div className="space-y-3">
                                         <div className="space-y-1">
-                                            <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
-                                            <input
-                                                type="text"
-                                                value={externalModel}
-                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalModel(e.target.value)}
-                                                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
-                                                placeholder={provider === 'gemini' ? 'gemini-2.0-flash-exp' : 'Model ID'}
-                                            />
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
+                                                {externalProvider === 'ollama' && (
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={`text-[9px] ${ollamaStatus === 'online' ? 'text-emerald-400' : ollamaStatus === 'offline' ? 'text-red-400' : 'text-yellow-400'}`}>
+                                                            {ollamaStatus === 'online' ? `● ${ollamaModels.length} models` : ollamaStatus === 'offline' ? '● Offline' : '● Checking...'}
+                                                        </span>
+                                                        <button
+                                                            onClick={refreshOllamaModels}
+                                                            disabled={ollamaLoading}
+                                                            className="p-0.5 text-slate-400 hover:text-emerald-400 disabled:opacity-50"
+                                                            title="Refresh Ollama models"
+                                                        >
+                                                            <RefreshCw className={`w-3 h-3 ${ollamaLoading ? 'animate-spin' : ''}`} />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {/* Ollama: Show dropdown, Others: Show input */}
+                                            {externalProvider === 'ollama' ? (
+                                                <div className="space-y-2">
+                                                    <select
+                                                        value={externalModel}
+                                                        onChange={(e) => setExternalModel(e.target.value)}
+                                                        className="w-full bg-slate-950 border border-emerald-700/50 rounded px-3 py-2 text-xs text-white focus:border-emerald-500 outline-none"
+                                                        disabled={ollamaStatus !== 'online' || ollamaModels.length === 0}
+                                                    >
+                                                        <option value="">
+                                                            {ollamaStatus === 'checking' ? 'Loading models...' : 
+                                                             ollamaStatus === 'offline' ? 'Ollama is offline' :
+                                                             ollamaModels.length === 0 ? 'No models found' : 'Select a model'}
+                                                        </option>
+                                                        {ollamaModels.map(model => (
+                                                            <option key={model.name} value={model.name}>
+                                                                {model.name} ({formatOllamaModelSize(model.size)})
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    {/* Quick model buttons */}
+                                                    {ollamaStatus === 'online' && ollamaModels.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {ollamaModels.slice(0, 4).map(model => (
+                                                                <button
+                                                                    key={model.name}
+                                                                    onClick={() => setExternalModel(model.name)}
+                                                                    className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${
+                                                                        externalModel === model.name
+                                                                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                                                                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
+                                                                    }`}
+                                                                >
+                                                                    {model.name.split(':')[0]}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {ollamaStatus === 'offline' && (
+                                                        <p className="text-[9px] text-red-400/80">
+                                                            Start Ollama: <code className="bg-slate-800 px-1 rounded">ollama serve</code>
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <input
+                                                    type="text"
+                                                    value={externalModel}
+                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalModel(e.target.value)}
+                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
+                                                    placeholder={provider === 'gemini' ? 'gemini-2.0-flash-exp' : 'Model ID'}
+                                                />
+                                            )}
                                         </div>
 
                                         {provider === 'external' && (
                                             <>
-                                                <div className="space-y-1">
-                                                    <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
-                                                    <input type="password" value={externalApiKey || ''} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" />
-                                                </div>
+                                                {/* Hide API Key for Ollama since it doesn't need one */}
+                                                {externalProvider !== 'ollama' && (
+                                                    <div className="space-y-1">
+                                                        <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
+                                                        <input type="password" value={externalApiKey || ''} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalApiKey(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" />
+                                                    </div>
+                                                )}
                                                 {externalProvider === 'other' && (
                                                     <div className="space-y-1">
                                                         <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>

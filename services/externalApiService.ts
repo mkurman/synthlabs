@@ -646,3 +646,96 @@ function parseJsonContent(content: string): any {
     };
   }
 }
+
+// ==================== Ollama Integration ====================
+
+export interface OllamaModel {
+  name: string;
+  model: string;
+  modified_at: string;
+  size: number;
+  digest: string;
+  details?: {
+    parent_model?: string;
+    format?: string;
+    family?: string;
+    families?: string[];
+    parameter_size?: string;
+    quantization_level?: string;
+  };
+}
+
+export interface OllamaModelListResponse {
+  models: OllamaModel[];
+}
+
+/**
+ * Fetch available models from a local Ollama instance
+ * @param baseUrl - Ollama server URL (default: http://localhost:11434)
+ * @returns List of available models or empty array on error
+ */
+export async function fetchOllamaModels(baseUrl: string = 'http://localhost:11434'): Promise<OllamaModel[]> {
+  try {
+    // Ollama uses /api/tags endpoint to list models (not /v1/models like OpenAI)
+    const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/tags`;
+    logger.log(`Fetching Ollama models from: ${url}`);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(5000), // 5 second timeout
+    });
+
+    if (!response.ok) {
+      logger.warn(`Ollama API returned ${response.status}: ${response.statusText}`);
+      return [];
+    }
+
+    const data: OllamaModelListResponse = await response.json();
+    logger.log(`Found ${data.models?.length || 0} Ollama models`);
+    return data.models || [];
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+        logger.warn('Ollama connection timed out - is Ollama running?');
+      } else if (error.message.includes('fetch')) {
+        logger.warn('Could not connect to Ollama - is Ollama running?');
+      } else {
+        logger.warn('Error fetching Ollama models:', error.message);
+      }
+    }
+    return [];
+  }
+}
+
+/**
+ * Check if Ollama is running and accessible
+ * @param baseUrl - Ollama server URL
+ * @returns true if Ollama is reachable
+ */
+export async function checkOllamaStatus(baseUrl: string = 'http://localhost:11434'): Promise<boolean> {
+  try {
+    const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/tags`;
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(3000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Format Ollama model size for display (e.g., "7B", "13B")
+ */
+export function formatOllamaModelSize(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) {
+    return `${gb.toFixed(1)}GB`;
+  }
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(0)}MB`;
+}

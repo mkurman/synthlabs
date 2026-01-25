@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders } from 'lucide-react';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server } from 'lucide-react';
 import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, WorkflowDefaults, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG, EMPTY_DEEP_DEFAULTS } from '../services/settingsService';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING, TaskType } from '../services/taskClassifierService';
 import { PROVIDER_URLS } from '../constants';
+import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaModel } from '../services/externalApiService';
 
 interface SettingsPanelProps {
     isOpen: boolean;
@@ -42,6 +43,32 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ generalPurpose: true, generator: true, converter: false });
     const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
     const [promptMetadata, setPromptMetadata] = useState<Record<string, PromptSetMetadata>>({});
+    
+    // Ollama integration state
+    const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
+    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+    const [ollamaLoading, setOllamaLoading] = useState(false);
+
+    // Fetch Ollama models when panel opens
+    const refreshOllamaModels = async () => {
+        setOllamaLoading(true);
+        setOllamaStatus('checking');
+        try {
+            const isOnline = await checkOllamaStatus();
+            if (isOnline) {
+                setOllamaStatus('online');
+                const models = await fetchOllamaModels();
+                setOllamaModels(models);
+            } else {
+                setOllamaStatus('offline');
+                setOllamaModels([]);
+            }
+        } catch {
+            setOllamaStatus('offline');
+            setOllamaModels([]);
+        }
+        setOllamaLoading(false);
+    };
 
     useEffect(() => {
         if (isOpen) {
@@ -50,6 +77,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
             setConfirmClear(false);
             setAvailablePromptSets(PromptService.getAvailableSets());
             setPromptMetadata(PromptService.getAllMetadata());
+            // Auto-fetch Ollama models when panel opens
+            refreshOllamaModels();
         }
     }, [isOpen]);
 
@@ -245,53 +274,126 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 : settings.providerKeys[provider];
                                             const hasEnvVar = envVarMap[provider] && !keyValue;
                                             const isCustom = provider === 'other';
+                                            const isOllama = provider === 'ollama';
 
                                             return (
-                                                <div key={provider} className="flex items-center gap-2 py-1.5 px-2 bg-slate-900/50 rounded border border-slate-800 hover:border-slate-700">
-                                                    <div className="w-28 flex-shrink-0">
-                                                        <span className="text-xs font-semibold text-slate-200">{info.name}</span>
-                                                        {hasEnvVar && (
-                                                            <span className="text-emerald-400 text-[8px] ml-1">✓</span>
+                                                <div key={provider} className={`flex flex-col gap-2 py-1.5 px-2 bg-slate-900/50 rounded border ${isOllama ? 'border-emerald-800/50' : 'border-slate-800'} hover:border-slate-700`}>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-28 flex-shrink-0">
+                                                            <span className="text-xs font-semibold text-slate-200">{info.name}</span>
+                                                            {hasEnvVar && (
+                                                                <span className="text-emerald-400 text-[8px] ml-1">✓</span>
+                                                            )}
+                                                            {isOllama && (
+                                                                <span className={`text-[8px] ml-1 ${ollamaStatus === 'online' ? 'text-emerald-400' : ollamaStatus === 'offline' ? 'text-red-400' : 'text-yellow-400'}`}>
+                                                                    {ollamaStatus === 'online' ? '● Online' : ollamaStatus === 'offline' ? '● Offline' : '● ...'}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {isCustom && (
+                                                            <input
+                                                                type="text"
+                                                                value={settings.customEndpointUrl || ''}
+                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
+                                                                placeholder="Base URL"
+                                                                className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
+                                                            />
+                                                        )}
+                                                        {!isOllama && (
+                                                            <div className="relative flex-1 min-w-0">
+                                                                <input
+                                                                    type={showKeys[provider] ? 'text' : 'password'}
+                                                                    value={keyValue || ''}
+                                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                                                        if (provider === 'gemini') {
+                                                                            updateSetting('geminiApiKey', e.target.value);
+                                                                        } else {
+                                                                            updateProviderKey(provider, e.target.value);
+                                                                        }
+                                                                    }}
+                                                                    placeholder={hasEnvVar ? '(env)' : 'API Key'}
+                                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none pr-6"
+                                                                />
+                                                                <button
+                                                                    onClick={() => toggleShowKey(provider)}
+                                                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                                                                >
+                                                                    {showKeys[provider] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                        {/* Ollama: Show model dropdown instead of API key */}
+                                                        {isOllama && (
+                                                            <div className="flex-1 flex items-center gap-2">
+                                                                <Server className="w-3.5 h-3.5 text-emerald-500" />
+                                                                <span className="text-[10px] text-slate-400">No API key needed</span>
+                                                            </div>
+                                                        )}
+                                                        {/* Default Model - Show dropdown for Ollama */}
+                                                        {isOllama ? (
+                                                            <div className="flex items-center gap-1">
+                                                                <select
+                                                                    value={settings.providerDefaultModels?.[provider] || ''}
+                                                                    onChange={(e) => updateDefaultModel(provider, e.target.value)}
+                                                                    className="w-36 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-emerald-500 outline-none"
+                                                                    disabled={ollamaStatus !== 'online' || ollamaModels.length === 0}
+                                                                >
+                                                                    <option value="">
+                                                                        {ollamaStatus === 'checking' ? 'Loading...' : 
+                                                                         ollamaStatus === 'offline' ? 'Ollama offline' :
+                                                                         ollamaModels.length === 0 ? 'No models' : 'Select model'}
+                                                                    </option>
+                                                                    {ollamaModels.map(model => (
+                                                                        <option key={model.name} value={model.name}>
+                                                                            {model.name} ({formatOllamaModelSize(model.size)})
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                                <button
+                                                                    onClick={refreshOllamaModels}
+                                                                    disabled={ollamaLoading}
+                                                                    className="p-1 text-slate-400 hover:text-emerald-400 disabled:opacity-50"
+                                                                    title="Refresh Ollama models"
+                                                                >
+                                                                    <RefreshCw className={`w-3 h-3 ${ollamaLoading ? 'animate-spin' : ''}`} />
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <input
+                                                                type="text"
+                                                                value={settings.providerDefaultModels?.[provider] || ''}
+                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateDefaultModel(provider, e.target.value)}
+                                                                placeholder="Default Model"
+                                                                className="w-32 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
+                                                            />
                                                         )}
                                                     </div>
-                                                    {isCustom && (
-                                                        <input
-                                                            type="text"
-                                                            value={settings.customEndpointUrl || ''}
-                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
-                                                            placeholder="Base URL"
-                                                            className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
-                                                        />
+                                                    {/* Ollama: Show loaded models list */}
+                                                    {isOllama && ollamaStatus === 'online' && ollamaModels.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1 pl-28">
+                                                            {ollamaModels.slice(0, 6).map(model => (
+                                                                <button
+                                                                    key={model.name}
+                                                                    onClick={() => updateDefaultModel('ollama', model.name)}
+                                                                    className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${
+                                                                        settings.providerDefaultModels?.['ollama'] === model.name
+                                                                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                                                                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
+                                                                    }`}
+                                                                >
+                                                                    {model.name.split(':')[0]}
+                                                                </button>
+                                                            ))}
+                                                            {ollamaModels.length > 6 && (
+                                                                <span className="text-[9px] text-slate-500 px-2 py-0.5">+{ollamaModels.length - 6} more</span>
+                                                            )}
+                                                        </div>
                                                     )}
-                                                    <div className="relative flex-1 min-w-0">
-                                                        <input
-                                                            type={showKeys[provider] ? 'text' : 'password'}
-                                                            value={keyValue || ''}
-                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                                if (provider === 'gemini') {
-                                                                    updateSetting('geminiApiKey', e.target.value);
-                                                                } else {
-                                                                    updateProviderKey(provider, e.target.value);
-                                                                }
-                                                            }}
-                                                            placeholder={hasEnvVar ? '(env)' : 'API Key'}
-                                                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none pr-6"
-                                                        />
-                                                        <button
-                                                            onClick={() => toggleShowKey(provider)}
-                                                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                                                        >
-                                                            {showKeys[provider] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                                                        </button>
-                                                    </div>
-                                                    {/* Default Model */}
-                                                    <input
-                                                        type="text"
-                                                        value={settings.providerDefaultModels?.[provider] || ''}
-                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateDefaultModel(provider, e.target.value)}
-                                                        placeholder="Default Model"
-                                                        className="w-32 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
-                                                    />
+                                                    {isOllama && ollamaStatus === 'offline' && (
+                                                        <div className="text-[9px] text-red-400/80 pl-28">
+                                                            Start Ollama with: <code className="bg-slate-800 px-1 rounded">ollama serve</code>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             );
                                         })}
