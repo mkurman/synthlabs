@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders } from 'lucide-react';
-import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, WorkflowDefaults, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG, EMPTY_DEEP_DEFAULTS } from '../services/settingsService';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, Timer } from 'lucide-react';
+import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG } from '../services/settingsService';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING, TaskType } from '../services/taskClassifierService';
@@ -539,6 +539,30 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
                     {activeTab === 'generation' && (
                         <div className="space-y-6">
+                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                                <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                                    <Timer className="w-4 h-4 text-indigo-400" />
+                                    Generation Timeout
+                                </h3>
+                                <p className="text-xs text-slate-500 mb-3">
+                                    Stop streaming if a response does not arrive within this window.
+                                </p>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        value={settings.generationTimeoutSeconds ?? 300}
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                            const nextValue = e.target.value ? Math.max(1, parseInt(e.target.value)) : 300;
+                                            updateSetting('generationTimeoutSeconds', nextValue);
+                                        }}
+                                        className="w-28 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                    />
+                                    <span className="text-xs text-slate-500">seconds</span>
+                                </div>
+                            </div>
+
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                                     <Sliders className="w-4 h-4 text-purple-400" />
