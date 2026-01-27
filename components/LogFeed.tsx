@@ -110,8 +110,8 @@ const LogFeed: React.FC<LogFeedProps> = ({
       {hasActiveStreams && visibleStreaming.length > 0 && (
         <div className="space-y-4 mb-4">
           {visibleStreaming.map(streamState => (
-              <StreamingConversationCard key={streamState.id} streamState={streamState} onDelete={onDelete} onHalt={onHalt} />
-            ))}
+            <StreamingConversationCard key={streamState.id} streamState={streamState} onDelete={onDelete} onHalt={onHalt} />
+          ))}
         </div>
       )}
 
@@ -120,186 +120,186 @@ const LogFeed: React.FC<LogFeedProps> = ({
         const isTimeout = item.status === 'TIMEOUT';
 
         return (
-        <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
 
-          {/* Card Header */}
-          <div className="bg-slate-950/50 p-3 border-b border-slate-800 flex justify-between items-start gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Query</span>
+            {/* Card Header */}
+            <div className="bg-slate-950/50 p-3 border-b border-slate-800 flex justify-between items-start gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Query</span>
+                </div>
+                <div className="text-sm font-medium text-slate-200 truncate font-sans">
+                  {renderSafeContent(item.query)}
+                </div>
               </div>
-              <div className="text-sm font-medium text-slate-200 truncate font-sans">
-                {renderSafeContent(item.query)}
-              </div>
-            </div>
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex items-center gap-2 shrink-0">
-                {item.modelUsed.includes('Gemini') || item.modelUsed.includes('DEEP') ? (
-                  <span className="text-[10px] text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 flex items-center gap-1">
-                    {item.deepMetadata ? <Layers className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
-                    {item.modelUsed.replace("DEEP: ", "Deep ")}
-                  </span>
-                ) : item.isMultiTurn ? (
-                  <span className="text-[10px] text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded-full border border-cyan-500/20 flex items-center gap-1">
-                    <MessageCircle className="w-3 h-3" /> Multi-Turn ({item.messages?.length || 0} msgs)
-                  </span>
-                ) : (
-                  <span className="text-[10px] text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20 flex items-center gap-1">
-                    <Zap className="w-3 h-3" /> {item.modelUsed}
-                  </span>
-                )}
-                <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  {(() => {
-                    if (!item.timestamp) return '--:--:--';
-                    try {
-                      if (typeof item.timestamp === 'string' && item.timestamp.includes('T')) {
-                        return item.timestamp.split('T')[1]?.split('.')[0] || new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2 shrink-0">
+                  {item.modelUsed.includes('Gemini') || item.modelUsed.includes('DEEP') ? (
+                    <span className="text-[10px] text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 flex items-center gap-1">
+                      {item.deepMetadata ? <Layers className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
+                      {item.modelUsed.replace("DEEP: ", "Deep ")}
+                    </span>
+                  ) : item.isMultiTurn ? (
+                    <span className="text-[10px] text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded-full border border-cyan-500/20 flex items-center gap-1">
+                      <MessageCircle className="w-3 h-3" /> Multi-Turn ({item.messages?.length || 0} msgs)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20 flex items-center gap-1">
+                      <Zap className="w-3 h-3" /> {item.modelUsed}
+                    </span>
+                  )}
+                  <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {(() => {
+                      if (!item.timestamp) return '--:--:--';
+                      try {
+                        if (typeof item.timestamp === 'string' && item.timestamp.includes('T')) {
+                          return item.timestamp.split('T')[1]?.split('.')[0] || new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        }
+                        return new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                      } catch {
+                        return '--:--:--';
                       }
-                      return new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                    } catch {
-                      return '--:--:--';
-                    }
-                  })()}
-                </span>
-              </div>
+                    })()}
+                  </span>
+                </div>
 
-              {/* Generation Retry */}
-              {isInvalid && onRetry && (
-                <button
-                  onClick={() => onRetry(item.id)}
-                  disabled={retryingIds?.has(item.id)}
-                  className="flex items-center gap-1.5 bg-red-950/50 hover:bg-red-900/50 text-red-400 border border-red-500/20 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <RefreshCcw className={`w-3 h-3 ${retryingIds?.has(item.id) ? 'animate-spin' : ''}`} />
-                  Retry Gen
-                </button>
-              )}
+                {/* Generation Retry */}
+                {isInvalid && onRetry && (
+                  <button
+                    onClick={() => onRetry(item.id)}
+                    disabled={retryingIds?.has(item.id)}
+                    className="flex items-center gap-1.5 bg-red-950/50 hover:bg-red-900/50 text-red-400 border border-red-500/20 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCcw className={`w-3 h-3 ${retryingIds?.has(item.id) ? 'animate-spin' : ''}`} />
+                    Retry Gen
+                  </button>
+                )}
 
-              {/* Storage Retry */}
-              {item.storageError && onRetrySave && !isInvalid && (
-                <button
-                  onClick={() => onRetrySave(item.id)}
-                  disabled={retryingIds?.has(item.id)}
-                  className="flex items-center gap-1.5 bg-amber-950/50 hover:bg-amber-900/50 text-amber-400 border border-amber-500/20 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={item.storageError}
-                >
-                  <Database className="w-3 h-3" />
-                  <AlertTriangle className="w-3 h-3" />
-                  <span className="hidden sm:inline">Retry Save</span>
-                </button>
-              )}
+                {/* Storage Retry */}
+                {item.storageError && onRetrySave && !isInvalid && (
+                  <button
+                    onClick={() => onRetrySave(item.id)}
+                    disabled={retryingIds?.has(item.id)}
+                    className="flex items-center gap-1.5 bg-amber-950/50 hover:bg-amber-900/50 text-amber-400 border border-amber-500/20 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={item.storageError}
+                  >
+                    <Database className="w-3 h-3" />
+                    <AlertTriangle className="w-3 h-3" />
+                    <span className="hidden sm:inline">Retry Save</span>
+                  </button>
+                )}
 
-              {/* Save to DB Button - for unsaved items in prod mode */}
-              {isProdMode && !item.savedToDb && !isInvalid && !item.storageError && onSaveToDb && (
-                <button
-                  onClick={() => onSaveToDb(item.id)}
-                  disabled={savingIds?.has(item.id)}
-                  className="flex items-center gap-1.5 bg-emerald-950/50 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-500/20 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Save to Firebase"
-                >
-                  <Upload className={`w-3 h-3 ${savingIds?.has(item.id) ? 'animate-pulse' : ''}`} />
-                  <span className="hidden sm:inline">Save to DB</span>
-                </button>
-              )}
+                {/* Save to DB Button - for unsaved items in prod mode */}
+                {isProdMode && !item.savedToDb && !isInvalid && !item.storageError && onSaveToDb && (
+                  <button
+                    onClick={() => onSaveToDb(item.id)}
+                    disabled={savingIds?.has(item.id)}
+                    className="flex items-center gap-1.5 bg-emerald-950/50 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-500/20 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Save to Firebase"
+                  >
+                    <Upload className={`w-3 h-3 ${savingIds?.has(item.id) ? 'animate-pulse' : ''}`} />
+                    <span className="hidden sm:inline">Save to DB</span>
+                  </button>
+                )}
 
-              {/* Delete Button */}
-              {onDelete && (
-                <button
-                  onClick={() => {
-                    if (window.confirm("Are you sure you want to delete this log?")) {
-                      onDelete(item.id);
-                    }
-                  }}
-                  className="flex items-center gap-1.5 bg-slate-800/50 hover:bg-red-950/30 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/30 text-[10px] px-2 py-1 rounded-md transition-all"
-                  title="Delete Log"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Deep Metadata Toggle / Info */}
-          {item.deepMetadata && (
-            <div className="bg-slate-950/30 border-b border-slate-800 px-4 py-2 flex gap-4 overflow-x-auto no-scrollbar">
-              <div className="flex flex-col">
-                <span className="text-[9px] text-slate-600 font-bold uppercase">Meta-Analysis</span>
-                <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.meta}>{item.deepMetadata.meta}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-slate-600 font-bold uppercase">Retrieval</span>
-                <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.retrieval}>{item.deepMetadata.retrieval}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-slate-600 font-bold uppercase">Derivation</span>
-                <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.derivation}>{item.deepMetadata.derivation}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[9px] text-slate-600 font-bold uppercase">Writer</span>
-                <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.writer}>{item.deepMetadata.writer}</span>
+                {/* Delete Button */}
+                {onDelete && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm("Are you sure you want to delete this log?")) {
+                        onDelete(item.id);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 bg-slate-800/50 hover:bg-red-950/30 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/30 text-[10px] px-2 py-1 rounded-md transition-all"
+                    title="Delete Log"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
               </div>
             </div>
-          )}
 
-          {/* Content Area - Multi-turn uses ConversationView, single-turn uses grid */}
-          {item.isMultiTurn && item.messages ? (
-            <div className="p-4 bg-slate-950/20">
-              <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-4 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-500"></span>
-                Conversation ({item.messages.length} messages)
-              </h4>
-              <ConversationView messages={item.messages} />
-            </div>
-          ) : (
-            <div className="grid lg:grid-cols-2">
-              {/* Left: Reasoning Trace */}
-              <div className="p-4 border-r border-slate-800 bg-slate-950/20">
-                <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                  Stenographic Trace
+            {/* Deep Metadata Toggle / Info */}
+            {item.deepMetadata && (
+              <div className="bg-slate-950/30 border-b border-slate-800 px-4 py-2 flex gap-4 overflow-x-auto no-scrollbar">
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-slate-600 font-bold uppercase">Meta-Analysis</span>
+                  <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.meta}>{item.deepMetadata.meta}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-slate-600 font-bold uppercase">Retrieval</span>
+                  <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.retrieval}>{item.deepMetadata.retrieval}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-slate-600 font-bold uppercase">Derivation</span>
+                  <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.derivation}>{item.deepMetadata.derivation}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[9px] text-slate-600 font-bold uppercase">Writer</span>
+                  <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.writer}>{item.deepMetadata.writer}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Content Area - Multi-turn uses ConversationView, single-turn uses grid */}
+            {item.isMultiTurn && item.messages ? (
+              <div className="p-4 bg-slate-950/20">
+                <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-4 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-500"></span>
+                  Conversation ({item.messages.length} messages)
                 </h4>
-                <ReasoningHighlighter text={item.reasoning} />
+                <ConversationView messages={item.messages} />
               </div>
-
-              {/* Right: Final Answer & Seed */}
-              <div className="flex flex-col">
-                <div className="p-4 flex-1">
+            ) : (
+              <div className="grid lg:grid-cols-2">
+                {/* Left: Reasoning Trace */}
+                <div className="p-4 border-r border-slate-800 bg-slate-950/20">
                   <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    Final Output
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                    Stenographic Trace
                   </h4>
-                  <p className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
-                    {renderSafeContent(item.answer)}
-                  </p>
+                  <ReasoningHighlighter text={item.reasoning} />
                 </div>
 
-                <div className="p-3 bg-slate-950/50 border-t border-slate-800">
-                  <h5 className="text-[10px] text-slate-500 mb-1">Seed Context</h5>
-                  <p className="text-xs text-slate-600 italic line-clamp-2 font-serif opacity-70">
-                    "{renderSafeContent(item.seed_preview)}"
-                  </p>
+                {/* Right: Final Answer & Seed */}
+                <div className="flex flex-col">
+                  <div className="p-4 flex-1">
+                    <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                      Final Output
+                    </h4>
+                    <p className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+                      {renderSafeContent(item.answer)}
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-slate-950/50 border-t border-slate-800">
+                    <h5 className="text-[10px] text-slate-500 mb-1">Seed Context</h5>
+                    <p className="text-xs text-slate-600 italic line-clamp-2 font-serif opacity-70">
+                      "{renderSafeContent(item.seed_preview)}"
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Generation Error */}
-          {isInvalid && (
-            <div className="p-2 bg-red-500/10 border-t border-red-500/20 text-xs text-red-400 flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5" />
-              {isTimeout ? `Generation Timeout: ${item.error || 'Timed out'}` : `Generation Error: ${item.error}`}
-            </div>
-          )}
+            {/* Generation Error */}
+            {isInvalid && (
+              <div className="p-2 bg-red-500/10 border-t border-red-500/20 text-xs text-red-400 flex items-center gap-2">
+                <AlertCircle className="w-3.5 h-3.5" />
+                {isTimeout ? `Generation Timeout: ${item.error || 'Timed out'}` : `Generation Error: ${item.error}`}
+              </div>
+            )}
 
-          {/* Storage Error Display (in footer) */}
-          {item.storageError && !isInvalid && (
-            <div className="p-2 bg-amber-500/10 border-t border-amber-500/20 text-xs text-amber-400 flex items-center gap-2">
-              <Database className="w-3.5 h-3.5" />
-              Storage Failed: {item.storageError}. Data exists locally but is not synced.
-            </div>
-          )}
-        </div>
+            {/* Storage Error Display (in footer) */}
+            {item.storageError && !isInvalid && (
+              <div className="p-2 bg-amber-500/10 border-t border-amber-500/20 text-xs text-amber-400 flex items-center gap-2">
+                <Database className="w-3.5 h-3.5" />
+                Storage Failed: {item.storageError}. Data exists locally but is not synced.
+              </div>
+            )}
+          </div>
         );
       })}
 
