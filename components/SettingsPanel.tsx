@@ -43,7 +43,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ generalPurpose: true, generator: true, converter: false });
     const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
     const [promptMetadata, setPromptMetadata] = useState<Record<string, PromptSetMetadata>>({});
-    
+
     // Ollama integration state
     const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
     const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -339,9 +339,9 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     disabled={ollamaStatus !== 'online' || ollamaModels.length === 0}
                                                                 >
                                                                     <option value="">
-                                                                        {ollamaStatus === 'checking' ? 'Loading...' : 
-                                                                         ollamaStatus === 'offline' ? 'Ollama offline' :
-                                                                         ollamaModels.length === 0 ? 'No models' : 'Select model'}
+                                                                        {ollamaStatus === 'checking' ? 'Loading...' :
+                                                                            ollamaStatus === 'offline' ? 'Ollama offline' :
+                                                                                ollamaModels.length === 0 ? 'No models' : 'Select model'}
                                                                     </option>
                                                                     {ollamaModels.map(model => (
                                                                         <option key={model.name} value={model.name}>
@@ -382,11 +382,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     <button
                                                                         key={model.name}
                                                                         onClick={() => updateDefaultModel('ollama', model.name)}
-                                                                        className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${
-                                                                            settings.providerDefaultModels?.['ollama'] === model.name
+                                                                        className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${settings.providerDefaultModels?.['ollama'] === model.name
                                                                                 ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
                                                                                 : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
-                                                                        }`}
+                                                                            }`}
                                                                     >
                                                                         {displayName}
                                                                     </button>

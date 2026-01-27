@@ -72,7 +72,7 @@ export default function App() {
     const [externalApiKey, setExternalApiKey] = useState('');
     const [externalModel, setExternalModel] = useState('anthropic/claude-3.5-sonnet');
     const [customBaseUrl, setCustomBaseUrl] = useState('');
-    
+
     // --- State: Ollama Integration ---
     const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
     const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -1270,379 +1270,379 @@ export default function App() {
         };
         try {
             return await runWithTimeout(async () => {
-            const safeInput = typeof inputText === 'string' ? inputText : String(inputText);
-            let result;
-            // Use runtime config if provided (from auto-routing), otherwise fall back to state
-            const effectiveSystemPrompt = runtimeConfig?.systemPrompt ?? systemPrompt;
-            const effectiveConverterPrompt = runtimeConfig?.converterPrompt ?? converterPrompt;
-            const effectiveDeepConfig = runtimeConfig?.deepConfig ?? deepConfig;
-            const activePrompt = appMode === 'generator' ? effectiveSystemPrompt : effectiveConverterPrompt;
-            const genParams = getGenerationParams();
-            const retryConfig = { maxRetries, retryDelay, generationParams: genParams };
+                const safeInput = typeof inputText === 'string' ? inputText : String(inputText);
+                let result;
+                // Use runtime config if provided (from auto-routing), otherwise fall back to state
+                const effectiveSystemPrompt = runtimeConfig?.systemPrompt ?? systemPrompt;
+                const effectiveConverterPrompt = runtimeConfig?.converterPrompt ?? converterPrompt;
+                const effectiveDeepConfig = runtimeConfig?.deepConfig ?? deepConfig;
+                const activePrompt = appMode === 'generator' ? effectiveSystemPrompt : effectiveConverterPrompt;
+                const genParams = getGenerationParams();
+                const retryConfig = { maxRetries, retryDelay, generationParams: genParams };
 
-            // Import JSON field extractor dynamically
-            const { extractJsonFields } = await import('./utils/jsonFieldExtractor');
+                // Import JSON field extractor dynamically
+                const { extractJsonFields } = await import('./utils/jsonFieldExtractor');
 
-            // Initialize streaming conversation state
-            const initStreamingState = (totalMessages: number, userMessage?: string, isSinglePrompt: boolean = false): StreamingConversationState => ({
-                id: generationId,
-                phase: 'waiting_for_response',
-                currentMessageIndex: 0,
-                totalMessages,
-                completedMessages: [],
-                currentUserMessage: userMessage,
-                currentReasoning: '',
-                currentAnswer: '',
-                useOriginalAnswer: false,
-                rawAccumulated: '',
-                isSinglePrompt
-            });
+                // Initialize streaming conversation state
+                const initStreamingState = (totalMessages: number, userMessage?: string, isSinglePrompt: boolean = false): StreamingConversationState => ({
+                    id: generationId,
+                    phase: 'waiting_for_response',
+                    currentMessageIndex: 0,
+                    totalMessages,
+                    completedMessages: [],
+                    currentUserMessage: userMessage,
+                    currentReasoning: '',
+                    currentAnswer: '',
+                    useOriginalAnswer: false,
+                    rawAccumulated: '',
+                    isSinglePrompt
+                });
 
-            // Progressive streaming callback that parses JSON fields
-            const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase) => {
-                // Parse accumulated JSON for reasoning/answer fields
-                const extracted = extractJsonFields(accumulated);
+                // Progressive streaming callback that parses JSON fields
+                const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase) => {
+                    // Parse accumulated JSON for reasoning/answer fields
+                    const extracted = extractJsonFields(accumulated);
 
-                const current = streamingConversationsRef.current.get(generationId);
-                if (!current) return;
+                    const current = streamingConversationsRef.current.get(generationId);
+                    if (!current) return;
 
-                // Determine phase based on what we've extracted
-                let newPhase = current.phase;
-                if (extracted.hasReasoningStart && !extracted.hasReasoningEnd) {
-                    newPhase = 'extracting_reasoning';
-                } else if (extracted.hasReasoningEnd && (!extracted.hasAnswerEnd || !current.useOriginalAnswer)) {
-                    newPhase = 'extracting_answer';
+                    // Determine phase based on what we've extracted
+                    let newPhase = current.phase;
+                    if (extracted.hasReasoningStart && !extracted.hasReasoningEnd) {
+                        newPhase = 'extracting_reasoning';
+                    } else if (extracted.hasReasoningEnd && (!extracted.hasAnswerEnd || !current.useOriginalAnswer)) {
+                        newPhase = 'extracting_answer';
+                    }
+
+                    // Update the ref and trigger React state update
+                    const updated: StreamingConversationState = {
+                        ...current,
+                        phase: newPhase,
+                        currentReasoning: extracted.reasoning || current.currentReasoning,
+                        currentAnswer: extracted.answer || current.currentAnswer,
+                        rawAccumulated: accumulated
+                    };
+                    streamingConversationsRef.current.set(generationId, updated);
+                    setStreamingConversations(new Map(streamingConversationsRef.current));
+                };
+
+                // --- Conversation Trace Rewriting Mode ---
+                // When enabled, extract messages from row and rewrite/generate <think> content
+                // Also auto-detect messages columns even when toggle is not explicitly set
+                const potentialMessagesArray = row?.messages || row?.conversation || row?.conversations;
+                const hasMessagesColumn = Array.isArray(potentialMessagesArray) && potentialMessagesArray.length > 0 &&
+                    potentialMessagesArray[0] && typeof potentialMessagesArray[0] === 'object' &&
+                    ('role' in potentialMessagesArray[0] || 'from' in potentialMessagesArray[0]);
+
+                if ((conversationRewriteMode || hasMessagesColumn) && row) {
+                    const messagesArray = row.messages || row.conversation || row.conversations;
+                    if (Array.isArray(messagesArray) && messagesArray.length > 0) {
+                        // Convert to ChatMessage format if needed, filtering out empty messages
+                        const chatMessages: ChatMessage[] = messagesArray
+                            .map((m: any) => {
+                                const content = m.content || m.value || (typeof m === 'string' ? m : '');
+                                return {
+                                    role: (m.role || (m.from === 'human' ? 'user' : m.from === 'gpt' ? 'assistant' : m.from)) as 'user' | 'assistant' | 'system',
+                                    content: content,
+                                    reasoning: m.reasoning
+                                };
+                            })
+                            .filter((m: ChatMessage) => m.content.trim().length > 0); // Skip empty messages
+
+                        // Initialize streaming state for conversation
+                        const firstUserMsg = chatMessages.find(m => m.role === 'user');
+                        // Count message pairs (or assistant messages) that need processing
+                        const assistantCount = chatMessages.filter(m => m.role === 'assistant').length;
+                        const newStreamState = initStreamingState(
+                            assistantCount,
+                            firstUserMsg?.content
+                        );
+                        logger.log('[STREAMING] Initializing streaming state:', {
+                            generationId,
+                            totalMessages: chatMessages.length,
+                            assistantCount,
+                            phase: newStreamState.phase,
+                            currentUserMessage: newStreamState.currentUserMessage?.substring(0, 50)
+                        });
+                        streamingConversationsRef.current.set(generationId, newStreamState);
+                        setStreamingConversations(new Map(streamingConversationsRef.current));
+
+                        const rewriteResult = await DeepReasoningService.orchestrateConversationRewrite({
+                            messages: chatMessages,
+                            config: effectiveDeepConfig,
+                            engineMode: engineMode,
+                            converterPrompt: effectiveConverterPrompt,
+                            signal: itemAbortController.signal,
+                            maxRetries,
+                            retryDelay,
+                            generationParams: genParams,
+                            structuredOutput: true,
+                            maxTraces: hfConfig.maxMultiTurnTraces,
+                            regularModeConfig: engineMode === 'regular' ? {
+                                provider: provider,
+                                externalProvider: externalProvider,
+                                apiKey: externalApiKey,
+                                model: externalModel,
+                                customBaseUrl: customBaseUrl
+                            } : undefined,
+                            // Streaming for real-time updates
+                            stream: true,
+                            onStreamChunk: handleStreamChunk,
+                            // Message progression callback
+                            onMessageRewritten: (index: number, total: number) => {
+                                const current = streamingConversationsRef.current.get(generationId);
+                                if (!current) return;
+
+                                // Get the user message for this index (find next user after current position)
+                                const userMsgs = chatMessages.filter(m => m.role === 'user');
+                                const assistantMsgs = chatMessages.filter(m => m.role === 'assistant');
+
+                                // Add current pair to completed messages
+                                const completedUser = userMsgs[index];
+                                const completedAssistant = assistantMsgs[index];
+
+                                // Helper to clean empty think tags from content
+                                const cleanEmptyThinkTags = (text: string) =>
+                                    text?.replace(/<think>\s*<\/think>\s*/gi, '').trim();
+
+                                const newCompleted = [...current.completedMessages];
+                                if (completedUser) {
+                                    newCompleted.push({ ...completedUser });
+                                }
+                                if (completedAssistant) {
+                                    // Clean content and use streamed reasoning/answer for this message
+                                    const cleanContent = cleanEmptyThinkTags(
+                                        current.currentAnswer || completedAssistant.content || ''
+                                    );
+                                    newCompleted.push({
+                                        role: 'assistant',
+                                        content: cleanContent,
+                                        reasoning: current.currentReasoning || completedAssistant.reasoning
+                                    });
+                                }
+
+                                // Get next user message if there is one
+                                const nextUserMsg = userMsgs[index + 1];
+
+                                logger.log('[STREAMING] Message rewritten:', {
+                                    generationId,
+                                    index,
+                                    total,
+                                    completedCount: newCompleted.length,
+                                    nextUser: nextUserMsg?.content?.substring(0, 30)
+                                });
+
+                                // Update state for next message
+                                const updatedState: StreamingConversationState = {
+                                    ...current,
+                                    phase: index + 1 < total ? 'waiting_for_response' : 'message_complete',
+                                    currentMessageIndex: index + 1,
+                                    completedMessages: newCompleted,
+                                    currentUserMessage: nextUserMsg?.content,
+                                    currentReasoning: '',
+                                    currentAnswer: '',
+                                    rawAccumulated: ''
+                                };
+                                streamingConversationsRef.current.set(generationId, updatedState);
+                                setStreamingConversations(new Map(streamingConversationsRef.current));
+                            }
+                        });
+
+                        clearStreamingState(); // Clear streaming after completion
+                        return {
+                            ...rewriteResult,
+                            id: generationId,
+                            sessionUid: sessionUid,
+                            source: source,
+                            status: 'DONE'
+                        };
+                    }
                 }
 
-                // Update the ref and trigger React state update
-                const updated: StreamingConversationState = {
-                    ...current,
-                    phase: newPhase,
-                    currentReasoning: extracted.reasoning || current.currentReasoning,
-                    currentAnswer: extracted.answer || current.currentAnswer,
-                    rawAccumulated: accumulated
-                };
-                streamingConversationsRef.current.set(generationId, updated);
-                setStreamingConversations(new Map(streamingConversationsRef.current));
-            };
 
-            // --- Conversation Trace Rewriting Mode ---
-            // When enabled, extract messages from row and rewrite/generate <think> content
-            // Also auto-detect messages columns even when toggle is not explicitly set
-            const potentialMessagesArray = row?.messages || row?.conversation || row?.conversations;
-            const hasMessagesColumn = Array.isArray(potentialMessagesArray) && potentialMessagesArray.length > 0 &&
-                potentialMessagesArray[0] && typeof potentialMessagesArray[0] === 'object' &&
-                ('role' in potentialMessagesArray[0] || 'from' in potentialMessagesArray[0]);
-
-            if ((conversationRewriteMode || hasMessagesColumn) && row) {
-                const messagesArray = row.messages || row.conversation || row.conversations;
-                if (Array.isArray(messagesArray) && messagesArray.length > 0) {
-                    // Convert to ChatMessage format if needed, filtering out empty messages
-                    const chatMessages: ChatMessage[] = messagesArray
-                        .map((m: any) => {
-                            const content = m.content || m.value || (typeof m === 'string' ? m : '');
-                            return {
-                                role: (m.role || (m.from === 'human' ? 'user' : m.from === 'gpt' ? 'assistant' : m.from)) as 'user' | 'assistant' | 'system',
-                                content: content,
-                                reasoning: m.reasoning
-                            };
-                        })
-                        .filter((m: ChatMessage) => m.content.trim().length > 0); // Skip empty messages
-
-                    // Initialize streaming state for conversation
-                    const firstUserMsg = chatMessages.find(m => m.role === 'user');
-                    // Count message pairs (or assistant messages) that need processing
-                    const assistantCount = chatMessages.filter(m => m.role === 'assistant').length;
-                    const newStreamState = initStreamingState(
-                        assistantCount,
-                        firstUserMsg?.content
-                    );
-                    logger.log('[STREAMING] Initializing streaming state:', {
-                        generationId,
-                        totalMessages: chatMessages.length,
-                        assistantCount,
-                        phase: newStreamState.phase,
-                        currentUserMessage: newStreamState.currentUserMessage?.substring(0, 50)
-                    });
-                    streamingConversationsRef.current.set(generationId, newStreamState);
-                    setStreamingConversations(new Map(streamingConversationsRef.current));
-
-                    const rewriteResult = await DeepReasoningService.orchestrateConversationRewrite({
-                        messages: chatMessages,
-                        config: effectiveDeepConfig,
-                        engineMode: engineMode,
-                        converterPrompt: effectiveConverterPrompt,
-                        signal: itemAbortController.signal,
-                        maxRetries,
-                        retryDelay,
-                        generationParams: genParams,
-                        structuredOutput: true,
-                        maxTraces: hfConfig.maxMultiTurnTraces,
-                        regularModeConfig: engineMode === 'regular' ? {
-                            provider: provider,
-                            externalProvider: externalProvider,
-                            apiKey: externalApiKey,
-                            model: externalModel,
-                            customBaseUrl: customBaseUrl
-                        } : undefined,
-                        // Streaming for real-time updates
-                        stream: true,
-                        onStreamChunk: handleStreamChunk,
-                        // Message progression callback
-                        onMessageRewritten: (index: number, total: number) => {
-                            const current = streamingConversationsRef.current.get(generationId);
-                            if (!current) return;
-
-                            // Get the user message for this index (find next user after current position)
-                            const userMsgs = chatMessages.filter(m => m.role === 'user');
-                            const assistantMsgs = chatMessages.filter(m => m.role === 'assistant');
-
-                            // Add current pair to completed messages
-                            const completedUser = userMsgs[index];
-                            const completedAssistant = assistantMsgs[index];
-
-                            // Helper to clean empty think tags from content
-                            const cleanEmptyThinkTags = (text: string) =>
-                                text?.replace(/<think>\s*<\/think>\s*/gi, '').trim();
-
-                            const newCompleted = [...current.completedMessages];
-                            if (completedUser) {
-                                newCompleted.push({ ...completedUser });
-                            }
-                            if (completedAssistant) {
-                                // Clean content and use streamed reasoning/answer for this message
-                                const cleanContent = cleanEmptyThinkTags(
-                                    current.currentAnswer || completedAssistant.content || ''
-                                );
-                                newCompleted.push({
-                                    role: 'assistant',
-                                    content: cleanContent,
-                                    reasoning: current.currentReasoning || completedAssistant.reasoning
-                                });
-                            }
-
-                            // Get next user message if there is one
-                            const nextUserMsg = userMsgs[index + 1];
-
-                            logger.log('[STREAMING] Message rewritten:', {
-                                generationId,
-                                index,
-                                total,
-                                completedCount: newCompleted.length,
-                                nextUser: nextUserMsg?.content?.substring(0, 30)
-                            });
-
-                            // Update state for next message
-                            const updatedState: StreamingConversationState = {
-                                ...current,
-                                phase: index + 1 < total ? 'waiting_for_response' : 'message_complete',
-                                currentMessageIndex: index + 1,
-                                completedMessages: newCompleted,
-                                currentUserMessage: nextUserMsg?.content,
-                                currentReasoning: '',
-                                currentAnswer: '',
-                                rawAccumulated: ''
-                            };
-                            streamingConversationsRef.current.set(generationId, updatedState);
-                            setStreamingConversations(new Map(streamingConversationsRef.current));
+                if (engineMode === 'regular') {
+                    if (provider === 'gemini') {
+                        // Reinforce JSON structure for regular mode to ensure service parsing works
+                        let enhancedPrompt = activePrompt;
+                        if (!enhancedPrompt.toLowerCase().includes("json")) {
+                            enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields. If you are a writer/refiner, use the provided trace/logic as the 'reasoning' and output your result as the 'answer'.";
                         }
-                    });
 
-                    clearStreamingState(); // Clear streaming after completion
+                        if (appMode === 'generator') {
+                            result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, { ...retryConfig, model: externalModel });
+                        } else {
+                            const contentToConvert = extractInputContent(safeInput);
+                            result = await GeminiService.convertReasoningTrace(contentToConvert, enhancedPrompt, { ...retryConfig, model: externalModel });
+                        }
+                    } else {
+                        let promptInput = "";
+                        if (appMode === 'generator') {
+                            promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
+                        } else {
+                            const contentToConvert = extractInputContent(safeInput);
+                            promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
+                        }
+
+                        // Reinforce JSON structure for external providers too
+                        let enhancedPrompt = activePrompt;
+                        if (!enhancedPrompt.toLowerCase().includes("json")) {
+                            enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
+                        }
+
+                        // Initialize streaming state for regular mode (non-chat input)
+                        const regularStreamState = initStreamingState(1, promptInput, true);
+                        streamingConversationsRef.current.set(generationId, regularStreamState);
+                        setStreamingConversations(new Map(streamingConversationsRef.current));
+
+                        result = await ExternalApiService.callExternalApi({
+                            provider: externalProvider,
+                            apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
+                            model: externalModel,
+                            customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
+                            systemPrompt: enhancedPrompt,
+                            userPrompt: promptInput,
+                            signal: itemAbortController.signal,
+                            maxRetries,
+                            retryDelay,
+                            generationParams: genParams,
+                            structuredOutput: true,
+                            // Enable streaming for regular mode
+                            stream: true,
+                            onStreamChunk: handleStreamChunk,
+                            streamPhase: 'regular'
+                        });
+                        clearStreamingState();
+                    }
+                    const ensureString = (val: any) => {
+                        if (val === null || val === undefined) return "";
+                        if (typeof val === 'string') return val;
+                        return JSON.stringify(val);
+                    };
+                    const answer = ensureString(result.answer);
+                    const reasoning = ensureString(result.reasoning);
+
+                    // If in converter mode and we have a ground truth expectedAnswer, prioritize it?
+                    // Actually, if the user is RUNNING a converter, they might want to see the CONVERTED answer.
+                    // However, the user said "no answer from ground truth", implying they WANT the ground truth preserved.
+                    // In converter mode, usually the "answer" field in the dataset is the ground truth.
+                    const finalAnswer = (appMode === 'converter' && originalAnswer) ? originalAnswer : answer;
+
                     return {
-                        ...rewriteResult,
                         id: generationId,
                         sessionUid: sessionUid,
                         source: source,
+                        seed_preview: safeInput.substring(0, 150) + "...",
+                        full_seed: safeInput,
+                        query: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
+                        reasoning: reasoning,
+                        original_reasoning: originalReasoning,
+                        answer: finalAnswer,
+                        original_answer: originalAnswer,
+                        timestamp: new Date().toISOString(),
+                        duration: Date.now() - startTime,
+                        tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4), // Rough estimate
+                        modelUsed: provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${externalModel}`,
+                        provider: externalProvider,
                         status: 'DONE'
                     };
-                }
-            }
-
-
-            if (engineMode === 'regular') {
-                if (provider === 'gemini') {
-                    // Reinforce JSON structure for regular mode to ensure service parsing works
-                    let enhancedPrompt = activePrompt;
-                    if (!enhancedPrompt.toLowerCase().includes("json")) {
-                        enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields. If you are a writer/refiner, use the provided trace/logic as the 'reasoning' and output your result as the 'answer'.";
-                    }
-
-                    if (appMode === 'generator') {
-                        result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, { ...retryConfig, model: externalModel });
-                    } else {
-                        const contentToConvert = extractInputContent(safeInput);
-                        result = await GeminiService.convertReasoningTrace(contentToConvert, enhancedPrompt, { ...retryConfig, model: externalModel });
-                    }
                 } else {
-                    let promptInput = "";
-                    if (appMode === 'generator') {
-                        promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
-                    } else {
-                        const contentToConvert = extractInputContent(safeInput);
-                        promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
+                    let inputPayload = safeInput;
+                    if (appMode === 'converter') {
+                        inputPayload = extractInputContent(safeInput);
                     }
 
-                    // Reinforce JSON structure for external providers too
-                    let enhancedPrompt = activePrompt;
-                    if (!enhancedPrompt.toLowerCase().includes("json")) {
-                        enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
+                    // In generator mode, append the gold answer to the seed so all agents see it
+                    if (appMode === 'generator' && originalAnswer && originalAnswer.trim().length > 0) {
+                        inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${originalAnswer.trim()}`;
                     }
 
-                    // Initialize streaming state for regular mode (non-chat input)
-                    const regularStreamState = initStreamingState(1, promptInput, true);
-                    streamingConversationsRef.current.set(generationId, regularStreamState);
+                    // Deep copy to prevent mutation of state (use effectiveDeepConfig for auto-routing)
+                    const runtimeDeepConfig = JSON.parse(JSON.stringify(effectiveDeepConfig));
+
+                    // REMOVED: Intelligent Sync. We now strictly respect the deepConfig.phases.writer.systemPrompt
+                    // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
+
+                    // Initialize streaming state for deep mode (non-chat input)
+                    const deepStreamState = initStreamingState(1, inputPayload, true);
+                    streamingConversationsRef.current.set(generationId, deepStreamState);
                     setStreamingConversations(new Map(streamingConversationsRef.current));
 
-                    result = await ExternalApiService.callExternalApi({
-                        provider: externalProvider,
-                        apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
-                        model: externalModel,
-                        customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
-                        systemPrompt: enhancedPrompt,
-                        userPrompt: promptInput,
+                    const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
+                        input: inputPayload,
+                        originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
+                        expectedAnswer: originalAnswer,
+                        config: runtimeDeepConfig,
                         signal: itemAbortController.signal,
                         maxRetries,
                         retryDelay,
                         generationParams: genParams,
-                        structuredOutput: true,
-                        // Enable streaming for regular mode
+                        // Enable streaming for writer/rewriter phases
                         stream: true,
-                        onStreamChunk: handleStreamChunk,
-                        streamPhase: 'regular'
+                        onStreamChunk: handleStreamChunk
                     });
+
+                    // Clear streaming content after completion
                     clearStreamingState();
-                }
-                const ensureString = (val: any) => {
-                    if (val === null || val === undefined) return "";
-                    if (typeof val === 'string') return val;
-                    return JSON.stringify(val);
-                };
-                const answer = ensureString(result.answer);
-                const reasoning = ensureString(result.reasoning);
 
-                // If in converter mode and we have a ground truth expectedAnswer, prioritize it?
-                // Actually, if the user is RUNNING a converter, they might want to see the CONVERTED answer.
-                // However, the user said "no answer from ground truth", implying they WANT the ground truth preserved.
-                // In converter mode, usually the "answer" field in the dataset is the ground truth.
-                const finalAnswer = (appMode === 'converter' && originalAnswer) ? originalAnswer : answer;
+                    // If User Agent is enabled, run multi-turn conversation
+                    if (userAgentConfig.enabled && userAgentConfig.followUpCount > 0) {
+                        // Determine which responder to use based on user selection
+                        const responderPhase = userAgentConfig.responderPhase || 'writer';
+                        const responderConfig = responderPhase === 'responder'
+                            ? {
+                                provider: userAgentConfig.provider,
+                                externalProvider: userAgentConfig.externalProvider,
+                                apiKey: userAgentConfig.apiKey,
+                                model: userAgentConfig.model,
+                                customBaseUrl: userAgentConfig.customBaseUrl,
+                                systemPrompt: PromptService.getPrompt('generator', 'responder', runtimeConfig?.promptSet)
+                            }
+                            : runtimeDeepConfig.phases[responderPhase as keyof typeof runtimeDeepConfig.phases];
 
-                return {
-                    id: generationId,
-                    sessionUid: sessionUid,
-                    source: source,
-                    seed_preview: safeInput.substring(0, 150) + "...",
-                    full_seed: safeInput,
-                    query: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
-                    reasoning: reasoning,
-                    original_reasoning: originalReasoning,
-                    answer: finalAnswer,
-                    original_answer: originalAnswer,
-                    timestamp: new Date().toISOString(),
-                    duration: Date.now() - startTime,
-                    tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4), // Rough estimate
-                    modelUsed: provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${externalModel}`,
-                    provider: externalProvider,
-                    status: 'DONE'
-                };
-            } else {
-                let inputPayload = safeInput;
-                if (appMode === 'converter') {
-                    inputPayload = extractInputContent(safeInput);
-                }
+                        const multiTurnResult = await DeepReasoningService.orchestrateMultiTurnConversation({
+                            initialInput: inputPayload,
+                            initialQuery: originalQuestion || deepResult.query || inputPayload, // Use detected question or query or fallback
+                            initialResponse: deepResult.answer || '',
+                            initialReasoning: deepResult.reasoning || '',
+                            userAgentConfig: {
+                                ...userAgentConfig,
+                                // Override with auto-routed prompt set if available
+                                systemPrompt: PromptService.getPrompt('generator', 'user_agent', runtimeConfig?.promptSet)
+                            },
+                            responderConfig: responderConfig,
+                            signal: itemAbortController.signal,
+                            maxRetries,
+                            retryDelay,
+                            generationParams: genParams,
+                            structuredOutput: true
+                        });
 
-                // In generator mode, append the gold answer to the seed so all agents see it
-                if (appMode === 'generator' && originalAnswer && originalAnswer.trim().length > 0) {
-                    inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${originalAnswer.trim()}`;
-                }
+                        return {
+                            ...multiTurnResult,
+                            id: generationId,
+                            sessionUid: sessionUid,
+                            source: source,
+                            duration: Date.now() - startTime,
+                            tokenCount: Math.round((multiTurnResult.answer?.length || 0 + (multiTurnResult.reasoning?.length || 0)) / 4),
+                            isMultiTurn: true,
+                            status: 'DONE'
+                        };
+                    }
 
-                // Deep copy to prevent mutation of state (use effectiveDeepConfig for auto-routing)
-                const runtimeDeepConfig = JSON.parse(JSON.stringify(effectiveDeepConfig));
-
-                // REMOVED: Intelligent Sync. We now strictly respect the deepConfig.phases.writer.systemPrompt
-                // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
-
-                // Initialize streaming state for deep mode (non-chat input)
-                const deepStreamState = initStreamingState(1, inputPayload, true);
-                streamingConversationsRef.current.set(generationId, deepStreamState);
-                setStreamingConversations(new Map(streamingConversationsRef.current));
-
-                const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
-                    input: inputPayload,
-                    originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
-                    expectedAnswer: originalAnswer,
-                    config: runtimeDeepConfig,
-                    signal: itemAbortController.signal,
-                    maxRetries,
-                    retryDelay,
-                    generationParams: genParams,
-                    // Enable streaming for writer/rewriter phases
-                    stream: true,
-                    onStreamChunk: handleStreamChunk
-                });
-
-                // Clear streaming content after completion
-                clearStreamingState();
-
-                // If User Agent is enabled, run multi-turn conversation
-                if (userAgentConfig.enabled && userAgentConfig.followUpCount > 0) {
-                    // Determine which responder to use based on user selection
-                    const responderPhase = userAgentConfig.responderPhase || 'writer';
-                    const responderConfig = responderPhase === 'responder'
-                        ? {
-                            provider: userAgentConfig.provider,
-                            externalProvider: userAgentConfig.externalProvider,
-                            apiKey: userAgentConfig.apiKey,
-                            model: userAgentConfig.model,
-                            customBaseUrl: userAgentConfig.customBaseUrl,
-                            systemPrompt: PromptService.getPrompt('generator', 'responder', runtimeConfig?.promptSet)
-                        }
-                        : runtimeDeepConfig.phases[responderPhase as keyof typeof runtimeDeepConfig.phases];
-
-                    const multiTurnResult = await DeepReasoningService.orchestrateMultiTurnConversation({
-                        initialInput: inputPayload,
-                        initialQuery: originalQuestion || deepResult.query || inputPayload, // Use detected question or query or fallback
-                        initialResponse: deepResult.answer || '',
-                        initialReasoning: deepResult.reasoning || '',
-                        userAgentConfig: {
-                            ...userAgentConfig,
-                            // Override with auto-routed prompt set if available
-                            systemPrompt: PromptService.getPrompt('generator', 'user_agent', runtimeConfig?.promptSet)
-                        },
-                        responderConfig: responderConfig,
-                        signal: itemAbortController.signal,
-                        maxRetries,
-                        retryDelay,
-                        generationParams: genParams,
-                        structuredOutput: true
-                    });
-
+                    const answer = deepResult.answer || "";
+                    const reasoning = deepResult.reasoning || "";
                     return {
-                        ...multiTurnResult,
+                        ...deepResult,
                         id: generationId,
+                        original_reasoning: originalReasoning,
+                        original_answer: originalAnswer,
                         sessionUid: sessionUid,
                         source: source,
                         duration: Date.now() - startTime,
-                        tokenCount: Math.round((multiTurnResult.answer?.length || 0 + (multiTurnResult.reasoning?.length || 0)) / 4),
-                        isMultiTurn: true,
+                        tokenCount: Math.round((answer.length + reasoning.length) / 4),
                         status: 'DONE'
                     };
                 }
-
-                const answer = deepResult.answer || "";
-                const reasoning = deepResult.reasoning || "";
-                return {
-                    ...deepResult,
-                    id: generationId,
-                    original_reasoning: originalReasoning,
-                    original_answer: originalAnswer,
-                    sessionUid: sessionUid,
-                    source: source,
-                    duration: Date.now() - startTime,
-                    tokenCount: Math.round((answer.length + reasoning.length) / 4),
-                    status: 'DONE'
-                };
-            }
             });
         } catch (err: any) {
             if (err.name === 'AbortError' && !didTimeout) {
@@ -3022,9 +3022,9 @@ export default function App() {
                                                         disabled={ollamaStatus !== 'online' || ollamaModels.length === 0}
                                                     >
                                                         <option value="">
-                                                            {ollamaStatus === 'checking' ? 'Loading models...' : 
-                                                             ollamaStatus === 'offline' ? 'Ollama is offline' :
-                                                             ollamaModels.length === 0 ? 'No models found' : 'Select a model'}
+                                                            {ollamaStatus === 'checking' ? 'Loading models...' :
+                                                                ollamaStatus === 'offline' ? 'Ollama is offline' :
+                                                                    ollamaModels.length === 0 ? 'No models found' : 'Select a model'}
                                                         </option>
                                                         {ollamaModels.map(model => (
                                                             <option key={model.name} value={model.name}>
@@ -3039,11 +3039,10 @@ export default function App() {
                                                                 <button
                                                                     key={model.name}
                                                                     onClick={() => setExternalModel(model.name)}
-                                                                    className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${
-                                                                        externalModel === model.name
+                                                                    className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${externalModel === model.name
                                                                             ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
                                                                             : 'bg-slate-800/50 border-slate-700 text-slate-400 hover-border-emerald-600 hover:text-emerald-400'
-                                                                    }`}
+                                                                        }`}
                                                                 >
                                                                     {model.name.includes(':') ? model.name.split(':')[0] : model.name}
                                                                 </button>
@@ -3671,6 +3670,20 @@ export default function App() {
                             {/* Right side controls */}
                             {viewMode === 'feed' && (
                                 <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
+                                        <button
+                                            onClick={() => setLogFilter('live')}
+                                            className={`px-2 py-1 rounded-md text-[10px] font-bold flex items-center gap-1.5 transition-all ${logFilter === 'live' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
+                                        >
+                                            <Terminal className="w-3 h-3" /> Live
+                                        </button>
+                                        <button
+                                            onClick={() => setLogFilter('invalid')}
+                                            className={`px-2 py-1 rounded-md text-[10px] font-bold flex items-center gap-1.5 transition-all ${logFilter === 'invalid' ? 'bg-rose-600 text-white shadow-lg shadow-rose-500/20' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
+                                        >
+                                            <AlertCircle className="w-3 h-3" /> Invalid
+                                        </button>
+                                    </div>
                                     <label className="text-[10px] font-bold text-slate-500 uppercase">Page Size</label>
                                     <select
                                         value={feedPageSize}
