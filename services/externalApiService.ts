@@ -614,17 +614,6 @@ function parseJsonContent(content: string): any {
       }
     }
 
-    // 7. Try robust field extraction (regex-based) matching the streaming logic
-    const extracted = extractJsonFields(cleanContent);
-    if (extracted.reasoning || extracted.answer) {
-      logger.log("JSON parsing failed, but field extraction succeeded");
-      return {
-        answer: extracted.answer || cleanContent.trim(), // fallback to raw if no answer found but reasoning exists
-        reasoning: extracted.reasoning || "",
-        follow_up_question: "" // optional
-      };
-    }
-
     // If all parsing fails, wrap the raw text as a fallback response
     // This allows the conversation to continue even if JSON wasn't returned
     console.warn("JSON Parse Failed, using raw text as fallback", e);
