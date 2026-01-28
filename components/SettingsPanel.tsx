@@ -371,19 +371,27 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     {/* Ollama: Show loaded models list */}
                                                     {isOllama && ollamaStatus === 'online' && ollamaModels.length > 0 && (
                                                         <div className="flex flex-wrap gap-1 pl-28">
-                                                            {ollamaModels.slice(0, 6).map(model => (
-                                                                <button
-                                                                    key={model.name}
-                                                                    onClick={() => updateDefaultModel('ollama', model.name)}
-                                                                    className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${
-                                                                        settings.providerDefaultModels?.['ollama'] === model.name
-                                                                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
-                                                                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
-                                                                    }`}
-                                                                >
-                                                                    {model.name.split(':')[0]}
-                                                                </button>
-                                                            ))}
+                                                            {ollamaModels.slice(0, 6).map(model => {
+                                                                // Ollama model names are typically in the form "family:size" (e.g., "llama2:7b").
+                                                                // If no colon is present, fall back to showing the full model name.
+                                                                const displayName = model.name.includes(':')
+                                                                    ? model.name.split(':', 1)[0]
+                                                                    : model.name;
+
+                                                                return (
+                                                                    <button
+                                                                        key={model.name}
+                                                                        onClick={() => updateDefaultModel('ollama', model.name)}
+                                                                        className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${
+                                                                            settings.providerDefaultModels?.['ollama'] === model.name
+                                                                                ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                                                                                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
+                                                                        }`}
+                                                                    >
+                                                                        {displayName}
+                                                                    </button>
+                                                                );
+                                                            })}
                                                             {ollamaModels.length > 6 && (
                                                                 <span className="text-[9px] text-slate-500 px-2 py-0.5">+{ollamaModels.length - 6} more</span>
                                                             )}
