@@ -1,14 +1,109 @@
 
-import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase } from '../types';
+import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase, ApiType } from '../types';
 import { PROVIDER_URLS } from '../constants';
 import { logger } from '../utils/logger';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import { SettingsService } from './settingsService';
 
+// JSON Schema definitions for Responses API structured outputs
+export const RESPONSES_API_SCHEMAS = {
+  // Standard schema for query/reasoning/answer generation
+  reasoningTrace: {
+    name: 'reasoning_trace',
+    schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The question or query being answered' },
+        reasoning: { type: 'string', description: 'The step-by-step reasoning process' },
+        answer: { type: 'string', description: 'The final answer to the query' }
+      },
+      required: ['reasoning', 'answer'],
+      additionalProperties: false
+    },
+    description: 'Schema for reasoning trace output',
+    strict: true
+  },
+  // Schema for query/reasoning/answer with follow-up
+  reasoningTraceWithFollowUp: {
+    name: 'reasoning_trace_with_followup',
+    schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The question or query being answered' },
+        reasoning: { type: 'string', description: 'The step-by-step reasoning process' },
+        answer: { type: 'string', description: 'The final answer to the query' },
+        follow_up_question: { type: 'string', description: 'A follow-up question for multi-turn conversation' }
+      },
+      required: ['reasoning', 'answer', 'follow_up_question'],
+      additionalProperties: false
+    },
+    description: 'Schema for reasoning trace with follow-up output',
+    strict: true
+  },
+  // Schema for rewrite operations (single field)
+  rewriteResponse: {
+    name: 'rewrite_response',
+    schema: {
+      type: 'object',
+      properties: {
+        response: { type: 'string', description: 'The rewritten content' }
+      },
+      required: ['response'],
+      additionalProperties: false
+    },
+    description: 'Schema for rewrite response output',
+    strict: true
+  },
+  // Schema for message rewrite (reasoning + answer)
+  messageRewrite: {
+    name: 'message_rewrite',
+    schema: {
+      type: 'object',
+      properties: {
+        reasoning: { type: 'string', description: 'The reasoning/thinking process' },
+        answer: { type: 'string', description: 'The final answer content' }
+      },
+      required: ['reasoning', 'answer'],
+      additionalProperties: false
+    },
+    description: 'Schema for message rewrite output',
+    strict: true
+  },
+  // Schema for user agent follow-up generation
+  userAgentResponse: {
+    name: 'user_agent_response',
+    schema: {
+      type: 'object',
+      properties: {
+        follow_up_question: { type: 'string', description: 'A natural follow-up question based on the conversation' },
+        question: { type: 'string', description: 'Alternative field for follow-up question' }
+      },
+      required: ['follow_up_question'],
+      additionalProperties: false
+    },
+    description: 'Schema for user agent response output',
+    strict: true
+  },
+  // Generic JSON schema fallback
+  genericObject: {
+    name: 'generic_object',
+    schema: {
+      type: 'object',
+      additionalProperties: true
+    },
+    description: 'Generic JSON object schema',
+    strict: false
+  }
+} as const;
+
+// Type for schema names
+export type ResponsesSchemaName = keyof typeof RESPONSES_API_SCHEMAS;
+
 export interface ExternalApiConfig {
   provider: ExternalProvider;
   apiKey: string;
   model: string;
+  apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
   customBaseUrl?: string;
   systemPrompt: string;
   userPrompt: string;
@@ -18,6 +113,8 @@ export interface ExternalApiConfig {
   retryDelay?: number;
   generationParams?: GenerationParams;
   structuredOutput?: boolean;
+  // For Responses API structured output - specifies which schema to use
+  responsesSchema?: ResponsesSchemaName;
   // Streaming support
   stream?: boolean;
   onStreamChunk?: StreamChunkCallback;
@@ -36,9 +133,10 @@ async function processStreamResponse(
   response: Response,
   provider: ExternalProvider,
   onChunk: (chunk: string, accumulated: string, usage?: any) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  apiType: ApiType = 'chat'
 ): Promise<string> {
-  console.log('🔴 externalApiService: processStreamResponse STARTED');
+  console.log('🔴 externalApiService: processStreamResponse STARTED', { apiType });
   const reader = response.body?.getReader();
   if (!reader) throw new Error('No response body for streaming');
 
@@ -52,6 +150,9 @@ async function processStreamResponse(
 
   // Track usage data
   let usageData: any = null;
+
+  // Determine if using Responses API
+  const isResponsesApi = apiType === 'responses';
 
   let chunkCount = 0;
   try {
@@ -109,8 +210,47 @@ async function processStreamResponse(
               } else if (json.delta?.text) {
                 chunk = json.delta.text;
               }
+            } else if (isResponsesApi) {
+              // Responses API streaming format
+              // The Responses API streams output items with delta updates
+              if (json.type === 'response.output_item.added' || json.type === 'response.output_item.delta') {
+                const item = json.item || json.delta;
+                if (item?.content) {
+                  // Handle content array updates
+                  if (Array.isArray(item.content)) {
+                    const textContent = item.content
+                      .filter((c: any) => c.type === 'output_text' || c.type === 'text')
+                      .map((c: any) => c.text || c.value || '')
+                      .join('');
+                    if (textContent) chunk = textContent;
+                  } else if (typeof item.content === 'string') {
+                    chunk = item.content;
+                  }
+                }
+                // Also check for direct text delta
+                if (json.delta?.text?.value) {
+                  chunk = json.delta.text.value;
+                }
+              } else if (json.type === 'response.completed') {
+                // Final response completed event - may contain full output
+                if (json.response?.output) {
+                  const output = json.response.output;
+                  if (Array.isArray(output) && output.length > 0) {
+                    const messageOutput = output.find((o: any) => o.type === 'message') || output[0];
+                    if (messageOutput?.content && Array.isArray(messageOutput.content)) {
+                      const fullText = messageOutput.content
+                        .filter((c: any) => c.type === 'output_text')
+                        .map((c: any) => c.text)
+                        .join('');
+                      if (fullText && !accumulated) {
+                        chunk = fullText;
+                      }
+                    }
+                  }
+                }
+              }
             } else {
-              // OpenAI-compatible format
+              // Standard chat completions API - OpenAI-compatible format
               const delta = json.choices?.[0]?.delta;
               if (delta) {
                 // Check for various reasoning field names
@@ -217,21 +357,30 @@ async function processStreamResponse(
 
 export const callExternalApi = async (config: ExternalApiConfig): Promise<any> => {
   const {
-    provider, apiKey, model, customBaseUrl, systemPrompt, userPrompt, signal,
+    provider, apiKey, model, apiType = 'chat', customBaseUrl, systemPrompt, userPrompt, signal,
     maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
-    stream = false, onStreamChunk, streamPhase, tools
+    responsesSchema = 'reasoningTrace', stream = false, onStreamChunk, streamPhase, tools
   } = config;
 
   let baseUrl = provider === 'other' ? customBaseUrl : PROVIDER_URLS[provider];
   let responseFormat = structuredOutput ? 'json_object' : 'text';
+  
+  // Determine if using Responses API
+  const isResponsesApi = apiType === 'responses';
 
-  // Ensure custom endpoint ends with /chat/completions for 'other' provider
+  // Ensure custom endpoint ends with correct path
   if (baseUrl) {
     const isAnthropicFormat = baseUrl.includes('/messages');
-    const alreadyHasPath = baseUrl.includes('/chat/completions') || baseUrl.includes('/messages');
+    const alreadyHasChatPath = baseUrl.includes('/chat/completions');
+    const alreadyHasResponsesPath = baseUrl.includes('/responses');
+    const alreadyHasPath = alreadyHasChatPath || alreadyHasResponsesPath || isAnthropicFormat;
 
-    if (!alreadyHasPath && !isAnthropicFormat) {
-      baseUrl = `${baseUrl}/chat/completions`;
+    if (!alreadyHasPath) {
+      if (isResponsesApi) {
+        baseUrl = `${baseUrl}/responses`;
+      } else {
+        baseUrl = `${baseUrl}/chat/completions`;
+      }
     }
   }
 
@@ -289,7 +438,77 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       top_k: cleanGenParams.top_k,
       stream: shouldStream
     };
+  } else if (isResponsesApi) {
+    // OpenAI Responses API format
+    // Responses API uses /v1/responses endpoint
+    // For OpenAI official: https://api.openai.com/v1/responses
+    // For other providers, assume they follow same pattern
+    if (baseUrl.includes('/responses')) {
+      url = baseUrl;
+    } else if (provider === 'openai') {
+      url = 'https://api.openai.com/v1/responses';
+    } else {
+      // For other providers, try to construct proper endpoint
+      url = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/chat\/completions$/, '')}/v1/responses`;
+    }
+    
+    // Build input for Responses API
+    // The input can be a simple string or an array of input items
+    // Input items for Responses API have specific types: message, file, etc.
+    let input: any;
+    if (config.messages && config.messages.length > 0) {
+      // Convert messages format to Responses API input format
+      // Filter out system messages (they go in 'instructions')
+      const nonSystemMessages = config.messages.filter((m: any) => m.role !== 'system');
+      input = nonSystemMessages.map((m: any) => {
+        if (m.role === 'user') {
+          return {
+            role: 'user',
+            content: m.content
+          };
+        } else if (m.role === 'assistant' || m.role === 'model') {
+          return {
+            role: 'assistant',
+            content: m.content
+          };
+        }
+        return { role: 'user', content: m.content };
+      });
+    } else {
+      // Simple string input for single-turn
+      input = userPrompt;
+    }
+
+    // Get the appropriate schema for structured output
+    const schema = structuredOutput ? RESPONSES_API_SCHEMAS[responsesSchema] : null;
+    
+    payload = {
+      model,
+      input,
+      // System instructions go in 'instructions' field, not in messages
+      ...(systemPrompt ? { instructions: systemPrompt } : {}),
+      ...(config.maxTokens ? { max_output_tokens: config.maxTokens } : {}),
+      ...(schema ? { 
+        text: { 
+          format: {
+            type: 'json_schema',
+            name: schema.name,
+            description: schema.description,
+            schema: schema.schema,
+            strict: schema.strict
+          } 
+        } 
+      } : undefined),
+      stream: shouldStream,
+      ...cleanGenParams
+    };
+    
+    // Remove undefined values
+    Object.keys(payload).forEach(key => {
+      if (payload[key] === undefined) delete payload[key];
+    });
   } else {
+    // Standard chat completions API
     url = baseUrl;
     const finalMessages = config.messages || [
       { role: 'system', content: systemPrompt },
@@ -356,7 +575,8 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
             console.log('externalApiService callExternalApi wrapper - usage:', usage);
             onStreamChunk!(chunk, accumulated, streamPhase, usage);
           },
-          signal
+          signal,
+          apiType
         );
 
         if (!rawContent) {
@@ -376,7 +596,44 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       if (provider === 'anthropic') {
         const content = data.content?.[0]?.text || "";
         return parseJsonContent(content);
+      } else if (isResponsesApi) {
+        // Responses API format
+        // Responses API returns output array with content
+        const output = data.output || [];
+        const messageOutput = output.find((o: any) => o.type === 'message') || output[0];
+        
+        let rawContent = '';
+        if (messageOutput?.content) {
+          // Content can be an array of content parts
+          if (Array.isArray(messageOutput.content)) {
+            rawContent = messageOutput.content
+              .filter((c: any) => c.type === 'output_text')
+              .map((c: any) => c.text)
+              .join('');
+          } else if (typeof messageOutput.content === 'string') {
+            rawContent = messageOutput.content;
+          }
+        }
+        
+        // Fallback to text field if available
+        if (!rawContent && data.text) {
+          rawContent = typeof data.text === 'string' ? data.text : JSON.stringify(data.text);
+        }
+
+        if (!rawContent) {
+          logger.warn("Responses API returned empty content", data);
+          throw new Error("Responses API returned empty content (check console for details)");
+        }
+
+        if (!structuredOutput) {
+          return rawContent;
+        }
+        
+        // Parse JSON content for structured output
+        const parsed = parseJsonContent(rawContent);
+        return parsed;
       } else {
+        // Standard chat completions API
         const choice = data.choices?.[0];
         const message = choice?.message;
 

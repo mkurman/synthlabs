@@ -32,7 +32,7 @@ const executePhase = async (
   structuredOutput: boolean = true,
   streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<{ result: any; model: string; input: string; duration: number; timestamp: string }> => {
-  const { id, provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt } = phaseConfig;
+  const { id, provider, externalProvider, apiType, apiKey, model, customBaseUrl, systemPrompt } = phaseConfig;
   const modelName = provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
   const startTime = Date.now();
   const timestamp = new Date().toISOString();
@@ -51,10 +51,17 @@ const executePhase = async (
       const resolvedApiKey = apiKey || (externalProvider ? SettingsService.getApiKey(externalProvider) : '');
       const resolvedBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
 
+      // Determine appropriate schema based on phase
+      let responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
+      if (id === 'userAgent' || systemPrompt.toLowerCase().includes('follow-up') || systemPrompt.toLowerCase().includes('follow_up')) {
+        responsesSchema = 'userAgentResponse';
+      }
+
       result = await ExternalApiService.callExternalApi({
         provider: externalProvider,
         apiKey: resolvedApiKey,
         model: model,
+        apiType: apiType || 'chat', // Pass API type (defaults to 'chat')
         customBaseUrl: resolvedBaseUrl,
         systemPrompt: systemPrompt,
         userPrompt: userContent,
@@ -63,6 +70,7 @@ const executePhase = async (
         retryDelay,
         generationParams,
         structuredOutput,
+        responsesSchema, // Pass schema for Responses API
         // Streaming: only enable if streamOptions provided with callback
         stream: streamOptions?.stream,
         onStreamChunk: streamOptions?.onStreamChunk,
@@ -538,6 +546,7 @@ const callAgent = async (
   config: {
     provider: 'gemini' | 'external';
     externalProvider: string;
+    apiType?: 'chat' | 'responses'; // API type for external providers
     apiKey: string;
     model: string;
     customBaseUrl: string;
@@ -557,10 +566,20 @@ const callAgent = async (
   if (config.provider === 'gemini') {
     return await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams: effectiveParams });
   } else {
+    // Determine appropriate schema based on prompt content
+    let responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
+    if (systemPrompt.toLowerCase().includes('follow-up') || 
+        systemPrompt.toLowerCase().includes('follow_up') ||
+        systemPrompt.toLowerCase().includes('followup') ||
+        userContent.toLowerCase().includes('follow-up')) {
+      responsesSchema = 'userAgentResponse';
+    }
+
     return await ExternalApiService.callExternalApi({
       provider: config.externalProvider as any,
       apiKey: config.apiKey,
       model: config.model,
+      apiType: config.apiType || 'chat', // Pass API type (defaults to 'chat')
       customBaseUrl: config.customBaseUrl,
       systemPrompt: systemPrompt,
       userPrompt: userContent,
@@ -569,6 +588,7 @@ const callAgent = async (
       retryDelay,
       generationParams: effectiveParams,
       structuredOutput,
+      responsesSchema, // Pass schema for Responses API
       stream: streamOptions?.stream,
       onStreamChunk: streamOptions?.onStreamChunk,
       streamPhase: streamOptions?.streamPhase

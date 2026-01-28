@@ -71,6 +71,9 @@ export interface VerifierItem extends SynthLogItem {
 export type ProviderType = 'gemini' | 'external';
 export type EngineMode = 'regular' | 'deep';
 
+// API type for external providers (standard chat completions vs OpenAI Responses API)
+export type ApiType = 'chat' | 'responses';
+
 export type ExternalProvider =
   | 'featherless'
   | 'openai'
@@ -88,6 +91,25 @@ export type ExternalProvider =
   | 'huggingface'
   | 'other';
 
+// Model information from provider APIs
+export interface ProviderModel {
+  id: string;
+  name?: string;
+  provider: ExternalProvider;
+  context_length?: number;
+  owned_by?: string;
+  created?: number;
+}
+
+// Cached model list for a provider
+export interface CachedModelList {
+  provider: ExternalProvider;
+  models: ProviderModel[];
+  fetchedAt: number;
+  expiresAt: number;
+  error?: string;
+}
+
 export type AppMode = 'generator' | 'converter';
 
 export interface GenerationParams {
@@ -97,11 +119,14 @@ export interface GenerationParams {
   presencePenalty?: number;
   frequencyPenalty?: number;
   maxTokens?: number;
+  /** Force structured JSON output from the model (default: true) */
+  forceStructuredOutput?: boolean;
 }
 
 export interface GenerationConfig {
   provider: ProviderType;
   externalProvider?: ExternalProvider;
+  apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
   customBaseUrl?: string; // For 'other' provider
   apiKey: string;
   model: string;
@@ -123,6 +148,7 @@ export interface DeepPhaseConfig {
   enabled: boolean;
   provider: ProviderType;
   externalProvider: ExternalProvider;
+  apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
   apiKey: string;
   model: string;
   customBaseUrl: string;
@@ -148,6 +174,7 @@ export interface UserAgentConfig {
   responderPhase: 'writer' | 'rewriter' | 'responder'; // Which agent responds after User Agent
   provider: ProviderType;
   externalProvider: ExternalProvider;
+  apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
   apiKey: string;
   model: string;
   customBaseUrl: string;
@@ -159,6 +186,7 @@ export interface UserAgentConfig {
 export interface StepModelConfig {
   provider: 'gemini' | 'external' | 'other';
   externalProvider: string;
+  apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
   model: string;
   generationParams?: GenerationParams;
 }
@@ -166,6 +194,7 @@ export interface StepModelConfig {
 export interface AutoscoreConfig {
   provider: ProviderType;
   externalProvider: ExternalProvider;
+  apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
   apiKey: string;
   model: string;
   customBaseUrl: string;
@@ -176,6 +205,18 @@ export interface AutoscoreConfig {
   retryDelay: number;
   generationParams?: GenerationParams;
 }
+
+export interface HuggingFacePrefetchConfig {
+  /** Number of batches to prefetch (default: 10). Each batch is concurrency * samples. */
+  prefetchBatches: number;
+  /** Threshold (0-1) at which to trigger next prefetch (default: 0.3 = 30% remaining) */
+  prefetchThreshold: number;
+}
+
+export const DEFAULT_HF_PREFETCH_CONFIG: HuggingFacePrefetchConfig = {
+  prefetchBatches: 10,
+  prefetchThreshold: 0.3
+};
 
 export interface HuggingFaceConfig {
   dataset: string;
@@ -188,6 +229,8 @@ export interface HuggingFaceConfig {
   mcqColumn?: string;        // Optional column containing MCQ options (dict or list)
   messageTurnIndex?: number; // If the target is a list/chat, which index to pick
   maxMultiTurnTraces?: number; // Max number of multi-turn traces to process (empty = all)
+  /** Prefetch configuration for rate limit avoidance */
+  prefetchConfig?: HuggingFacePrefetchConfig;
 }
 
 export interface DetectedColumns {
