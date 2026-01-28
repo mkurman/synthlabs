@@ -14,7 +14,7 @@ import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider,
     ProgressStats, HuggingFaceConfig, DetectedColumns,
     CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, UserAgentConfig, ChatMessage,
-    StreamChunkCallback, StreamingConversationState
+    StreamChunkCallback, StreamingConversationState, FirebaseConfig
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
 import { logger, setVerbose } from './utils/logger';
