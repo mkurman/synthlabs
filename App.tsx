@@ -3,7 +3,7 @@ import {
     PlusCircle, Plus, FileX, RefreshCcw, X, FileEdit, CloudUpload, CloudDownload, Calendar,
     LayoutDashboard, Bookmark, Beaker,
     Play, Pause, Download, Settings, Database, Cpu, Terminal,
-    AlertCircle, RefreshCw,
+    AlertCircle, RefreshCw, Eye,
     Wand2, Dice5, Trash2, Upload, Save, FileJson, ArrowLeftRight,
     Cloud, Laptop, ShieldCheck, Archive, FileText, Server, BrainCircuit,
     MessageSquare, Table, Layers, Search, PenTool, GitBranch,
@@ -295,6 +295,7 @@ export default function App() {
     const [logsTrigger, setLogsTrigger] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [logFilter, setLogFilter] = useState<'live' | 'invalid'>('live');
+    const [showLatestOnly, setShowLatestOnly] = useState(false);
 
     const [isRunning, setIsRunning] = useState(false);
     const [isOptimizing, setIsOptimizing] = useState(false);
@@ -3620,24 +3621,26 @@ export default function App() {
                     {/* Feed / Analytics (CREATOR MODE) */}
                     <div className="lg:col-span-8">
                         <div className="flex justify-between items-end mb-4">
-                            {/* View Switcher */}
-                            <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
-                                <button
-                                    onClick={() => setViewMode('feed')}
-                                    className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-2 transition-all ${viewMode === 'feed' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
-                                >
-                                    <Terminal className="w-4 h-4" /> Live Feed
-                                </button>
-                                <button
-                                    onClick={() => setViewMode('analytics')}
-                                    className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-2 transition-all ${viewMode === 'analytics' ? 'bg-pink-600 text-white shadow-lg shadow-pink-500/20' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
-                                >
-                                    <LayoutDashboard className="w-4 h-4" /> Analytics
-                                </button>
-                            </div>
+                            {/* Left side controls */}
+                            <div className="flex items-center gap-2">
+                                {/* View Switcher */}
+                                <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
+                                    <button
+                                        onClick={() => setViewMode('feed')}
+                                        className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-2 transition-all ${viewMode === 'feed' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
+                                    >
+                                        <Terminal className="w-4 h-4" /> Live Feed
+                                    </button>
+                                    <button
+                                        onClick={() => setViewMode('analytics')}
+                                        className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-2 transition-all ${viewMode === 'analytics' ? 'bg-pink-600 text-white shadow-lg shadow-pink-500/20' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
+                                    >
+                                        <LayoutDashboard className="w-4 h-4" /> Analytics
+                                    </button>
+                                </div>
 
-                            {viewMode === 'feed' && (
-                                <div className="flex items-center gap-2">
+                                {/* Live/Invalid Filter */}
+                                {viewMode === 'feed' && (
                                     <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
                                         <button
                                             onClick={() => setLogFilter('live')}
@@ -3652,6 +3655,22 @@ export default function App() {
                                             <AlertCircle className="w-3 h-3" /> Invalid
                                         </button>
                                     </div>
+                                )}
+
+                                {/* Show Latest Only Toggle */}
+                                {viewMode === 'feed' && (
+                                    <button
+                                        onClick={() => setShowLatestOnly(!showLatestOnly)}
+                                        className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold uppercase transition-all border ${showLatestOnly ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700'}`}
+                                    >
+                                        <Eye className="w-3 h-3" /> Latest only
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Right side controls */}
+                            {viewMode === 'feed' && (
+                                <div className="flex items-center gap-2">
                                     <label className="text-[10px] font-bold text-slate-500 uppercase">Page Size</label>
                                     <select
                                         value={feedPageSize}
@@ -3685,6 +3704,8 @@ export default function App() {
                                 savingIds={savingToDbIds}
                                 isProdMode={environment === 'production'}
                                 streamingConversations={logFilter === 'live' ? streamingConversations : undefined}
+                                showLatestOnly={showLatestOnly}
+                                onShowLatestOnlyChange={setShowLatestOnly}
                             />
                         ) : (
                             <AnalyticsDashboard logs={visibleLogs} />

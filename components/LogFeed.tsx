@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload, Trash2 } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2 } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import StreamingConversationCard from './StreamingConversationCard';
@@ -22,14 +22,15 @@ interface LogFeedProps {
   isProdMode?: boolean;
   // Map of concurrent streaming conversations
   streamingConversations?: Map<string, StreamingConversationState>;
+  showLatestOnly?: boolean;
+  onShowLatestOnlyChange?: (value: boolean) => void;
 }
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
   onRetry, onRetrySave, onSaveToDb, onDelete, onHalt, retryingIds, savingIds, isProdMode,
-  streamingConversations
+  streamingConversations, showLatestOnly = false, onShowLatestOnlyChange
 }) => {
-  const [showLatestOnly, setShowLatestOnly] = useState(false);
 
   // Reset to page 1 if pageSize changes (handled by parent mostly, but safety check)
   useEffect(() => {
@@ -91,12 +92,8 @@ const LogFeed: React.FC<LogFeedProps> = ({
   // Calculate Pagination logic based on "Show Latest Only" mode
   const effectivePageSize = pageSize === -1 ? totalLogCount : pageSize;
 
-  // If "Show Latest Only" is enabled, we force view to the first "page" of size pageSize
-  // effectively showing only the top N items.
-  const isAll = pageSize === -1 || showLatestOnly;
-
-  // If Show Latest is ON, total pages is effectively 1 (hidden)
-  const totalPages = isAll ? 1 : Math.ceil(totalLogCount / effectivePageSize);
+  // Calculate total pages based on pageSize (independent of showLatestOnly)
+  const totalPages = pageSize === -1 ? 1 : Math.ceil(totalLogCount / effectivePageSize);
 
   const safeCurrentPage = showLatestOnly ? 1 : Math.min(Math.max(1, currentPage), totalPages);
 
@@ -109,16 +106,6 @@ const LogFeed: React.FC<LogFeedProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Show Latest Only Toggle - Inline with feed header controls in spirit, but placed here for flow */}
-      <div className="flex justify-end -mt-10 mb-6 mr-36">
-        <button
-          onClick={() => setShowLatestOnly(!showLatestOnly)}
-          className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold uppercase transition-all border ${showLatestOnly ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700'}`}
-        >
-          <Eye className="w-3 h-3" /> Show Latest Only
-        </button>
-      </div>
-
       {/* Streaming Conversation Cards - Show active generations */}
       {hasActiveStreams && visibleStreaming.length > 0 && (
         <div className="space-y-4 mb-4">
@@ -316,8 +303,8 @@ const LogFeed: React.FC<LogFeedProps> = ({
         );
       })}
 
-      {/* Pagination Controls - Hidden if Show Latest Only is active */}
-      {!showLatestOnly && !isAll && totalPages > 1 && (
+      {/* Pagination Controls - Hidden if Show Latest Only is active or Page Size is All */}
+      {!showLatestOnly && pageSize !== -1 && totalPages > 1 && (
         <div className="flex items-center justify-center gap-4 mt-6 p-3 bg-slate-900/50 rounded-xl border border-slate-800">
           <button
             onClick={() => onPageChange(1)}
