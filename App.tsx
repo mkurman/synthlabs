@@ -2904,10 +2904,10 @@ export default function App() {
                                                                     className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${
                                                                         externalModel === model.name
                                                                             ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
-                                                                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
+                                                                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover-border-emerald-600 hover:text-emerald-400'
                                                                     }`}
                                                                 >
-                                                                    {model.name.split(':')[0]}
+                                                                    {model.name.includes(':') ? model.name.split(':')[0] : model.name}
                                                                 </button>
                                                             ))}
                                                         </div>
