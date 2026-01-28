@@ -99,9 +99,6 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
     // Regenerate Dropdown State
     const [showRegenerateDropdown, setShowRegenerateDropdown] = useState<string | null>(null);
 
-    // Regenerate Dropdown State
-    const [showRegenerateDropdown, setShowRegenerateDropdown] = useState<string | null>(null);
-
     // Rewriter Config State
     const [isRewriterPanelOpen, setIsRewriterPanelOpen] = useState(false);
     const [rewriterConfig, setRewriterConfig] = useState<VerifierRewriterService.RewriterConfig>(() => {
@@ -2329,7 +2326,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                                 ) : (
                                                                     <RotateCcw className="w-3 h-3" />
                                                                 )}
-                                                            </div>
+                                                            </button>
                                                             {showRegenerateDropdown === item.id && (
                                                                 <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
                                                             )}
