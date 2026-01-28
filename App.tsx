@@ -88,8 +88,12 @@ export default function App() {
                 setOllamaStatus('online');
                 const models = await fetchOllamaModels();
                 setOllamaModels(models);
-                // If no model selected and models available, select first one
-                if (models.length > 0 && externalProvider === 'ollama' && !externalModel) {
+                // If no (valid) model selected for Ollama and models available, select first one
+                if (
+                    models.length > 0 &&
+                    externalProvider === 'ollama' &&
+                    (!externalModel || externalModel.includes('/'))
+                ) {
                     setExternalModel(models[0].name);
                 }
             } else {
