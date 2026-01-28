@@ -249,6 +249,7 @@ export default function App() {
     // Log Management
     const [visibleLogs, setVisibleLogs] = useState<SynthLogItem[]>([]);
     const [totalLogCount, setTotalLogCount] = useState(0);
+    const [filteredLogCount, setFilteredLogCount] = useState(0);
     const [logsTrigger, setLogsTrigger] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [logFilter, setLogFilter] = useState<'live' | 'invalid'>('live');
@@ -360,7 +361,8 @@ export default function App() {
         const effectivePageSize = feedPageSize === -1 ? filteredLogs.length : feedPageSize;
         const start = (currentPage - 1) * effectivePageSize;
         setVisibleLogs(filteredLogs.slice(start, start + effectivePageSize));
-        setTotalLogCount(filteredLogs.length);
+        setTotalLogCount(allLogs.length);
+        setFilteredLogCount(filteredLogs.length);
     }, [currentPage, feedPageSize, logsTrigger, logFilter, isInvalidLog]);
 
     // Initial Load & Session Switch
@@ -1881,6 +1883,7 @@ export default function App() {
         setSessionName(null);
         setVisibleLogs([]);
         setTotalLogCount(0);
+        setFilteredLogCount(0);
         setSparklineHistory([]);
         setDbStats({ total: 0, session: 0 });
     };
@@ -1924,6 +1927,7 @@ export default function App() {
             sessionUidRef.current = newUid; // Sync immediately for worker
             setVisibleLogs([]);
             setTotalLogCount(0);
+            setFilteredLogCount(0);
             setSparklineHistory([]);
             if (sessionName === "Local File Session" || !sessionName) {
                 setSessionName(null);
@@ -2343,6 +2347,7 @@ export default function App() {
             // Delete from UI immediately
             setVisibleLogs(prev => prev.filter(l => l.id !== id));
             setTotalLogCount(prev => Math.max(0, prev - 1));
+            setFilteredLogCount(prev => Math.max(0, prev - 1));
 
             // Delete from Local Storage
             await LogStorageService.deleteLog(sessionUid, id);
@@ -3557,7 +3562,7 @@ export default function App() {
                             <LogFeed
                                 logs={visibleLogs}
                                 pageSize={feedPageSize}
-                                totalLogCount={totalLogCount}
+                                totalLogCount={filteredLogCount}
                                 currentPage={currentPage}
                                 onPageChange={handlePageChange}
                                 onRetry={retryItem}
