@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, ExternalLink, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, Timer } from 'lucide-react';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, Timer } from 'lucide-react';
 import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG } from '../services/settingsService';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
