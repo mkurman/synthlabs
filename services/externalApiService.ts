@@ -494,7 +494,7 @@ export const generateSyntheticSeeds = async (
       }
     }
 
-    console.warn("Ollama generateSyntheticSeeds: Could not extract array from result:", result);
+    console.warn("generateSyntheticSeeds: Could not extract array from result:", result);
     return [];
   } catch (e) {
     console.error("External Seed Gen failed", e);
