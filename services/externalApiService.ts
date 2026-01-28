@@ -300,7 +300,9 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       model,
       messages: finalMessages,
       ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
-      response_format: structuredOutput ? { type: responseFormat } : undefined,
+      // Ollama doesn't support response_format for arrays, only json_object or text
+      // So we disable structuredOutput for Ollama when we need arrays
+      response_format: structuredOutput && provider !== 'ollama' ? { type: responseFormat } : undefined,
       stream: shouldStream,
       ...(tools && tools.length > 0 ? { tools } : {}),
       ...cleanGenParams
@@ -397,10 +399,20 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           throw new Error("Provider returned empty content (check console for details)");
         }
 
+        // For Ollama with structuredOutput, we still get text (not json_object) because
+        // we disabled response_format for arrays. So we need to parse it.
+        if (structuredOutput && provider === 'ollama') {
+          const parsed = parseJsonContent(rawContent);
+          return parsed;
+        }
+
         if (!structuredOutput) {
           return rawContent;
         }
-        return parseJsonContent(rawContent);
+        
+        // For other providers with structuredOutput, parse the JSON content
+        const parsed = parseJsonContent(rawContent);
+        return parsed;
       }
 
     } catch (err: any) {
@@ -442,10 +454,47 @@ export const generateSyntheticSeeds = async (
     });
 
     // Handle cases where the model might return { "seeds": [...] } instead of just [...]
-    if (Array.isArray(result)) return result.map(String);
-    if (result && Array.isArray(result.seeds)) return result.seeds.map(String);
-    if (result && Array.isArray(result.paragraphs)) return result.paragraphs.map(String);
+    if (Array.isArray(result)) {
+      return result.map(String);
+    }
+    if (result && Array.isArray(result.seeds)) {
+      return result.seeds.map(String);
+    }
+    if (result && Array.isArray(result.paragraphs)) {
+      return result.paragraphs.map(String);
+    }
+    
+    // Try to extract array from response content if it's a string
+    if (typeof result === 'string') {
+      try {
+        const parsed = JSON.parse(result);
+        if (Array.isArray(parsed)) {
+          return parsed.map(String);
+        }
+        if (parsed && Array.isArray(parsed.seeds)) {
+          return parsed.seeds.map(String);
+        }
+        if (parsed && Array.isArray(parsed.paragraphs)) {
+          return parsed.paragraphs.map(String);
+        }
+      } catch (parseError) {
+        console.error("Failed to parse result string as JSON:", parseError);
+      }
+    }
 
+    // If result is an object with a content field (common in some API responses)
+    if (result && typeof result === 'object' && result.content) {
+      try {
+        const parsed = typeof result.content === 'string' ? JSON.parse(result.content) : result.content;
+        if (Array.isArray(parsed)) {
+          return parsed.map(String);
+        }
+      } catch (parseError) {
+        console.error("Failed to parse result.content:", parseError);
+      }
+    }
+
+    console.warn("generateSyntheticSeeds: Could not extract array from result:", result);
     return [];
   } catch (e) {
     console.error("External Seed Gen failed", e);
@@ -505,14 +554,63 @@ function parseJsonContent(content: string): any {
     }
     return parsed;
   } catch (e) {
-    // 4. Try to find the first valid { ... } object in the text
-    // We match from the first '{' to the last '}'
-    const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
+    // 4. Try to find the first valid { ... } object or [ ... ] array in the text
+    // We match from the first '{' to the last '}' or first '[' to last ']'
+    const jsonObjectMatch = cleanContent.match(/\{[\s\S]*\}/);
+    const jsonArrayMatch = cleanContent.match(/\[[\s\S]*\]/);
+    
+    // Prefer array match if both exist (for seed generation)
+    if (jsonArrayMatch) {
       try {
-        return JSON.parse(jsonMatch[0]);
+        return JSON.parse(jsonArrayMatch[0]);
       } catch (e2) {
-        // Fall through
+        // Fall through to object match or repair
+      }
+    }
+    
+    if (jsonObjectMatch) {
+      try {
+        return JSON.parse(jsonObjectMatch[0]);
+      } catch (e2) {
+        // Fall through to repair
+      }
+    }
+
+    // 5. Try JSONL format (multiple JSON objects separated by newlines)
+    const lines = cleanContent.split('\n').filter(line => line.trim());
+    if (lines.length > 1) {
+      const jsonlResults: any[] = [];
+      let allParsed = true;
+      for (const line of lines) {
+        try {
+          jsonlResults.push(JSON.parse(line.trim()));
+        } catch {
+          allParsed = false;
+          break;
+        }
+      }
+      if (allParsed && jsonlResults.length > 0) {
+        // If single result, return it directly; otherwise return array
+        return jsonlResults.length === 1 ? jsonlResults[0] : jsonlResults;
+      }
+    }
+
+    // 6. Try to repair the JSON using json-repair-js
+    try {
+      const repaired = jsonrepair(cleanContent);
+      logger.log("JSON repaired successfully");
+      return JSON.parse(repaired);
+    } catch (repairError) {
+      // Also try repairing the matched object/array if found
+      const matchToRepair = jsonArrayMatch || jsonObjectMatch;
+      if (matchToRepair) {
+        try {
+          const repairedMatch = jsonrepair(matchToRepair[0]);
+          logger.log("JSON object/array repaired successfully");
+          return JSON.parse(repairedMatch);
+        } catch {
+          // Fall through
+        }
       }
     }
 
@@ -536,4 +634,97 @@ function parseJsonContent(content: string): any {
       follow_up_question: content.trim() // For user agent responses
     };
   }
+}
+
+// ==================== Ollama Integration ====================
+
+export interface OllamaModel {
+  name: string;
+  model: string;
+  modified_at: string;
+  size: number;
+  digest: string;
+  details?: {
+    parent_model?: string;
+    format?: string;
+    family?: string;
+    families?: string[];
+    parameter_size?: string;
+    quantization_level?: string;
+  };
+}
+
+export interface OllamaModelListResponse {
+  models: OllamaModel[];
+}
+
+/**
+ * Fetch available models from a local Ollama instance
+ * @param baseUrl - Ollama server URL (default: http://localhost:11434)
+ * @returns List of available models or empty array on error
+ */
+export async function fetchOllamaModels(baseUrl: string = 'http://localhost:11434'): Promise<OllamaModel[]> {
+  try {
+    // Ollama uses /api/tags endpoint to list models (not /v1/models like OpenAI)
+    const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/tags`;
+    logger.log(`Fetching Ollama models from: ${url}`);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(5000), // 5 second timeout
+    });
+
+    if (!response.ok) {
+      logger.warn(`Ollama API returned ${response.status}: ${response.statusText}`);
+      return [];
+    }
+
+    const data: OllamaModelListResponse = await response.json();
+    logger.log(`Found ${data.models?.length || 0} Ollama models`);
+    return data.models || [];
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+        logger.warn('Ollama connection timed out - is Ollama running?');
+      } else if (error.message.includes('fetch')) {
+        logger.warn('Could not connect to Ollama - is Ollama running?');
+      } else {
+        logger.warn('Error fetching Ollama models:', error.message);
+      }
+    }
+    return [];
+  }
+}
+
+/**
+ * Check if Ollama is running and accessible
+ * @param baseUrl - Ollama server URL
+ * @returns true if Ollama is reachable
+ */
+export async function checkOllamaStatus(baseUrl: string = 'http://localhost:11434'): Promise<boolean> {
+  try {
+    const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/tags`;
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(3000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Format Ollama model size for display (e.g., "7B", "13B")
+ */
+export function formatOllamaModelSize(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) {
+    return `${gb.toFixed(1)}GB`;
+  }
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(0)}MB`;
 }
