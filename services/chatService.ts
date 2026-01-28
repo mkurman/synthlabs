@@ -182,7 +182,7 @@ ${JSON.stringify(definitions, null, 2)}
 
     // Call the AI model (using GeminiService as the backend for now, flexible to others)
     public async streamResponse(
-        modelConfig: { provider: string, model: string, apiKey?: string, customBaseUrl?: string },
+        modelConfig: { provider: string, model: string, apiKey?: string, customBaseUrl?: string, apiType?: 'chat' | 'responses' },
         includeTools: boolean,
         onChunk: (chunk: string, accumulated: string, usage?: any) => void,
         abortSignal?: AbortSignal
@@ -215,7 +215,8 @@ ${JSON.stringify(definitions, null, 2)}
         const config = {
             provider: modelConfig.provider || 'openrouter',
             model: modelConfig.model,
-            apiKey: modelConfig.apiKey || SettingsService.getApiKey(modelConfig.provider)
+            apiKey: modelConfig.apiKey || SettingsService.getApiKey(modelConfig.provider),
+            apiType: modelConfig.apiType || 'chat' // Pass API type (defaults to 'chat')
         };
 
         if (config.provider === 'gemini') {
@@ -262,6 +263,7 @@ ${JSON.stringify(definitions, null, 2)}
                 provider: config.provider as ExternalProvider,
                 model: config.model,
                 apiKey: config.apiKey,
+                apiType: config.apiType, // Pass API type
                 customBaseUrl: customEndpoint,
                 systemPrompt: systemPrompt,
                 userPrompt: '', // We pass full messages array now

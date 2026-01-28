@@ -1,4 +1,4 @@
-import { ExternalProvider, GenerationParams, VerifierItem } from '../types';
+import { ExternalProvider, GenerationParams, VerifierItem, ApiType } from '../types';
 import { PromptService } from './promptService';
 import * as ExternalApiService from './externalApiService';
 import * as GeminiService from './geminiService';
@@ -11,6 +11,7 @@ export type RewriterStreamCallback = (chunk: string, accumulated: string) => voi
 export interface RewriterConfig {
     provider: 'gemini' | 'external';
     externalProvider: ExternalProvider;
+    apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
     apiKey: string;
     model: string;
     customBaseUrl?: string;
@@ -284,10 +285,18 @@ export async function callRewriterAI(
         const rawText = result.answer || result.reasoning || String(result);
         return cleanResponse(rawText);
     } else {
+        // Determine appropriate schema for rewrite operations
+        const isRewriteField = systemPrompt.toLowerCase().includes('rewrite') && 
+                              (systemPrompt.toLowerCase().includes('query') || 
+                               systemPrompt.toLowerCase().includes('reasoning') || 
+                               systemPrompt.toLowerCase().includes('answer'));
+        const responsesSchema: ExternalApiService.ResponsesSchemaName = isRewriteField ? 'rewriteResponse' : 'reasoningTrace';
+
         const result = await ExternalApiService.callExternalApi({
             provider: config.externalProvider,
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
+            apiType: config.apiType || 'chat', // Pass API type (defaults to 'chat')
             customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
             systemPrompt,
             userPrompt,
@@ -295,7 +304,8 @@ export async function callRewriterAI(
             maxRetries: config.maxRetries ?? 2,
             retryDelay: config.retryDelay ?? 1000,
             generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
-            structuredOutput: true
+            structuredOutput: true,
+            responsesSchema // Pass schema for Responses API
         });
 
         return cleanResponse(result);
@@ -336,6 +346,7 @@ export async function callRewriterAIStreaming(
             provider: config.externalProvider,
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
+            apiType: config.apiType || 'chat', // Pass API type (defaults to 'chat')
             customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
             systemPrompt,
             userPrompt,
@@ -373,10 +384,14 @@ async function callRewriterAIRaw(
         );
         return result.answer || result.reasoning || String(result);
     } else {
+        // For raw calls, use reasoning trace schema by default or generic if unsure
+        const responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
+
         const result = await ExternalApiService.callExternalApi({
             provider: config.externalProvider,
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
+            apiType: config.apiType || 'chat', // Pass API type (defaults to 'chat')
             customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
             systemPrompt,
             userPrompt,
@@ -384,7 +399,8 @@ async function callRewriterAIRaw(
             maxRetries: config.maxRetries ?? 2,
             retryDelay: config.retryDelay ?? 1000,
             generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
-            structuredOutput: true
+            structuredOutput: true,
+            responsesSchema // Pass schema for Responses API
         });
         return result;
     }

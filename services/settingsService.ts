@@ -8,8 +8,9 @@ import { EXTERNAL_PROVIDERS, PROVIDER_URLS } from '../constants';
 import { GenerationParams } from '../types';
 
 const DB_NAME = 'SynthLabsSettingsDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Aligned with modelService for models store
 const STORE_NAME = 'settings';
+const MODELS_STORE = 'models'; // For modelService compatibility
 const SETTINGS_KEY = 'app_settings';
 
 // All available external providers from constants
@@ -19,6 +20,7 @@ export const AVAILABLE_PROVIDERS = EXTERNAL_PROVIDERS;
 export interface StepModelConfig {
     provider: 'gemini' | 'external' | 'other';
     externalProvider: string;
+    apiType?: 'chat' | 'responses'; // 'chat' | 'responses' - defaults to 'chat' if not specified
     model: string;
     generationParams?: GenerationParams;
 }
@@ -49,6 +51,7 @@ export interface WorkflowDefaults {
 export const EMPTY_STEP_CONFIG: StepModelConfig = {
     provider: 'gemini',
     externalProvider: '',
+    apiType: 'chat', // Default to chat completions API
     model: ''
 };
 
@@ -155,7 +158,8 @@ const DEFAULT_SETTINGS: AppSettings = {
         topK: undefined,
         presencePenalty: undefined,
         frequencyPenalty: undefined,
-        maxTokens: undefined
+        maxTokens: undefined,
+        forceStructuredOutput: true
     },
     generationTimeoutSeconds: 300
 };
@@ -189,6 +193,11 @@ const initDB = (): Promise<IDBDatabase> => {
             const db = (event.target as IDBOpenDBRequest).result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME);
+            }
+            // Also create models store for modelService compatibility
+            if (!db.objectStoreNames.contains(MODELS_STORE)) {
+                db.createObjectStore(MODELS_STORE, { keyPath: 'provider' });
+                console.log('[SettingsDB] Created models object store');
             }
         };
     });
@@ -416,7 +425,8 @@ export const SettingsService = {
             topK: defaults?.topK,
             presencePenalty: defaults?.presencePenalty,
             frequencyPenalty: defaults?.frequencyPenalty,
-            maxTokens: defaults?.maxTokens
+            maxTokens: defaults?.maxTokens,
+            forceStructuredOutput: defaults?.forceStructuredOutput ?? true
         };
     },
 

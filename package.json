@@ -1,7 +1,7 @@
 {
   "name": "synthlabs-reasoning-generator",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.7",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

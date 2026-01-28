@@ -11,8 +11,8 @@ import {
 } from 'lucide-react';
 
 import {
-    SynthLogItem, ProviderType, AppMode, ExternalProvider,
-    ProgressStats, HuggingFaceConfig, DetectedColumns,
+    SynthLogItem, ProviderType, AppMode, ExternalProvider, ApiType,
+    ProgressStats, HuggingFaceConfig, DetectedColumns, DEFAULT_HF_PREFETCH_CONFIG,
     CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, UserAgentConfig, ChatMessage,
     StreamChunkCallback, StreamingConversationState, FirebaseConfig
 } from './types';
@@ -26,8 +26,10 @@ import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaMode
 import * as DeepReasoningService from './services/deepReasoningService';
 import { LogStorageService } from './services/logStorageService';
 import { SettingsService } from './services/settingsService';
+import { prefetchModels } from './services/modelService';
 import { TaskClassifierService, TaskType } from './services/taskClassifierService';
 import { fetchHuggingFaceRows, searchDatasets, getDatasetStructure, getDatasetInfo } from './services/huggingFaceService';
+import { HFPrefetchManager, createPrefetchManager, PrefetchState } from './services/hfPrefetchService';
 import LogFeed from './components/LogFeed';
 import ReasoningHighlighter from './components/ReasoningHighlighter';
 import MiniDbPanel from './components/MiniDbPanel';
@@ -37,6 +39,7 @@ import DataPreviewTable from './components/DataPreviewTable';
 import SettingsPanel from './components/SettingsPanel';
 import ColumnSelector from './components/ColumnSelector';
 import GenerationParamsInput from './components/GenerationParamsInput';
+import ModelSelector from './components/ModelSelector';
 import { ToastContainer } from './components/Toast';
 
 export default function App() {
@@ -69,6 +72,7 @@ export default function App() {
     // --- State: Regular Config ---
     const [provider, setProvider] = useState<ProviderType>('gemini');
     const [externalProvider, setExternalProvider] = useState<ExternalProvider>('openrouter');
+    const [apiType, setApiType] = useState<ApiType>('chat'); // 'chat' or 'responses'
     const [externalApiKey, setExternalApiKey] = useState('');
     const [externalModel, setExternalModel] = useState('anthropic/claude-3.5-sonnet');
     const [customBaseUrl, setCustomBaseUrl] = useState('');
@@ -121,19 +125,19 @@ export default function App() {
     const [deepConfig, setDeepConfig] = useState<DeepConfig>({
         phases: {
             meta: {
-                id: 'meta', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'meta'), structuredOutput: true
+                id: 'meta', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiType: 'chat', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'meta'), structuredOutput: true
             },
             retrieval: {
-                id: 'retrieval', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'retrieval'), structuredOutput: true
+                id: 'retrieval', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiType: 'chat', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'retrieval'), structuredOutput: true
             },
             derivation: {
-                id: 'derivation', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'derivation'), structuredOutput: true
+                id: 'derivation', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiType: 'chat', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('generator', 'derivation'), structuredOutput: true
             },
             writer: {
-                id: 'writer', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'writer'), structuredOutput: true
+                id: 'writer', enabled: true, provider: 'gemini', externalProvider: 'openrouter', apiType: 'chat', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'writer'), structuredOutput: true
             },
             rewriter: {
-                id: 'rewriter', enabled: false, provider: 'gemini', externalProvider: 'openrouter', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'rewriter'), structuredOutput: true
+                id: 'rewriter', enabled: false, provider: 'gemini', externalProvider: 'openrouter', apiType: 'chat', apiKey: '', model: 'gemini-3-flash-preview', customBaseUrl: '', systemPrompt: PromptService.getPrompt('converter', 'rewriter'), structuredOutput: true
             }
         }
     });
@@ -185,8 +189,13 @@ export default function App() {
         columnName: '',
         inputColumns: [],
         outputColumns: [],
-        messageTurnIndex: 0
+        messageTurnIndex: 0,
+        prefetchConfig: { ...DEFAULT_HF_PREFETCH_CONFIG }
     });
+
+    // Prefetch manager for HF data
+    const prefetchManagerRef = useRef<HFPrefetchManager | null>(null);
+    const [prefetchState, setPrefetchState] = useState<PrefetchState | null>(null);
 
     // HF Search & Structure
     const [hfSearchResults, setHfSearchResults] = useState<string[]>([]);
@@ -235,6 +244,9 @@ export default function App() {
     const streamingConversationsRef = useRef<Map<string, StreamingConversationState>>(new Map());
     const streamingAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
     const haltedStreamingIdsRef = useRef<Set<string>>(new Set());
+
+    // --- State: Streaming mode toggle ---
+    const [isStreamingEnabled, setIsStreamingEnabled] = useState<boolean>(true);
 
     // Column detection utility with expanded patterns
     const detectColumns = (columns: string[]): DetectedColumns => {
@@ -2009,13 +2021,33 @@ export default function App() {
             }
             let workItems: WorkItem[] = [];
 
+            // Flag to track if we're using prefetch mode (for HuggingFace)
+            let usePrefetch = false;
+
             if (dataSourceMode === 'huggingface') {
                 setProgress({ current: 0, total: rowsToFetch, activeWorkers: 1 });
-                const rows = await fetchHuggingFaceRows(hfConfig, skipRows, rowsToFetch);
-                workItems = rows.map(row => ({
-                    content: getRowContent(row),
-                    row: row
-                }));
+
+                // Create prefetch manager with current settings
+                const prefetchConfig = hfConfig.prefetchConfig || DEFAULT_HF_PREFETCH_CONFIG;
+                prefetchManagerRef.current = createPrefetchManager(
+                    hfConfig,
+                    skipRows,
+                    rowsToFetch,
+                    concurrency,
+                    prefetchConfig
+                );
+
+                // Set up state callback for UI updates
+                prefetchManagerRef.current.setOnStateChange((state) => {
+                    setPrefetchState(state);
+                });
+
+                // Perform initial prefetch
+                logger.log(`[Generation] Starting prefetch with config: batches=${prefetchConfig.prefetchBatches}, threshold=${prefetchConfig.prefetchThreshold}, concurrency=${concurrency}`);
+                await prefetchManagerRef.current.initialPrefetch();
+
+                usePrefetch = true;
+                // workItems will be populated dynamically from prefetch manager
             } else if (dataSourceMode === 'manual') {
                 let parsedRows: any[] = [];
                 const trimmedInput = converterInputText.trim();
@@ -2090,7 +2122,8 @@ export default function App() {
                 workItems = collectedSeeds.map(s => ({ content: s, row: null }));
             }
 
-            if (workItems.length === 0) throw new Error("No inputs generated or parsed.");
+            // For prefetch mode, workItems is empty - items come from prefetch manager
+            if (!usePrefetch && workItems.length === 0) throw new Error("No inputs generated or parsed.");
 
             if (!append) {
                 // Clear existing for this session? No, keeping session log
@@ -2254,68 +2287,94 @@ export default function App() {
                 setAutoRoutedPromptSet(null);
             }
 
-            setProgress({ current: 0, total: workItems.length, activeWorkers: 0 });
+            // Set total based on mode
+            const totalItems = usePrefetch ? rowsToFetch : workItems.length;
+            setProgress({ current: 0, total: totalItems, activeWorkers: 0 });
             let currentIndex = 0;
+            let processedCount = 0;
 
+            // Helper to extract original fields from a row
+            const extractOriginals = (row: any) => {
+                let originalQuestion: string | undefined;
+                if (row && hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
+                    const parts: string[] = [];
+                    for (const col of hfConfig.inputColumns) {
+                        const val = row[col];
+                        if (val !== undefined && val !== null) {
+                            parts.push(typeof val === 'string' ? val : JSON.stringify(val));
+                        }
+                    }
+                    if (parts.length > 0) {
+                        originalQuestion = parts.join('\n\n');
+                    }
+                }
+
+                let originalAnswer: string | undefined;
+                if (row && hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
+                    const parts: string[] = [];
+                    for (const col of hfConfig.outputColumns) {
+                        const val = row[col];
+                        if (val !== undefined && val !== null) {
+                            parts.push(typeof val === 'string' ? val : JSON.stringify(val));
+                        }
+                    }
+                    if (parts.length > 0) {
+                        originalAnswer = parts.join('\n\n');
+                    }
+                }
+
+                let originalReasoning: string | undefined;
+                if (row && hfConfig.reasoningColumns && hfConfig.reasoningColumns.length > 0) {
+                    const parts: string[] = [];
+                    for (const col of hfConfig.reasoningColumns) {
+                        const val = row[col];
+                        if (val !== undefined && val !== null) {
+                            parts.push(typeof val === 'string' ? val : JSON.stringify(val));
+                        }
+                    }
+                    if (parts.length > 0) {
+                        originalReasoning = parts.join('\n\n');
+                    }
+                }
+
+                return { originalQuestion, originalAnswer, originalReasoning };
+            };
+
+            // Worker function that handles both prefetch and array modes
             const worker = async (id: number) => {
-                while (currentIndex < workItems.length) {
+                while (true) {
                     if (abortControllerRef.current?.signal.aborted) break;
-                    const myIndex = currentIndex++;
-                    if (myIndex >= workItems.length) break;
 
-                    const item = workItems[myIndex];
+                    let item: WorkItem | null = null;
 
-                    // Get the RAW input from the user's EXPLICITLY SELECTED columns - no detection!
-                    let originalQuestion: string | undefined;
-                    if (item.row && hfConfig.inputColumns && hfConfig.inputColumns.length > 0) {
-                        const parts: string[] = [];
-                        for (const col of hfConfig.inputColumns) {
-                            const val = item.row[col];
-                            if (val !== undefined && val !== null) {
-                                parts.push(typeof val === 'string' ? val : JSON.stringify(val));
-                            }
-                        }
-                        if (parts.length > 0) {
-                            originalQuestion = parts.join('\n\n');
-                        }
+                    if (usePrefetch && prefetchManagerRef.current) {
+                        // Get next item from prefetch manager
+                        const row = await prefetchManagerRef.current.getNextItem();
+                        if (!row) break; // No more items
+
+                        item = {
+                            content: getRowContent(row),
+                            row: row
+                        };
+                    } else {
+                        // Get from workItems array
+                        const myIndex = currentIndex++;
+                        if (myIndex >= workItems.length) break;
+                        item = workItems[myIndex];
                     }
 
-                    let originalAnswer: string | undefined;
-                    if (item.row && hfConfig.outputColumns && hfConfig.outputColumns.length > 0) {
-                        const parts: string[] = [];
-                        for (const col of hfConfig.outputColumns) {
-                            const val = item.row[col];
-                            if (val !== undefined && val !== null) {
-                                parts.push(typeof val === 'string' ? val : JSON.stringify(val));
-                            }
-                        }
-                        if (parts.length > 0) {
-                            originalAnswer = parts.join('\n\n');
-                        }
-                    }
+                    if (!item) break;
 
-                    let originalReasoning: string | undefined;
-                    if (item.row && hfConfig.reasoningColumns && hfConfig.reasoningColumns.length > 0) {
-                        const parts: string[] = [];
-                        for (const col of hfConfig.reasoningColumns) {
-                            const val = item.row[col];
-                            if (val !== undefined && val !== null) {
-                                parts.push(typeof val === 'string' ? val : JSON.stringify(val));
-                            }
-                        }
-                        if (parts.length > 0) {
-                            originalReasoning = parts.join('\n\n');
-                        }
-                    }
+                    const { originalQuestion, originalAnswer, originalReasoning } = extractOriginals(item.row);
 
                     setProgress(p => ({ ...p, activeWorkers: p.activeWorkers + 1 }));
 
                     const result = await generateSingleItem(item.content, id, { originalQuestion, originalAnswer, originalReasoning, row: item.row, runtimeConfig });
 
-
+                    processedCount++;
                     setProgress(p => ({
                         ...p,
-                        current: p.current + 1,
+                        current: processedCount,
                         activeWorkers: p.activeWorkers - 1
                     }));
 
@@ -2356,11 +2415,20 @@ export default function App() {
                     }
                 }
             };
-            const workers = Array.from({ length: Math.min(concurrency, workItems.length) }, (_, i) => worker(i));
+
+            // Start workers - for prefetch mode we use concurrency directly since items come from manager
+            const workerCount = usePrefetch ? concurrency : Math.min(concurrency, workItems.length);
+            const workers = Array.from({ length: workerCount }, (_, i) => worker(i));
             await Promise.all(workers);
         } catch (err: any) {
             if (err.name !== 'AbortError') setError(err.message);
         } finally {
+            // Clean up prefetch manager
+            if (prefetchManagerRef.current) {
+                prefetchManagerRef.current.abort();
+                prefetchManagerRef.current = null;
+                setPrefetchState(null);
+            }
             setIsRunning(false);
         }
 
@@ -2373,6 +2441,12 @@ export default function App() {
         haltedStreamingIdsRef.current.clear();
         setStreamingConversations(new Map()); // Clear active streaming views
         streamingConversationsRef.current.clear(); // Clear ref to prevent resurrection
+        // Clean up prefetch manager
+        if (prefetchManagerRef.current) {
+            prefetchManagerRef.current.abort();
+            prefetchManagerRef.current = null;
+            setPrefetchState(null);
+        }
         setIsRunning(false);
     };
 
@@ -2494,14 +2568,30 @@ export default function App() {
 
                         <div className="space-y-1">
                             <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
-                            <input
-                                type="text"
+                            <ModelSelector
+                                provider={phase.provider === 'gemini' ? 'openai' : phase.externalProvider}
                                 value={phase.model}
-                                onChange={e => updateDeepPhase(phaseId, { model: e.target.value })}
-                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
-                                placeholder="Model ID (e.g. gemini-2.0-flash-exp)"
+                                onChange={(model) => updateDeepPhase(phaseId, { model })}
+                                apiKey={phase.apiKey || SettingsService.getApiKey(phase.externalProvider)}
+                                customBaseUrl={phase.customBaseUrl}
+                                placeholder="Select or enter model"
                             />
                         </div>
+
+                        {phase.provider === 'external' && (
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-slate-500 font-bold uppercase">API Type</label>
+                                <select
+                                    value={phase.apiType || 'chat'}
+                                    onChange={e => updateDeepPhase(phaseId, { apiType: e.target.value as 'chat' | 'responses' })}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-indigo-500 outline-none"
+                                    title="API Type: chat=completions, responses=responses API"
+                                >
+                                    <option value="chat">Chat (Completions)</option>
+                                    <option value="responses">Responses API</option>
+                                </select>
+                            </div>
+                        )}
 
                         {phase.provider === 'external' && (
                             <div className="space-y-1">
@@ -2567,9 +2657,12 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-        // Wait for settings to load from IndexedDB, then refresh prompts
+        // Wait for settings to load from IndexedDB, then refresh prompts and prefetch models
         SettingsService.waitForSettingsInit().then(() => {
             refreshPrompts();
+            // Prefetch models for providers with configured API keys (background, non-blocking)
+            const settings = SettingsService.getSettings();
+            prefetchModels(settings.providerKeys || {}, SettingsService.getApiKey);
         });
     }, [refreshPrompts]);
 
@@ -2818,6 +2911,25 @@ export default function App() {
                                     style={{ width: `${(progress.current / progress.total) * 100}%` }} />
                             )}
 
+                            {/* Prefetch Status Indicator */}
+                            {isRunning && dataSourceMode === 'huggingface' && prefetchState && (
+                                <div className="mb-2 p-2 bg-amber-950/30 border border-amber-500/20 rounded-lg text-[10px] text-amber-300 flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Database className="w-3 h-3 text-amber-500" />
+                                        <span>Buffer: {prefetchState.buffer.length} samples</span>
+                                        {prefetchState.isFetching && (
+                                            <span className="flex items-center gap-1 text-amber-400">
+                                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                                Fetching...
+                                            </span>
+                                        )}
+                                    </div>
+                                    <span className="text-amber-400/70">
+                                        {prefetchState.totalDelivered}/{prefetchState.totalRequested} delivered
+                                    </span>
+                                </div>
+                            )}
+
                             <div className="flex justify-between items-center mb-6">
                                 <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                                     <Terminal className="w-4 h-4 text-indigo-400" /> CONTROLS
@@ -2834,6 +2946,24 @@ export default function App() {
                                     {error}
                                 </div>
                             )}
+
+                            {/* Streaming Toggle */}
+                            <div className="flex justify-end items-center mb-3">
+                                <label className="flex items-center gap-2 cursor-pointer group">
+                                    <span className="text-xs font-medium text-slate-400 group-hover:text-slate-300 transition-colors">
+                                        Streaming
+                                    </span>
+                                    <div className="relative">
+                                        <input
+                                            type="checkbox"
+                                            checked={isStreamingEnabled}
+                                            onChange={(e) => setIsStreamingEnabled(e.target.checked)}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                                    </div>
+                                </label>
+                            </div>
 
                             <div className="flex gap-2">
                                 {!isRunning ? (
@@ -2992,6 +3122,22 @@ export default function App() {
                                         </select>
                                     </div>
 
+                                    {/* API Type dropdown - only show for external providers */}
+                                    {provider === 'external' && (
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase">API Type</label>
+                                            <select
+                                                value={apiType}
+                                                onChange={(e) => setApiType(e.target.value as ApiType)}
+                                                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
+                                                title="API Type: chat=completions, responses=responses API"
+                                            >
+                                                <option value="chat">Chat Completions (/chat/completions)</option>
+                                                <option value="responses">Responses API (/responses)</option>
+                                            </select>
+                                        </div>
+                                    )}
+
                                     <div className="space-y-3">
                                         <div className="space-y-1">
                                             <div className="flex items-center justify-between">
@@ -3056,12 +3202,13 @@ export default function App() {
                                                     )}
                                                 </div>
                                             ) : (
-                                                <input
-                                                    type="text"
+                                                <ModelSelector
+                                                    provider={provider === 'gemini' ? 'openai' : externalProvider}
                                                     value={externalModel}
-                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExternalModel(e.target.value)}
-                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
-                                                    placeholder={provider === 'gemini' ? 'gemini-2.0-flash-exp' : 'Model ID'}
+                                                    onChange={setExternalModel}
+                                                    apiKey={externalApiKey || SettingsService.getApiKey(externalProvider)}
+                                                    customBaseUrl={customBaseUrl}
+                                                    placeholder={provider === 'gemini' ? 'gemini-2.0-flash-exp' : 'Select or enter model'}
                                                 />
                                             )}
                                         </div>
@@ -3282,14 +3429,28 @@ export default function App() {
                                                         </div>
                                                         <div className="space-y-1">
                                                             <label className="text-[10px] text-slate-500 font-bold uppercase">Model</label>
-                                                            <input
-                                                                type="text"
+                                                            <ModelSelector
+                                                                provider={userAgentConfig.externalProvider}
                                                                 value={userAgentConfig.model}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUserAgentConfig(prev => ({ ...prev, model: e.target.value }))}
-                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                onChange={(model) => setUserAgentConfig(prev => ({ ...prev, model }))}
+                                                                apiKey={userAgentConfig.apiKey || SettingsService.getApiKey(userAgentConfig.externalProvider)}
+                                                                customBaseUrl={userAgentConfig.customBaseUrl}
+                                                                placeholder="Select model"
                                                             />
                                                         </div>
-                                                        <div className="col-span-2 space-y-1">
+                                                        <div className="space-y-1">
+                                                            <label className="text-[10px] text-slate-500 font-bold uppercase">API Type</label>
+                                                            <select
+                                                                value={userAgentConfig.apiType || 'chat'}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setUserAgentConfig(prev => ({ ...prev, apiType: e.target.value as ApiType }))}
+                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                title="API Type: chat=completions, responses=responses API"
+                                                            >
+                                                                <option value="chat">Chat</option>
+                                                                <option value="responses">Responses</option>
+                                                            </select>
+                                                        </div>
+                                                        <div className="space-y-1">
                                                             <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
                                                             <input
                                                                 type="password"
@@ -3361,6 +3522,50 @@ export default function App() {
                                     <div className="flex gap-2">
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Rows to Fetch</label><input type="number" value={rowsToFetch} onChange={e => setRowsToFetch(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" /></div>
                                         <div className="space-y-1 flex-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Skip Rows</label><input type="number" value={skipRows} onChange={e => setSkipRows(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none" /></div>
+                                    </div>
+                                    {/* Prefetch Settings */}
+                                    <div className="flex gap-2">
+                                        <div className="space-y-1 flex-1">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase" title="Number of batches to prefetch (batch size = concurrency). Higher = more memory, fewer API calls.">
+                                                Prefetch Batches
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="100"
+                                                value={hfConfig.prefetchConfig?.prefetchBatches ?? DEFAULT_HF_PREFETCH_CONFIG.prefetchBatches}
+                                                onChange={e => setHfConfig(prev => ({
+                                                    ...prev,
+                                                    prefetchConfig: {
+                                                        ...prev.prefetchConfig || DEFAULT_HF_PREFETCH_CONFIG,
+                                                        prefetchBatches: Math.max(1, parseInt(e.target.value) || 10)
+                                                    }
+                                                }))}
+                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none"
+                                            />
+                                        </div>
+                                        <div className="space-y-1 flex-1">
+                                            <label className="text-[10px] text-slate-500 font-bold uppercase" title="Refetch threshold (0-100%). When buffer drops below this %, fetch more data.">
+                                                Refetch Threshold %
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min="10"
+                                                max="90"
+                                                value={Math.round((hfConfig.prefetchConfig?.prefetchThreshold ?? DEFAULT_HF_PREFETCH_CONFIG.prefetchThreshold) * 100)}
+                                                onChange={e => setHfConfig(prev => ({
+                                                    ...prev,
+                                                    prefetchConfig: {
+                                                        ...prev.prefetchConfig || DEFAULT_HF_PREFETCH_CONFIG,
+                                                        prefetchThreshold: Math.min(0.9, Math.max(0.1, (parseInt(e.target.value) || 30) / 100))
+                                                    }
+                                                }))}
+                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-amber-500 outline-none"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="text-[9px] text-slate-500 -mt-1">
+                                        Prefetch: {(hfConfig.prefetchConfig?.prefetchBatches ?? DEFAULT_HF_PREFETCH_CONFIG.prefetchBatches) * concurrency} samples ({hfConfig.prefetchConfig?.prefetchBatches ?? DEFAULT_HF_PREFETCH_CONFIG.prefetchBatches} batches × {concurrency} workers). Refetch when buffer drops to {Math.round((hfConfig.prefetchConfig?.prefetchThreshold ?? DEFAULT_HF_PREFETCH_CONFIG.prefetchThreshold) * 100)}%.
                                     </div>
                                     {/* Column Selection */}
                                     <div className="space-y-2">
