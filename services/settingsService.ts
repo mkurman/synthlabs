@@ -125,6 +125,7 @@ export interface AppSettings {
     taskPromptMapping?: Record<string, string>;  // Custom task→prompt mappings (overrides defaults)
     // Default generation parameters for LLM calls
     defaultGenerationParams?: GenerationParams;
+    generationTimeoutSeconds?: number;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -155,7 +156,8 @@ const DEFAULT_SETTINGS: AppSettings = {
         presencePenalty: undefined,
         frequencyPenalty: undefined,
         maxTokens: undefined
-    }
+    },
+    generationTimeoutSeconds: 300
 };
 
 // In-memory cache for synchronous access

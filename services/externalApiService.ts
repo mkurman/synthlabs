@@ -503,7 +503,7 @@ export const generateSyntheticSeeds = async (
   }
 };
 
-// Helper to safely parse JSON from LLM output, handling markdown blocks and malformed JSON
+// Helper to safely parse JSON from LLM output, handling markdown blocks
 function parseJsonContent(content: string): any {
   let cleanContent = content.trim();
 

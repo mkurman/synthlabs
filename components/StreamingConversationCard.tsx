@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, Bot, Loader, ChevronDown, ChevronUp, Sparkles, X } from 'lucide-react';
+import { User, Bot, Loader, ChevronDown, ChevronUp, Sparkles, X, Square } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import { ChatMessage, StreamingConversationState } from '../types';
 
@@ -8,6 +8,8 @@ interface StreamingConversationCardProps {
     streamState: StreamingConversationState;
     /** Optional handler to delete/dismiss this card */
     onDelete?: (id: string) => void;
+    /** Optional handler to halt this stream */
+    onHalt?: (id: string) => void;
 }
 
 // Role styling
@@ -33,7 +35,8 @@ const getRoleStyles = (role: string) => {
 
 const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
     streamState,
-    onDelete
+    onDelete,
+    onHalt
 }) => {
     const [expandedReasoning, setExpandedReasoning] = React.useState<Set<number>>(new Set());
 
@@ -60,6 +63,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
         useOriginalAnswer,
         originalAnswer
     } = streamState;
+    const isStreaming = phase !== 'idle';
 
     // Helper to render a message bubble
     const renderMessage = (msg: ChatMessage, idx: number, isStreaming: boolean = false) => {
@@ -117,6 +121,15 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                     <span className="text-[10px] text-slate-500 ml-auto font-mono capitalize">
                         {phase.replace(/_/g, ' ')}
                     </span>
+                    {onHalt && isStreaming && (
+                        <button
+                            onClick={() => onHalt(streamState.id)}
+                            className="ml-2 text-amber-400 hover:text-amber-300 transition-colors"
+                            title="Halt"
+                        >
+                            <Square className="w-4 h-4" />
+                        </button>
+                    )}
                     {onDelete && (
                         <button
                             onClick={() => onDelete(streamState.id)}
@@ -206,6 +219,15 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                 <span className="text-[10px] text-slate-500 ml-auto font-mono capitalize">
                     {phase.replace(/_/g, ' ')}
                 </span>
+                {onHalt && isStreaming && (
+                    <button
+                        onClick={() => onHalt(streamState.id)}
+                        className="ml-2 text-amber-400 hover:text-amber-300 transition-colors"
+                        title="Halt"
+                    >
+                        <Square className="w-4 h-4" />
+                    </button>
+                )}
                 {onDelete && (
                     <button
                         onClick={() => onDelete(streamState.id)}

@@ -9,6 +9,8 @@ export interface ChatMessage {
   toolCallId?: string; // For tool results
 }
 
+export type LogItemStatus = 'NEW' | 'IN_PROGRESS' | 'STREAMING' | 'DONE' | 'TIMEOUT' | 'ERROR';
+
 export interface SynthLogItem {
   id: string;
   sessionUid?: string; // New: track which session generated this
@@ -26,6 +28,7 @@ export interface SynthLogItem {
   tokenCount?: number; // New: estimated output tokens
   modelUsed: string;
   isError?: boolean;
+  status?: LogItemStatus;
   error?: string;
   provider?: string;
   // Multi-turn conversation support

@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, Eye, AlertCircle, MessageCircle, Upload, Trash2 } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2 } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import StreamingConversationCard from './StreamingConversationCard';
@@ -16,19 +16,21 @@ interface LogFeedProps {
   onRetrySave?: (id: string) => void;
   onSaveToDb?: (id: string) => void;
   onDelete?: (id: string) => void;
+  onHalt?: (id: string) => void;
   retryingIds?: Set<string>;
   savingIds?: Set<string>;
   isProdMode?: boolean;
   // Map of concurrent streaming conversations
   streamingConversations?: Map<string, StreamingConversationState>;
+  showLatestOnly?: boolean;
+  onShowLatestOnlyChange?: (value: boolean) => void;
 }
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
-  onRetry, onRetrySave, onSaveToDb, onDelete, retryingIds, savingIds, isProdMode,
-  streamingConversations
+  onRetry, onRetrySave, onSaveToDb, onDelete, onHalt, retryingIds, savingIds, isProdMode,
+  streamingConversations, showLatestOnly = false, onShowLatestOnlyChange
 }) => {
-  const [showLatestOnly, setShowLatestOnly] = useState(false);
 
   // Reset to page 1 if pageSize changes (handled by parent mostly, but safety check)
   useEffect(() => {
@@ -38,7 +40,32 @@ const LogFeed: React.FC<LogFeedProps> = ({
     }
   }, [pageSize]);
 
+  useEffect(() => {
+    if (showLatestOnly && currentPage !== 1) {
+      onPageChange(1);
+    }
+  }, [showLatestOnly, currentPage, onPageChange]);
+
   const hasActiveStreams = streamingConversations && streamingConversations.size > 0;
+  const isInvalidLog = (item: SynthLogItem) => item.status === 'TIMEOUT' || item.status === 'ERROR' || item.isError;
+
+  const streamingList = hasActiveStreams
+    ? Array.from(streamingConversations!.values()).filter(s => s.phase !== 'idle')
+    : [];
+
+  const maxVisibleItems = pageSize === -1 ? Number.POSITIVE_INFINITY : pageSize;
+
+  const visibleStreaming = maxVisibleItems === Number.POSITIVE_INFINITY
+    ? streamingList
+    : streamingList.slice(0, maxVisibleItems);
+
+  const remainingSlots = maxVisibleItems === Number.POSITIVE_INFINITY
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, maxVisibleItems - visibleStreaming.length);
+
+  const visibleLogs = remainingSlots === Number.POSITIVE_INFINITY
+    ? logs
+    : logs.slice(0, remainingSlots);
 
   // Show empty state only if no logs AND no active streaming
   if (totalLogCount === 0 && logs.length === 0 && !hasActiveStreams) {
@@ -55,8 +82,8 @@ const LogFeed: React.FC<LogFeedProps> = ({
   if (totalLogCount === 0 && logs.length === 0 && hasActiveStreams) {
     return (
       <div className="space-y-4">
-        {Array.from(streamingConversations.values()).map(streamState => (
-          <StreamingConversationCard key={streamState.id} streamState={streamState} onDelete={onDelete} />
+        {visibleStreaming.map(streamState => (
+          <StreamingConversationCard key={streamState.id} streamState={streamState} onDelete={onDelete} onHalt={onHalt} />
         ))}
       </div>
     );
@@ -65,18 +92,10 @@ const LogFeed: React.FC<LogFeedProps> = ({
   // Calculate Pagination logic based on "Show Latest Only" mode
   const effectivePageSize = pageSize === -1 ? totalLogCount : pageSize;
 
-  // If "Show Latest Only" is enabled, we force view to the first "page" of size pageSize
-  // effectively showing only the top N items.
-  const isAll = pageSize === -1 || showLatestOnly;
-
-  // If Show Latest is ON, total pages is effectively 1 (hidden)
-  const totalPages = isAll ? 1 : Math.ceil(totalLogCount / effectivePageSize);
+  // Calculate total pages based on pageSize (independent of showLatestOnly)
+  const totalPages = pageSize === -1 ? 1 : Math.ceil(totalLogCount / effectivePageSize);
 
   const safeCurrentPage = showLatestOnly ? 1 : Math.min(Math.max(1, currentPage), totalPages);
-
-  // If showing latest only, parent should have passed the *first* page logs already
-  // If showing all, parent splits
-  const visibleLogs = logs; // Parent handles slicing now!
 
   // Helper to safely render content that might accidentally be an object
   const renderSafeContent = (content: any) => {
@@ -87,28 +106,20 @@ const LogFeed: React.FC<LogFeedProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Show Latest Only Toggle - Inline with feed header controls in spirit, but placed here for flow */}
-      <div className="flex justify-end -mt-10 mb-6 mr-36">
-        <button
-          onClick={() => setShowLatestOnly(!showLatestOnly)}
-          className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold uppercase transition-all border ${showLatestOnly ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700'}`}
-        >
-          <Eye className="w-3 h-3" /> Show Latest Only
-        </button>
-      </div>
-
       {/* Streaming Conversation Cards - Show active generations */}
-      {hasActiveStreams && (
+      {hasActiveStreams && visibleStreaming.length > 0 && (
         <div className="space-y-4 mb-4">
-          {Array.from(streamingConversations!.values())
-            .filter(s => s.phase !== 'idle')
-            .map(streamState => (
-              <StreamingConversationCard key={streamState.id} streamState={streamState} onDelete={onDelete} />
+          {visibleStreaming.map(streamState => (
+              <StreamingConversationCard key={streamState.id} streamState={streamState} onDelete={onDelete} onHalt={onHalt} />
             ))}
         </div>
       )}
 
-      {visibleLogs.map((item) => (
+      {visibleLogs.map((item) => {
+        const isInvalid = isInvalidLog(item);
+        const isTimeout = item.status === 'TIMEOUT';
+
+        return (
         <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
 
           {/* Card Header */}
@@ -154,7 +165,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
               </div>
 
               {/* Generation Retry */}
-              {item.isError && onRetry && (
+              {isInvalid && onRetry && (
                 <button
                   onClick={() => onRetry(item.id)}
                   disabled={retryingIds?.has(item.id)}
@@ -166,7 +177,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
               )}
 
               {/* Storage Retry */}
-              {item.storageError && onRetrySave && !item.isError && (
+              {item.storageError && onRetrySave && !isInvalid && (
                 <button
                   onClick={() => onRetrySave(item.id)}
                   disabled={retryingIds?.has(item.id)}
@@ -180,7 +191,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
               )}
 
               {/* Save to DB Button - for unsaved items in prod mode */}
-              {isProdMode && !item.savedToDb && !item.isError && !item.storageError && onSaveToDb && (
+              {isProdMode && !item.savedToDb && !isInvalid && !item.storageError && onSaveToDb && (
                 <button
                   onClick={() => onSaveToDb(item.id)}
                   disabled={savingIds?.has(item.id)}
@@ -274,25 +285,26 @@ const LogFeed: React.FC<LogFeedProps> = ({
           )}
 
           {/* Generation Error */}
-          {item.isError && (
+          {isInvalid && (
             <div className="p-2 bg-red-500/10 border-t border-red-500/20 text-xs text-red-400 flex items-center gap-2">
               <AlertCircle className="w-3.5 h-3.5" />
-              Generation Error: {item.error}
+              {isTimeout ? `Generation Timeout: ${item.error || 'Timed out'}` : `Generation Error: ${item.error}`}
             </div>
           )}
 
           {/* Storage Error Display (in footer) */}
-          {item.storageError && !item.isError && (
+          {item.storageError && !isInvalid && (
             <div className="p-2 bg-amber-500/10 border-t border-amber-500/20 text-xs text-amber-400 flex items-center gap-2">
               <Database className="w-3.5 h-3.5" />
               Storage Failed: {item.storageError}. Data exists locally but is not synced.
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
 
-      {/* Pagination Controls - Hidden if Show Latest Only is active */}
-      {!showLatestOnly && !isAll && totalPages > 1 && (
+      {/* Pagination Controls - Hidden if Show Latest Only is active or Page Size is All */}
+      {!showLatestOnly && pageSize !== -1 && totalPages > 1 && (
         <div className="flex items-center justify-center gap-4 mt-6 p-3 bg-slate-900/50 rounded-xl border border-slate-800">
           <button
             onClick={() => onPageChange(1)}
