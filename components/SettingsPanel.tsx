@@ -383,8 +383,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                         key={model.name}
                                                                         onClick={() => updateDefaultModel('ollama', model.name)}
                                                                         className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${settings.providerDefaultModels?.['ollama'] === model.name
-                                                                                ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
-                                                                                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
+                                                                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                                                                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
                                                                             }`}
                                                                     >
                                                                         {displayName}
