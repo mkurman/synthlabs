@@ -297,6 +297,7 @@ export default function App() {
     const [visibleLogs, setVisibleLogs] = useState<SynthLogItem[]>([]);
     const [totalLogCount, setTotalLogCount] = useState(0);
     const [filteredLogCount, setFilteredLogCount] = useState(0);
+    const [hasInvalidLogs, setHasInvalidLogs] = useState(false);
     const [logsTrigger, setLogsTrigger] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [logFilter, setLogFilter] = useState<'live' | 'invalid'>('live');
@@ -439,6 +440,15 @@ export default function App() {
             : result.totalCount;
         setTotalLogCount(nextTotal);
         setFilteredLogCount(result.filteredCount);
+
+        // Check if there are any invalid logs in this session (for toggle highlighting)
+        const invalidResult = await LogStorageService.getLogsPage(
+            currentSessionId,
+            1,
+            1,
+            'invalid'
+        );
+        setHasInvalidLogs(invalidResult.filteredCount > 0);
 
         // Prefetch next page into ref cache (no extra state)
         if (feedPageSize !== -1 && !showLatestOnly) {
@@ -1676,6 +1686,22 @@ export default function App() {
                     // Clear streaming content after completion
                     clearStreamingState();
 
+                    // Check if orchestration failed - if so, return the error result immediately
+                    // to prevent propagating the error into multi-turn conversation or downstream processing
+                    if (deepResult.isError) {
+                        return {
+                            ...deepResult,
+                            id: generationId,
+                            original_reasoning: originalReasoning,
+                            original_answer: originalAnswer,
+                            sessionUid: sessionUid,
+                            source: source,
+                            duration: Date.now() - startTime,
+                            tokenCount: 0,
+                            status: 'ERROR'
+                        };
+                    }
+
                     // If User Agent is enabled, run multi-turn conversation
                     if (userAgentConfig.enabled && userAgentConfig.followUpCount > 0) {
                         // Determine which responder to use based on user selection
@@ -1739,30 +1765,27 @@ export default function App() {
             });
         } catch (err: any) {
             if (err.name === 'AbortError' && !didTimeout) {
-                if (haltedStreamingIdsRef.current.has(generationId)) {
-                    haltedStreamingIdsRef.current.delete(generationId);
-                    clearStreamingState();
-                    const safeErrInput = typeof inputText === 'string' ? inputText : JSON.stringify(inputText);
-                    return {
-                        id: generationId,
-                        sessionUid: sessionUid,
-                        source: source,
-                        seed_preview: safeErrInput.substring(0, 50),
-                        full_seed: safeErrInput,
-                        query: originalQuestion || 'HALTED',
-                        reasoning: "",
-                        answer: "Halted",
-                        original_reasoning: originalReasoning,
-                        original_answer: originalAnswer,
-                        timestamp: new Date().toISOString(),
-                        duration: Date.now() - startTime,
-                        modelUsed: engineMode === 'deep' ? 'DEEP ENGINE' : "System",
-                        isError: true,
-                        status: 'ERROR',
-                        error: 'Halted by user'
-                    };
-                }
-                throw err;
+                // Always return a halted item for abort errors, whether explicitly halted or not
+                clearStreamingState();
+                const safeErrInput = typeof inputText === 'string' ? inputText : JSON.stringify(inputText);
+                return {
+                    id: generationId,
+                    sessionUid: sessionUid,
+                    source: source,
+                    seed_preview: safeErrInput.substring(0, 50),
+                    full_seed: safeErrInput,
+                    query: originalQuestion || 'HALTED',
+                    reasoning: "",
+                    answer: "Halted",
+                    original_reasoning: originalReasoning,
+                    original_answer: originalAnswer,
+                    timestamp: new Date().toISOString(),
+                    duration: Date.now() - startTime,
+                    modelUsed: engineMode === 'deep' ? 'DEEP ENGINE' : "System",
+                    isError: true,
+                    status: 'ERROR',
+                    error: 'Halted by user'
+                };
             }
             if (err.name === 'TimeoutError' || didTimeout) {
                 clearStreamingState();
@@ -2562,9 +2585,12 @@ export default function App() {
 
     const stopGeneration = () => {
         abortControllerRef.current?.abort();
+        // Mark all in-flight items as halted so they get proper error status
+        streamingAbortControllersRef.current.forEach((_, generationId) => {
+            haltedStreamingIdsRef.current.add(generationId);
+        });
         streamingAbortControllersRef.current.forEach(controller => controller.abort());
         streamingAbortControllersRef.current.clear();
-        haltedStreamingIdsRef.current.clear();
         streamingConversationsRef.current.clear();
         bumpStreamingConversations(); // Clear active streaming views
         // Clean up prefetch manager
@@ -4066,7 +4092,13 @@ export default function App() {
                                         </button>
                                         <button
                                             onClick={() => setLogFilter('invalid')}
-                                            className={`px-2 py-1 rounded-md text-[10px] font-bold flex items-center gap-1.5 transition-all ${logFilter === 'invalid' ? 'bg-rose-600 text-white shadow-lg shadow-rose-500/20' : 'text-slate-500 hover:text-white hover:bg-slate-800'}`}
+                                            className={`px-2 py-1 rounded-md text-[10px] font-bold flex items-center gap-1.5 transition-all ${
+                                                logFilter === 'invalid'
+                                                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-500/20'
+                                                    : hasInvalidLogs
+                                                        ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20 hover:text-rose-300 hover:bg-rose-500/20'
+                                                        : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                                            }`}
                                         >
                                             <AlertCircle className="w-3 h-3" /> Invalid
                                         </button>
