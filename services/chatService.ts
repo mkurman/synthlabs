@@ -20,6 +20,7 @@ export interface ToolCall {
 export class ChatService {
     private toolExecutor: ToolExecutor;
     private history: ChatMessage[] = [];
+    private readonly maxHistory = 200;
 
     constructor(toolExecutor: ToolExecutor) {
         this.toolExecutor = toolExecutor;
@@ -33,12 +34,19 @@ export class ChatService {
         this.history = [];
     }
 
+    private pushMessage(message: ChatMessage) {
+        this.history.push(message);
+        if (this.history.length > this.maxHistory) {
+            this.history.splice(0, this.history.length - this.maxHistory);
+        }
+    }
+
     public addUserMessage(content: string) {
-        this.history.push({ role: 'user', content });
+        this.pushMessage({ role: 'user', content });
     }
 
     public addToolResult(toolCallId: string, result: string) {
-        this.history.push({
+        this.pushMessage({
             role: 'tool',
             toolCallId: toolCallId,
             content: result

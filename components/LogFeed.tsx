@@ -5,6 +5,7 @@ import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import StreamingConversationCard from './StreamingConversationCard';
 import { SynthLogItem, StreamingConversationState } from '../types';
+import { confirmService } from '../services/confirmService';
 
 interface LogFeedProps {
   logs: SynthLogItem[];
@@ -22,6 +23,7 @@ interface LogFeedProps {
   isProdMode?: boolean;
   // Map of concurrent streaming conversations
   streamingConversations?: Map<string, StreamingConversationState>;
+  streamingVersion?: number;
   showLatestOnly?: boolean;
   onShowLatestOnlyChange?: (value: boolean) => void;
 }
@@ -29,7 +31,7 @@ interface LogFeedProps {
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
   onRetry, onRetrySave, onSaveToDb, onDelete, onHalt, retryingIds, savingIds, isProdMode,
-  streamingConversations, showLatestOnly = false, onShowLatestOnlyChange
+  streamingConversations, streamingVersion, showLatestOnly = false
 }) => {
 
   // Reset to page 1 if pageSize changes (handled by parent mostly, but safety check)
@@ -45,6 +47,12 @@ const LogFeed: React.FC<LogFeedProps> = ({
       onPageChange(1);
     }
   }, [showLatestOnly, currentPage, onPageChange]);
+
+  useEffect(() => {
+    if (streamingVersion !== undefined) {
+      // No-op: ensures re-render tracking for streaming updates
+    }
+  }, [streamingVersion]);
 
   const hasActiveStreams = streamingConversations && streamingConversations.size > 0;
   const isInvalidLog = (item: SynthLogItem) => item.status === 'TIMEOUT' || item.status === 'ERROR' || item.isError;

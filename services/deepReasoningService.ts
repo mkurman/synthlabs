@@ -103,6 +103,20 @@ const getModelName = (cfg: DeepPhaseConfig) => {
   return `${cfg.externalProvider}/${cfg.model}`;
 };
 
+const truncatePreview = (value: string, maxLen: number = 500): string => {
+  if (value.length <= maxLen) return value;
+  return `${value.slice(0, maxLen)}...`;
+};
+
+const toPreviewString = (value: any, maxLen: number = 800): string => {
+  try {
+    const str = typeof value === 'string' ? value : JSON.stringify(value);
+    return truncatePreview(str, maxLen);
+  } catch {
+    return '[Unserializable Output]';
+  }
+};
+
 export const orchestrateDeepReasoning = async (
   params: DeepOrchestrationParams
 ): Promise<SynthLogItem> => {
@@ -122,21 +136,39 @@ export const orchestrateDeepReasoning = async (
     const metaPromise = executePhase(config.phases.meta, input, signal, maxRetries, retryDelay, config.phases.meta.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('meta');
-        deepTrace.meta = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
+        deepTrace.meta = {
+          model: res.model,
+          input: truncatePreview(res.input),
+          output: toPreviewString(res.result),
+          timestamp: res.timestamp,
+          duration: res.duration
+        };
         return res.result;
       });
 
     const retrievalPromise = executePhase(config.phases.retrieval, input, signal, maxRetries, retryDelay, config.phases.retrieval.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('retrieval');
-        deepTrace.retrieval = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
+        deepTrace.retrieval = {
+          model: res.model,
+          input: truncatePreview(res.input),
+          output: toPreviewString(res.result),
+          timestamp: res.timestamp,
+          duration: res.duration
+        };
         return res.result;
       });
 
     const derivationPromise = executePhase(config.phases.derivation, input, signal, maxRetries, retryDelay, config.phases.derivation.generationParams || generationParams, structuredOutput)
       .then(res => {
         onPhaseComplete?.('derivation');
-        deepTrace.derivation = { model: res.model, input: res.input, output: res.result, timestamp: res.timestamp, duration: res.duration };
+        deepTrace.derivation = {
+          model: res.model,
+          input: truncatePreview(res.input),
+          output: toPreviewString(res.result),
+          timestamp: res.timestamp,
+          duration: res.duration
+        };
         return res.result;
       });
 
@@ -192,7 +224,13 @@ You must output a single valid JSON object. Do NOT wrap it in markdown code bloc
       stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'writer' } : undefined
     );
 
-    deepTrace.writer = { model: writerRes.model, input: writerRes.input, output: writerRes.result, timestamp: writerRes.timestamp, duration: writerRes.duration };
+    deepTrace.writer = {
+      model: writerRes.model,
+      input: truncatePreview(writerRes.input),
+      output: toPreviewString(writerRes.result),
+      timestamp: writerRes.timestamp,
+      duration: writerRes.duration
+    };
     onPhaseComplete?.('writer');
 
     let writerResult = writerRes.result;
@@ -227,7 +265,13 @@ CRITICAL: Output valid JSON only. Format: { "answer": "Your final refined answer
         stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'rewriter' } : undefined
       );
 
-      deepTrace.rewriter = { model: rewriterRes.model, input: rewriterRes.input, output: rewriterRes.result, timestamp: rewriterRes.timestamp, duration: rewriterRes.duration };
+      deepTrace.rewriter = {
+        model: rewriterRes.model,
+        input: truncatePreview(rewriterRes.input),
+        output: toPreviewString(rewriterRes.result),
+        timestamp: rewriterRes.timestamp,
+        duration: rewriterRes.duration
+      };
       onPhaseComplete?.('rewriter');
 
       // Robustly extract answer from various possible keys (case-insensitive)
@@ -368,6 +412,7 @@ export const orchestrateMultiTurnConversation = async (
 ): Promise<SynthLogItem> => {
   const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, promptSet, structuredOutput, stream, onStreamChunk } = params;
   const startTime = Date.now();
+  const MAX_MESSAGES_TO_STORE = 50;
 
   // Heuristic: Use initialInput (user's selected column content) if the inferred query looks like a database ID/slug or is missing.
   // This addresses the issue where "identify_preventive_measure_for_SIDS" (an ID) is shown instead of the actual question.
@@ -500,6 +545,9 @@ export const orchestrateMultiTurnConversation = async (
     logger.log("✅ Multi-turn conversation complete. Total turns:", messages.length);
     logger.groupEnd();
 
+    const messagesTruncated = messages.length > MAX_MESSAGES_TO_STORE;
+    const messagesForLog = messagesTruncated ? messages.slice(-MAX_MESSAGES_TO_STORE) : messages;
+
     // Build final log item
     const logItem: SynthLogItem = {
       id: crypto.randomUUID(),
@@ -507,14 +555,15 @@ export const orchestrateMultiTurnConversation = async (
       full_seed: initialInput,
       query: initialQuery || displayQuery,
 
-      reasoning: messages.filter(m => m.role === 'assistant').map(m => m.reasoning).filter(Boolean).join('\n---\n'),
-      answer: messages[messages.length - 1]?.content || "",
+      reasoning: messagesForLog.filter(m => m.role === 'assistant').map(m => m.reasoning).filter(Boolean).join('\n---\n'),
+      answer: messagesForLog[messagesForLog.length - 1]?.content || "",
       timestamp: new Date().toISOString(),
       duration: Date.now() - startTime,
-      tokenCount: messages.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
+      tokenCount: messagesForLog.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
       modelUsed: `MULTI: ${responderConfig.model}`,
       isMultiTurn: true,
-      messages: messages
+      messages: messagesForLog,
+      messagesTruncated
     };
 
     return logItem;
@@ -536,7 +585,8 @@ export const orchestrateMultiTurnConversation = async (
       isError: true,
       error: error.message || "Unknown error",
       isMultiTurn: true,
-      messages: messages
+      messages: messages.length > MAX_MESSAGES_TO_STORE ? messages.slice(-MAX_MESSAGES_TO_STORE) : messages,
+      messagesTruncated: messages.length > MAX_MESSAGES_TO_STORE
     };
   }
 };
@@ -568,10 +618,10 @@ const callAgent = async (
   } else {
     // Determine appropriate schema based on prompt content
     let responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
-    if (systemPrompt.toLowerCase().includes('follow-up') || 
-        systemPrompt.toLowerCase().includes('follow_up') ||
-        systemPrompt.toLowerCase().includes('followup') ||
-        userContent.toLowerCase().includes('follow-up')) {
+    if (systemPrompt.toLowerCase().includes('follow-up') ||
+      systemPrompt.toLowerCase().includes('follow_up') ||
+      systemPrompt.toLowerCase().includes('followup') ||
+      userContent.toLowerCase().includes('follow-up')) {
       responsesSchema = 'userAgentResponse';
     }
 
@@ -661,6 +711,7 @@ export const orchestrateConversationRewrite = async (
 
   const startTime = Date.now();
   const rewrittenMessages: ChatMessage[] = [];
+  const MAX_MESSAGES_TO_STORE = 50;
   const thinkTagRegex = /<think>([\s\S]*?)<\/think>/i;
 
   logger.group("🔄 STARTING CONVERSATION TRACE REWRITING");
@@ -827,12 +878,15 @@ ${outsideThinkContent}
       finalMessages = rewrittenMessages.slice(0, cutoffIndex);
     }
 
+    const messagesTruncated = finalMessages.length > MAX_MESSAGES_TO_STORE;
+    const messagesForLog = messagesTruncated ? finalMessages.slice(-MAX_MESSAGES_TO_STORE) : finalMessages;
+
     // Build the display query from first user message
-    const firstUser = finalMessages.find(m => m.role === 'user');
+    const firstUser = messagesForLog.find(m => m.role === 'user');
     const displayQuery = firstUser?.content || "Conversation";
 
     // Combine all reasoning traces for the main reasoning field
-    const allReasoning = finalMessages
+    const allReasoning = messagesForLog
       .filter(m => m.role === 'assistant' && m.reasoning)
       .map(m => m.reasoning)
       .join('\n---\n');
@@ -840,16 +894,17 @@ ${outsideThinkContent}
     return {
       id: crypto.randomUUID(),
       seed_preview: displayQuery + (displayQuery.length >= 150 ? "..." : ""),
-      full_seed: finalMessages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
+      full_seed: messagesForLog.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
       query: displayQuery,
       reasoning: allReasoning,
-      answer: finalMessages[finalMessages.length - 1]?.content || "",
+      answer: messagesForLog[messagesForLog.length - 1]?.content || "",
       timestamp: new Date().toISOString(),
       duration: Date.now() - startTime,
-      tokenCount: finalMessages.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
+      tokenCount: messagesForLog.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
       modelUsed: engineMode === 'deep' ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
       isMultiTurn: true,
-      messages: finalMessages
+      messages: messagesForLog,
+      messagesTruncated
     };
 
   } catch (error: any) {
@@ -869,7 +924,8 @@ ${outsideThinkContent}
       isError: true,
       error: error.message || "Unknown error during conversation rewriting",
       isMultiTurn: true,
-      messages: messages // Return original on error
+      messages: messages.length > MAX_MESSAGES_TO_STORE ? messages.slice(-MAX_MESSAGES_TO_STORE) : messages,
+      messagesTruncated: messages.length > MAX_MESSAGES_TO_STORE
     };
   }
 };

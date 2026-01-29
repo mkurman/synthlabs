@@ -23,6 +23,7 @@ import { ToolExecutor } from '../services/toolService';
 import AutoResizeTextarea from './AutoResizeTextarea';
 import { AutoscoreConfig } from '../types';
 import { toast } from '../services/toastService';
+import { confirmService } from '../services/confirmService';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import GenerationParamsInput from './GenerationParamsInput';
 
@@ -1364,7 +1365,14 @@ Based on the criteria above, provide a 1-5 score.`;
             return;
         }
 
-        if (!confirm(`Rewrite ${mode.toUpperCase()} for ${itemsToProcess.length} SELECTED items using ${rewriterConfig.model}? This cannot be undone.`)) return;
+        const confirmRewrite = await confirmService.confirm({
+            title: 'Confirm rewrite?',
+            message: `Rewrite ${mode.toUpperCase()} for ${itemsToProcess.length} SELECTED items using ${rewriterConfig.model}? This cannot be undone.`,
+            confirmLabel: 'Rewrite',
+            cancelLabel: 'Cancel',
+            variant: 'warning'
+        });
+        if (!confirmRewrite) return;
 
         setIsRewritingAll(true);
         setRewriteProgress({ current: 0, total: itemsToProcess.length });
@@ -1474,7 +1482,14 @@ Based on the criteria above, provide a 1-5 score.`;
             return;
         }
 
-        if (!confirm(`Autoscore ${itemsToScore.length} unrated items from selection using ${autoscoreConfig.model}?`)) return;
+        const confirmAutoscore = await confirmService.confirm({
+            title: 'Confirm autoscore?',
+            message: `Autoscore ${itemsToScore.length} unrated items from selection using ${autoscoreConfig.model}?`,
+            confirmLabel: 'Autoscore',
+            cancelLabel: 'Cancel',
+            variant: 'warning'
+        });
+        if (!confirmAutoscore) return;
 
         setIsAutoscoring(true);
         setAutoscoreProgress({ current: 0, total: itemsToScore.length });
@@ -1524,7 +1539,14 @@ Based on the criteria above, provide a 1-5 score.`;
             return;
         }
 
-        if (!confirm(`Update ${itemsToUpdate.length} items in DB?`)) return;
+        const confirmUpdate = await confirmService.confirm({
+            title: 'Update database?',
+            message: `Update ${itemsToUpdate.length} items in DB?`,
+            confirmLabel: 'Update',
+            cancelLabel: 'Cancel',
+            variant: 'warning'
+        });
+        if (!confirmUpdate) return;
 
         setIsBulkUpdating(true);
         let successCount = 0;
@@ -1586,7 +1608,11 @@ Based on the criteria above, provide a 1-5 score.`;
             setItemsToDelete([]);
         } catch (e) {
             console.error("Failed to delete items", e);
-            alert("Failed to delete items. See console for details.");
+            await confirmService.alert({
+                title: 'Delete failed',
+                message: 'Failed to delete items. See console for details.',
+                variant: 'danger'
+            });
         } finally {
             setIsDeleting(false);
         }
