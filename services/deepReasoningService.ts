@@ -542,6 +542,30 @@ export const orchestrateMultiTurnConversation = async (
       });
     }
 
+    // Check if the conversation was aborted/halted
+    if (signal?.aborted) {
+      logger.warn("⚠️ Multi-turn conversation was halted by user");
+      logger.groupEnd();
+
+      return {
+        id: crypto.randomUUID(),
+        seed_preview: displayQuery.substring(0, 150) + (displayQuery.length > 150 ? "..." : ""),
+        full_seed: initialInput,
+        query: initialQuery || displayQuery,
+        reasoning: messages.filter(m => m.role === 'assistant').map(m => m.reasoning).filter(Boolean).join('\n---\n'),
+        answer: "Halted",
+        timestamp: new Date().toISOString(),
+        duration: Date.now() - startTime,
+        modelUsed: `MULTI: ${responderConfig.model}`,
+        isError: true,
+        status: 'ERROR',
+        error: 'Halted by user',
+        isMultiTurn: true,
+        messages: messages.length > MAX_MESSAGES_TO_STORE ? messages.slice(-MAX_MESSAGES_TO_STORE) : messages,
+        messagesTruncated: messages.length > MAX_MESSAGES_TO_STORE
+      };
+    }
+
     logger.log("✅ Multi-turn conversation complete. Total turns:", messages.length);
     logger.groupEnd();
 
@@ -797,8 +821,15 @@ ${outsideThinkContent}
           onStreamChunk: onStreamChunk
         });
 
-        newReasoning = deepResult.reasoning || originalThinking; // Fallback if generation fails
-        outsideThinkContent = deepResult.answer || outsideThinkContent;
+        // Check if orchestration failed - if so, use original values instead of error values
+        if (deepResult.isError) {
+          logger.warn(`⚠️ Message rewrite failed for message ${i}, using original content`);
+          newReasoning = originalThinking;
+          // outsideThinkContent remains unchanged (original answer)
+        } else {
+          newReasoning = deepResult.reasoning || originalThinking;
+          outsideThinkContent = deepResult.answer || outsideThinkContent;
+        }
       } else {
         // Use regular converter
         const prompt = converterPrompt || PromptService.getPrompt('converter', 'writer', promptSet);
@@ -884,6 +915,33 @@ ${outsideThinkContent}
     // Build the display query from first user message
     const firstUser = messagesForLog.find(m => m.role === 'user');
     const displayQuery = firstUser?.content || "Conversation";
+
+    // Check if the rewrite was aborted/halted
+    if (signal?.aborted) {
+      logger.warn("⚠️ Conversation rewrite was halted by user");
+      logger.groupEnd();
+
+      return {
+        id: crypto.randomUUID(),
+        seed_preview: displayQuery.substring(0, 150) + (displayQuery.length >= 150 ? "..." : ""),
+        full_seed: rewrittenMessages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
+        query: displayQuery,
+        reasoning: rewrittenMessages
+          .filter(m => m.role === 'assistant' && m.reasoning)
+          .map(m => m.reasoning)
+          .join('\n---\n'),
+        answer: "Halted",
+        timestamp: new Date().toISOString(),
+        duration: Date.now() - startTime,
+        modelUsed: engineMode === 'deep' ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
+        isError: true,
+        status: 'ERROR',
+        error: 'Halted by user',
+        isMultiTurn: true,
+        messages: rewrittenMessages.length > MAX_MESSAGES_TO_STORE ? rewrittenMessages.slice(-MAX_MESSAGES_TO_STORE) : rewrittenMessages,
+        messagesTruncated: rewrittenMessages.length > MAX_MESSAGES_TO_STORE
+      };
+    }
 
     // Combine all reasoning traces for the main reasoning field
     const allReasoning = messagesForLog
