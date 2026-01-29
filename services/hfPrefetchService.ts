@@ -60,6 +60,7 @@ export class HFPrefetchManager {
     private abortController: AbortController | null = null;
     private onStateChange: PrefetchCallback | null = null;
     private fetchPromise: Promise<void> | null = null;
+    private readonly maxBufferSize = 200;
 
     constructor(
         hfConfig: HuggingFaceConfig,
@@ -100,8 +101,9 @@ export class HFPrefetchManager {
         // This ensures we have enough data for all workers
         const basePrefetch = config.prefetchBatches * concurrency;
 
-        // Don't fetch more than remaining
-        return Math.min(basePrefetch, remaining);
+        // Don't fetch more than remaining or max buffer capacity
+        const availableBuffer = Math.max(0, this.maxBufferSize - this.state.buffer.length);
+        return Math.min(basePrefetch, remaining, availableBuffer);
     }
 
     /**
@@ -125,6 +127,9 @@ export class HFPrefetchManager {
 
         // Don't fetch if we've delivered all requested rows
         if (totalDelivered >= totalRequested) return false;
+
+        // Don't fetch if buffer is already at/over max capacity
+        if (buffer.length >= this.maxBufferSize) return false;
 
         // Fetch if buffer is below threshold
         const threshold = this.getRefetchThreshold();

@@ -34,6 +34,7 @@ export interface SynthLogItem {
   // Multi-turn conversation support
   messages?: ChatMessage[]; // ChatML conversation history
   isMultiTurn?: boolean;    // Flag for UI rendering
+  messagesTruncated?: boolean; // True if messages were truncated for memory safety
   deepMetadata?: {
     meta: string;
     retrieval: string;
@@ -91,6 +92,9 @@ export type ExternalProvider =
   | 'huggingface'
   | 'other';
 
+// Providers supported by the model selector (includes internal Gemini)
+export type ModelListProvider = ExternalProvider | 'gemini';
+
 // Model information from provider APIs
 export interface ProviderModel {
   id: string;
@@ -103,7 +107,8 @@ export interface ProviderModel {
 
 // Cached model list for a provider
 export interface CachedModelList {
-  provider: ExternalProvider;
+  cacheKey: string;
+  provider: ExternalProvider | 'gemini';
   models: ProviderModel[];
   fetchedAt: number;
   expiresAt: number;

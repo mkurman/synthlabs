@@ -8,7 +8,7 @@ import { EXTERNAL_PROVIDERS, PROVIDER_URLS } from '../constants';
 import { GenerationParams } from '../types';
 
 const DB_NAME = 'SynthLabsSettingsDB';
-const DB_VERSION = 2; // Aligned with modelService for models store
+const DB_VERSION = 3; // Aligned with modelService for models store
 const STORE_NAME = 'settings';
 const MODELS_STORE = 'models'; // For modelService compatibility
 const SETTINGS_KEY = 'app_settings';
@@ -165,9 +165,32 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 // In-memory cache for synchronous access
-let settingsCache: AppSettings = { ...DEFAULT_SETTINGS };
 let isInitialized = false;
 let dbInstance: IDBDatabase | null = null;
+const DB_OPEN_TIMEOUT_MS = 10000;
+
+const loadSettingsFromLocalStorage = (): AppSettings | null => {
+    const legacySettings = localStorage.getItem('synth_settings');
+    if (!legacySettings) return null;
+    try {
+        const parsed = JSON.parse(legacySettings);
+        return { ...DEFAULT_SETTINGS, ...parsed } as AppSettings;
+    } catch (e) {
+        console.error('[SettingsDB] Failed to parse legacy settings:', e);
+        return null;
+    }
+};
+
+const saveSettingsToLocalStorage = (settings: AppSettings): void => {
+    try {
+        localStorage.setItem('synth_settings', JSON.stringify(settings));
+        console.log('[SettingsDB] Settings saved to localStorage fallback');
+    } catch (e) {
+        console.error('[SettingsDB] Failed to save settings to localStorage:', e);
+    }
+};
+
+let settingsCache: AppSettings = loadSettingsFromLocalStorage() || { ...DEFAULT_SETTINGS };
 
 // Initialize the IndexedDB database
 const initDB = (): Promise<IDBDatabase> => {
@@ -177,14 +200,21 @@ const initDB = (): Promise<IDBDatabase> => {
             return;
         }
 
+        const timeout = setTimeout(() => {
+            console.error('[SettingsDB] Database open timeout');
+            reject(new Error('Database open timeout'));
+        }, DB_OPEN_TIMEOUT_MS);
+
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
         request.onerror = () => {
+            clearTimeout(timeout);
             console.error('[SettingsDB] Failed to open database:', request.error);
             reject(request.error);
         };
 
         request.onsuccess = () => {
+            clearTimeout(timeout);
             dbInstance = request.result;
             resolve(dbInstance);
         };
@@ -195,10 +225,17 @@ const initDB = (): Promise<IDBDatabase> => {
                 db.createObjectStore(STORE_NAME);
             }
             // Also create models store for modelService compatibility
-            if (!db.objectStoreNames.contains(MODELS_STORE)) {
-                db.createObjectStore(MODELS_STORE, { keyPath: 'provider' });
-                console.log('[SettingsDB] Created models object store');
+            if (db.objectStoreNames.contains(MODELS_STORE)) {
+                db.deleteObjectStore(MODELS_STORE);
             }
+            db.createObjectStore(MODELS_STORE, { keyPath: 'cacheKey' });
+            console.log('[SettingsDB] Created models object store');
+        };
+
+        request.onblocked = () => {
+            clearTimeout(timeout);
+            console.warn('[SettingsDB] Database upgrade blocked - another connection is open');
+            reject(new Error('Database upgrade blocked'));
         };
     });
 };
@@ -217,20 +254,13 @@ const loadSettingsFromDB = async (): Promise<AppSettings> => {
                     settingsCache = { ...DEFAULT_SETTINGS, ...request.result };
                     console.log('[SettingsDB] Loaded settings from IndexedDB');
                 } else {
-                    // Try to migrate from localStorage
-                    const legacySettings = localStorage.getItem('synth_settings');
-                    if (legacySettings) {
-                        try {
-                            const parsed = JSON.parse(legacySettings);
-                            settingsCache = { ...DEFAULT_SETTINGS, ...parsed };
-                            // Save to IndexedDB and remove from localStorage
-                            saveSettingsToDB(settingsCache).then(() => {
-                                localStorage.removeItem('synth_settings');
-                                console.log('[SettingsDB] Migrated settings from localStorage to IndexedDB');
-                            });
-                        } catch (e) {
-                            console.error('[SettingsDB] Failed to parse legacy settings:', e);
-                        }
+                    const legacy = loadSettingsFromLocalStorage();
+                    if (legacy) {
+                        settingsCache = legacy;
+                        // Save to IndexedDB (keep localStorage as backup)
+                        saveSettingsToDB(settingsCache).then(() => {
+                            console.log('[SettingsDB] Migrated settings from localStorage to IndexedDB');
+                        });
                     }
                 }
                 isInitialized = true;
@@ -244,7 +274,11 @@ const loadSettingsFromDB = async (): Promise<AppSettings> => {
             };
         });
     } catch (e) {
-        console.error('[SettingsDB] DB init failed, using defaults:', e);
+        console.error('[SettingsDB] DB init failed, using localStorage/defaults:', e);
+        const legacy = loadSettingsFromLocalStorage();
+        if (legacy) {
+            settingsCache = legacy;
+        }
         isInitialized = true;
         return settingsCache;
     }
@@ -265,15 +299,19 @@ const saveSettingsToDB = async (settings: AppSettings): Promise<void> => {
 
             request.onsuccess = () => {
                 console.log('[SettingsDB] Settings saved to IndexedDB');
+                // Always keep localStorage backup
+                saveSettingsToLocalStorage(settings);
                 resolve();
             };
             request.onerror = () => {
                 console.error('[SettingsDB] Failed to save settings:', request.error);
+                saveSettingsToLocalStorage(settings);
                 reject(request.error);
             };
         });
     } catch (e) {
         console.error('[SettingsDB] Save failed:', e);
+        saveSettingsToLocalStorage(settings);
     }
 };
 

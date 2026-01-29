@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ChevronDown, RefreshCw, Search, Edit2, Check, AlertCircle, Loader2 } from 'lucide-react';
-import { ExternalProvider, ProviderModel } from '../types';
+import { ModelListProvider, ProviderModel } from '../types';
 import { getModels, requiresApiKeyForModels, getDefaultModels } from '../services/modelService';
 
 interface ModelSelectorProps {
-    provider: ExternalProvider;
+    provider: ModelListProvider;
     value: string;
     onChange: (model: string) => void;
     apiKey?: string;
@@ -32,6 +32,7 @@ export default function ModelSelector({
     const [models, setModels] = useState<ProviderModel[]>([]);
     const [fromCache, setFromCache] = useState(false);
     const [highlightedIndex, setHighlightedIndex] = useState(-1);
+    const loadDebounceRef = useRef<number | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
@@ -78,10 +79,23 @@ export default function ModelSelector({
         }
     }, [provider, apiKey, customBaseUrl, needsApiKey]);
 
-    // Load models on mount and when provider/apiKey changes
+    // Load models only when dropdown is open (debounced to avoid spamming providers)
     useEffect(() => {
-        loadModels();
-    }, [loadModels]);
+        if (!isOpen) return;
+
+        if (loadDebounceRef.current) {
+            window.clearTimeout(loadDebounceRef.current);
+        }
+        loadDebounceRef.current = window.setTimeout(() => {
+            loadModels();
+        }, 500);
+
+        return () => {
+            if (loadDebounceRef.current) {
+                window.clearTimeout(loadDebounceRef.current);
+            }
+        };
+    }, [isOpen, provider, apiKey, customBaseUrl, loadModels]);
 
     // Close on outside click
     useEffect(() => {
@@ -256,11 +270,10 @@ export default function ModelSelector({
 
                     {/* Status bar */}
                     {error && (
-                        <div className={`px-3 py-1.5 border-b text-[10px] flex items-center gap-1.5 ${
-                            error.startsWith('Using default')
+                        <div className={`px-3 py-1.5 border-b text-[10px] flex items-center gap-1.5 ${error.startsWith('Using default')
                                 ? 'bg-slate-500/10 border-slate-500/20 text-slate-400'
                                 : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-                        }`}>
+                            }`}>
                             <AlertCircle className="w-3 h-3 flex-shrink-0" />
                             <span className="truncate">{error}</span>
                         </div>
@@ -306,15 +319,13 @@ export default function ModelSelector({
                                         key={model.id}
                                         data-model-item
                                         onClick={() => selectModel(model.id)}
-                                        className={`w-full flex items-start gap-2 px-3 py-1.5 text-left transition-colors ${
-                                            isHighlighted ? 'bg-slate-800' : 'hover:bg-slate-800/50'
-                                        } ${isSelected ? 'text-white' : 'text-slate-400'}`}
+                                        className={`w-full flex items-start gap-2 px-3 py-1.5 text-left transition-colors ${isHighlighted ? 'bg-slate-800' : 'hover:bg-slate-800/50'
+                                            } ${isSelected ? 'text-white' : 'text-slate-400'}`}
                                     >
-                                        <div className={`w-3.5 h-3.5 mt-0.5 rounded border flex items-center justify-center flex-shrink-0 ${
-                                            isSelected
+                                        <div className={`w-3.5 h-3.5 mt-0.5 rounded border flex items-center justify-center flex-shrink-0 ${isSelected
                                                 ? 'bg-indigo-500 border-indigo-500'
                                                 : 'border-slate-600'
-                                        }`}>
+                                            }`}>
                                             {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
                                         </div>
                                         <div className="flex-1 min-w-0">

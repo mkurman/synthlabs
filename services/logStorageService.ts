@@ -187,6 +187,62 @@ export const LogStorageService = {
         }
     },
 
+    // Get a page of logs with counts, without loading all logs into memory
+    getLogsPage: async (
+        sessionUid: string,
+        page: number,
+        pageSize: number,
+        filter: 'live' | 'invalid' = 'live'
+    ): Promise<{ logs: SynthLogItem[]; totalCount: number; filteredCount: number }> => {
+        try {
+            const [db, totalCount] = await Promise.all([getDB(), LogStorageService.getTotalCount(sessionUid)]);
+            const tx = db.transaction(LOGS_STORE, 'readonly');
+            const store = tx.objectStore(LOGS_STORE);
+            const index = store.index('sessionTimestamp');
+
+            const isInvalid = (log: SynthLogItem) => log.status === 'TIMEOUT' || log.status === 'ERROR' || log.isError;
+            const shouldInclude = (log: SynthLogItem) => filter === 'invalid' ? isInvalid(log) : !isInvalid(log);
+
+            const start = (page - 1) * pageSize;
+            const logs: SynthLogItem[] = [];
+            let filteredCount = 0;
+
+            const range = IDBKeyRange.bound([sessionUid, 0], [sessionUid, Number.MAX_SAFE_INTEGER]);
+            const cursorRequest = index.openCursor(range, 'prev');
+
+            await new Promise<void>((resolve, reject) => {
+                cursorRequest.onsuccess = () => {
+                    const cursor = cursorRequest.result;
+                    if (!cursor) {
+                        resolve();
+                        return;
+                    }
+
+                    const { sessionUid: _s, timestamp: _t, ...log } = cursor.value as (SynthLogItem & { sessionUid: string; timestamp: number });
+                    const logItem: SynthLogItem = {
+                        ...log,
+                        timestamp: _t ? new Date(_t).toISOString() : new Date().toISOString()
+                    } as SynthLogItem;
+
+                    if (shouldInclude(logItem)) {
+                        if (filteredCount >= start && logs.length < pageSize) {
+                            logs.push(logItem);
+                        }
+                        filteredCount++;
+                    }
+
+                    cursor.continue();
+                };
+                cursorRequest.onerror = () => reject(cursorRequest.error);
+            });
+
+            return { logs, totalCount, filteredCount };
+        } catch (e) {
+            console.error('IndexedDB paged read failed:', e);
+            return { logs: [], totalCount: 0, filteredCount: 0 };
+        }
+    },
+
     // Synchronous version for backwards compatibility
     getTotalCountSync: (sessionUid: string): number => {
         console.warn('getTotalCountSync called - use getTotalCount async version for accurate data');
@@ -238,6 +294,42 @@ export const LogStorageService = {
         } catch (e) {
             console.error('IndexedDB getAllLogs failed:', e);
             return [];
+        }
+    },
+
+    // Iterate logs for a session without loading all into memory (oldest first)
+    iterateLogs: async (sessionUid: string, onItem: (log: SynthLogItem) => Promise<void> | void): Promise<void> => {
+        try {
+            const db = await getDB();
+            const tx = db.transaction(LOGS_STORE, 'readonly');
+            const store = tx.objectStore(LOGS_STORE);
+            const index = store.index('sessionTimestamp');
+            const range = IDBKeyRange.bound([sessionUid, 0], [sessionUid, Number.MAX_SAFE_INTEGER]);
+            const request = index.openCursor(range, 'next');
+
+            await new Promise<void>((resolve, reject) => {
+                request.onsuccess = () => {
+                    const cursor = request.result;
+                    if (!cursor) {
+                        resolve();
+                        return;
+                    }
+
+                    const { sessionUid: _s, timestamp: _t, ...log } = cursor.value as (SynthLogItem & { sessionUid: string; timestamp: number });
+                    const logItem: SynthLogItem = {
+                        ...log,
+                        timestamp: _t ? new Date(_t).toISOString() : new Date().toISOString()
+                    } as SynthLogItem;
+
+                    Promise.resolve(onItem(logItem))
+                        .then(() => cursor.continue())
+                        .catch(reject);
+                };
+                request.onerror = () => reject(request.error);
+            });
+        } catch (e) {
+            console.error('IndexedDB iterateLogs failed:', e);
+            throw e;
         }
     },
 

@@ -10,6 +10,7 @@ import { ChatStorageService } from '../services/chatStorageService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import { ToolExecutor } from '../services/toolService';
 import { VerifierItem } from '../types';
+import { confirmService } from '../services/confirmService';
 
 // Provider display names and descriptions
 const PROVIDER_INFO: Record<string, { name: string; description: string }> = {
@@ -311,7 +312,14 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
     const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
         e.stopPropagation();
-        if (confirm('Delete this chat?')) {
+        const confirmDelete = await confirmService.confirm({
+            title: 'Delete chat?',
+            message: 'Delete this chat? This cannot be undone.',
+            confirmLabel: 'Delete',
+            cancelLabel: 'Cancel',
+            variant: 'danger'
+        });
+        if (confirmDelete) {
             await ChatStorageService.deleteSession(sessionId);
             loadHistory(); // Refresh list
             if (sessionId === currentSessionId) {

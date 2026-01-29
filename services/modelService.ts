@@ -3,20 +3,24 @@
  * Fetches and caches available models from various LLM providers
  */
 
-import { ExternalProvider, ProviderModel, CachedModelList } from '../types';
+import { ExternalProvider, ProviderModel, CachedModelList, ModelListProvider } from '../types';
 import { PROVIDER_URLS } from '../constants';
 
 const DB_NAME = 'SynthLabsSettingsDB';
-const DB_VERSION = 2; // Bump version to add models store
+const DB_VERSION = 3; // Bump version to update models store key
 const MODELS_STORE = 'models';
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour in ms
 
 let dbInstance: IDBDatabase | null = null;
+let cacheDisabled = false;
 
 // Initialize the IndexedDB database with models store
 let initPromise: Promise<IDBDatabase> | null = null;
 
 const initDB = (): Promise<IDBDatabase> => {
+    if (cacheDisabled) {
+        return Promise.reject(new Error('Model cache disabled'));
+    }
     // Return existing promise if init is in progress
     if (initPromise) {
         return initPromise;
@@ -32,8 +36,9 @@ const initDB = (): Promise<IDBDatabase> => {
         const timeout = setTimeout(() => {
             console.error('[ModelService] Database open timeout');
             initPromise = null;
+            cacheDisabled = true;
             reject(new Error('Database open timeout'));
-        }, 10000);
+        }, 20000);
 
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
@@ -41,6 +46,7 @@ const initDB = (): Promise<IDBDatabase> => {
             clearTimeout(timeout);
             initPromise = null;
             console.error('[ModelService] Failed to open database:', request.error);
+            cacheDisabled = true;
             reject(request.error);
         };
 
@@ -54,10 +60,11 @@ const initDB = (): Promise<IDBDatabase> => {
         request.onupgradeneeded = (event) => {
             console.log('[ModelService] Upgrading database...');
             const db = (event.target as IDBOpenDBRequest).result;
-            if (!db.objectStoreNames.contains(MODELS_STORE)) {
-                db.createObjectStore(MODELS_STORE, { keyPath: 'provider' });
-                console.log('[ModelService] Created models object store');
+            if (db.objectStoreNames.contains(MODELS_STORE)) {
+                db.deleteObjectStore(MODELS_STORE);
             }
+            db.createObjectStore(MODELS_STORE, { keyPath: 'cacheKey' });
+            console.log('[ModelService] Created models object store');
             // Ensure settings store exists (from settingsService)
             if (!db.objectStoreNames.contains('settings')) {
                 db.createObjectStore('settings');
@@ -72,6 +79,7 @@ const initDB = (): Promise<IDBDatabase> => {
             if (dbInstance) {
                 resolve(dbInstance);
             } else {
+                cacheDisabled = true;
                 reject(new Error('Database upgrade blocked'));
             }
         };
@@ -81,21 +89,24 @@ const initDB = (): Promise<IDBDatabase> => {
 };
 
 // Get cached models from IndexedDB
-const getModelsFromCache = async (provider: ExternalProvider): Promise<CachedModelList | null> => {
+const getModelsFromCache = async (cacheKey: string): Promise<CachedModelList | null> => {
+    if (cacheDisabled) {
+        return null;
+    }
     try {
         const db = await initDB();
         return new Promise((resolve) => {
             const transaction = db.transaction([MODELS_STORE], 'readonly');
             const store = transaction.objectStore(MODELS_STORE);
-            const request = store.get(provider);
+            const request = store.get(cacheKey);
 
             request.onsuccess = () => {
                 const cached = request.result as CachedModelList | undefined;
                 if (cached && cached.expiresAt > Date.now()) {
-                    console.log(`[ModelService] Cache hit for ${provider}`);
+                    console.log(`[ModelService] Cache hit for ${cacheKey}`);
                     resolve(cached);
                 } else {
-                    console.log(`[ModelService] Cache miss for ${provider}`);
+                    console.log(`[ModelService] Cache miss for ${cacheKey}`);
                     resolve(null);
                 }
             };
@@ -112,10 +123,14 @@ const getModelsFromCache = async (provider: ExternalProvider): Promise<CachedMod
 };
 
 // Save models to IndexedDB cache
-const saveModelsToCache = async (provider: ExternalProvider, models: ProviderModel[]): Promise<void> => {
+const saveModelsToCache = async (cacheKey: string, provider: ModelListProvider, models: ProviderModel[]): Promise<void> => {
+    if (cacheDisabled) {
+        return;
+    }
     try {
         const db = await initDB();
         const cached: CachedModelList = {
+            cacheKey,
             provider,
             models,
             fetchedAt: Date.now(),
@@ -143,7 +158,14 @@ const saveModelsToCache = async (provider: ExternalProvider, models: ProviderMod
 };
 
 // Hardcoded model lists for providers without /models endpoint or as fallback defaults
-const HARDCODED_MODELS: Partial<Record<ExternalProvider, ProviderModel[]>> = {
+const HARDCODED_MODELS: Partial<Record<ModelListProvider, ProviderModel[]>> = {
+    gemini: [
+        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'openai' },
+        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Exp)', provider: 'openai' },
+        { id: 'gemini-2.0-pro-exp', name: 'Gemini 2.0 Pro (Exp)', provider: 'openai' },
+        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'openai' },
+        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'openai' },
+    ],
     anthropic: [
         { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic' },
         { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', provider: 'anthropic' },
@@ -186,7 +208,7 @@ const HARDCODED_MODELS: Partial<Record<ExternalProvider, ProviderModel[]>> = {
 };
 
 // Default fallback models for providers with /models endpoint (used when API call fails or no API key)
-const DEFAULT_FALLBACK_MODELS: Partial<Record<ExternalProvider, ProviderModel[]>> = {
+const DEFAULT_FALLBACK_MODELS: Partial<Record<ModelListProvider, ProviderModel[]>> = {
     openai: [
         { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', context_length: 128000 },
         { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai', context_length: 128000 },
@@ -254,7 +276,7 @@ const DEFAULT_FALLBACK_MODELS: Partial<Record<ExternalProvider, ProviderModel[]>
 };
 
 // Normalize OpenAI-compatible API response to ProviderModel[]
-const normalizeOpenAIModels = (data: any, provider: ExternalProvider): ProviderModel[] => {
+const normalizeOpenAIModels = (data: any, provider: ModelListProvider): ProviderModel[] => {
     if (!data?.data || !Array.isArray(data.data)) {
         return [];
     }
@@ -286,18 +308,44 @@ const normalizeOllamaModels = (data: any, provider: ExternalProvider): ProviderM
 
 // Fetch models from a specific provider
 const fetchModelsFromProvider = async (
-    provider: ExternalProvider,
+    provider: ModelListProvider,
     apiKey: string,
     customBaseUrl?: string
 ): Promise<ProviderModel[]> => {
-    // Check for hardcoded models first
-    if (HARDCODED_MODELS[provider]) {
+    // Check for hardcoded models first (except gemini, which should fetch live)
+    if (provider !== 'gemini' && HARDCODED_MODELS[provider]) {
         return HARDCODED_MODELS[provider]!;
     }
 
-    // Skip 'other' provider - user must enter model manually
-    if (provider === 'other') {
+    // Skip 'other' provider unless a base URL is provided
+    if (provider === 'other' && !customBaseUrl) {
         return [];
+    }
+    if (provider === 'gemini') {
+        if (!apiKey) {
+            throw new Error('Gemini API key required');
+        }
+        const endpoint = `https://generativelanguage.googleapis.com/v1/models?key=${encodeURIComponent(apiKey)}`;
+        const response = await fetch(endpoint, { method: 'GET' });
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('[ModelService] gemini API error:', response.status, errorText);
+            throw new Error(`API error: ${response.status}`);
+        }
+        const data = await response.json();
+        const models = Array.isArray(data?.models) ? data.models : [];
+        return models
+            .map((m: any) => {
+                const name = typeof m?.name === 'string' ? m.name : '';
+                const id = name.startsWith('models/') ? name.replace('models/', '') : name;
+                return {
+                    id: id || name,
+                    name: m?.displayName || id || name,
+                    provider: 'openai',
+                    context_length: m?.inputTokenLimit || undefined
+                } as ProviderModel;
+            })
+            .filter((m: ProviderModel) => m.id);
     }
 
     const baseUrl = customBaseUrl || PROVIDER_URLS[provider];
@@ -365,7 +413,7 @@ const fetchModelsFromProvider = async (
 };
 
 // Filter and sort models for better UX
-const filterAndSortModels = (models: ProviderModel[], provider: ExternalProvider): ProviderModel[] => {
+const filterAndSortModels = (models: ProviderModel[], provider: ModelListProvider): ProviderModel[] => {
     // For OpenRouter, filter to show only popular/recommended models
     if (provider === 'openrouter') {
         const preferredPrefixes = [
@@ -403,14 +451,17 @@ export interface GetModelsResult {
  * Get models for a provider (uses cache if available)
  */
 export const getModels = async (
-    provider: ExternalProvider,
+    provider: ModelListProvider,
     apiKey: string,
     forceRefresh = false,
     customBaseUrl?: string
 ): Promise<GetModelsResult> => {
+    const normalizedBaseUrl = customBaseUrl?.trim() || '';
+    const cacheKey = `${provider}::${normalizedBaseUrl}`;
+
     // Check cache first (unless force refresh)
     if (!forceRefresh) {
-        const cached = await getModelsFromCache(provider);
+        const cached = await getModelsFromCache(cacheKey);
         if (cached) {
             return {
                 models: filterAndSortModels(cached.models, provider),
@@ -426,7 +477,7 @@ export const getModels = async (
 
         // Cache the results (if we got any models)
         if (models.length > 0) {
-            await saveModelsToCache(provider, models);
+            await saveModelsToCache(cacheKey, provider, models);
         }
 
         return {
@@ -435,7 +486,7 @@ export const getModels = async (
         };
     } catch (error) {
         // On error, try to return cached data even if expired
-        const cached = await getModelsFromCache(provider);
+        const cached = await getModelsFromCache(cacheKey);
         if (cached) {
             return {
                 models: filterAndSortModels(cached.models, provider),
@@ -465,7 +516,7 @@ export const getModels = async (
 /**
  * Get hardcoded models for providers without API endpoint
  */
-export const getHardcodedModels = (provider: ExternalProvider): ProviderModel[] => {
+export const getHardcodedModels = (provider: ModelListProvider): ProviderModel[] => {
     return HARDCODED_MODELS[provider] || [];
 };
 
@@ -473,15 +524,15 @@ export const getHardcodedModels = (provider: ExternalProvider): ProviderModel[] 
  * Get default/fallback models for a provider (hardcoded or default fallback)
  * These are used when the API call fails or no API key is configured
  */
-export const getDefaultModels = (provider: ExternalProvider): ProviderModel[] => {
+export const getDefaultModels = (provider: ModelListProvider): ProviderModel[] => {
     return HARDCODED_MODELS[provider] || DEFAULT_FALLBACK_MODELS[provider] || [];
 };
 
 /**
  * Check if a provider has a models API endpoint
  */
-export const hasModelsEndpoint = (provider: ExternalProvider): boolean => {
-    const providersWithEndpoint: ExternalProvider[] = [
+export const hasModelsEndpoint = (provider: ModelListProvider): boolean => {
+    const providersWithEndpoint: ModelListProvider[] = [
         'openai',
         'openrouter',
         'together',
@@ -491,6 +542,7 @@ export const hasModelsEndpoint = (provider: ExternalProvider): boolean => {
         'qwen-deepinfra',
         'ollama',
         'chutes',
+        'gemini',
     ];
     return providersWithEndpoint.includes(provider);
 };
@@ -498,7 +550,7 @@ export const hasModelsEndpoint = (provider: ExternalProvider): boolean => {
 /**
  * Check if a provider requires an API key for models endpoint
  */
-export const requiresApiKeyForModels = (provider: ExternalProvider): boolean => {
+export const requiresApiKeyForModels = (provider: ModelListProvider): boolean => {
     // Ollama doesn't require an API key
     if (provider === 'ollama') {
         return false;
@@ -509,15 +561,33 @@ export const requiresApiKeyForModels = (provider: ExternalProvider): boolean => 
 /**
  * Clear cached models for a provider or all providers
  */
-export const clearModelsCache = async (provider?: ExternalProvider): Promise<void> => {
+export const clearModelsCache = async (provider?: ModelListProvider): Promise<void> => {
+    if (cacheDisabled) {
+        return;
+    }
     try {
         const db = await initDB();
         const transaction = db.transaction([MODELS_STORE], 'readwrite');
         const store = transaction.objectStore(MODELS_STORE);
 
         if (provider) {
-            store.delete(provider);
-            console.log(`[ModelService] Cleared cache for ${provider}`);
+            const request = store.openCursor();
+            await new Promise<void>((resolve, reject) => {
+                request.onsuccess = () => {
+                    const cursor = request.result;
+                    if (!cursor) {
+                        console.log(`[ModelService] Cleared cache for ${provider}`);
+                        resolve();
+                        return;
+                    }
+                    const key = String(cursor.key || '');
+                    if (key.startsWith(`${provider}::`)) {
+                        cursor.delete();
+                    }
+                    cursor.continue();
+                };
+                request.onerror = () => reject(request.error);
+            });
         } else {
             store.clear();
             console.log('[ModelService] Cleared all model caches');

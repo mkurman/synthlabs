@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server } from 'lucide-react';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2 } from 'lucide-react';
 import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, WorkflowDefaults, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG, EMPTY_DEEP_DEFAULTS } from '../services/settingsService';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
@@ -7,7 +7,7 @@ import { TaskClassifierService, TASK_PROMPT_MAPPING, TaskType } from '../service
 import { PROVIDER_URLS } from '../constants';
 import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaModel } from '../services/externalApiService';
 import ModelSelector from './ModelSelector';
-import { ExternalProvider } from '../types';
+import { ModelListProvider } from '../types';
 
 interface SettingsPanelProps {
     isOpen: boolean;
@@ -39,6 +39,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     const [settings, setSettings] = useState<AppSettings>({ providerKeys: {} });
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
     const [saved, setSaved] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
     const [confirmClear, setConfirmClear] = useState(false);
     const [activeTab, setActiveTab] = useState<'providers' | 'generation' | 'huggingface' | 'firebase' | 'storage' | 'prompts'>('providers');
     const [apiSubTab, setApiSubTab] = useState<'keys' | 'defaults'>('keys');
@@ -81,6 +82,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
             setPromptMetadata(PromptService.getAllMetadata());
             // Auto-fetch Ollama models when panel opens
             refreshOllamaModels();
+        } else {
+            setIsFullscreen(false);
         }
     }, [isOpen]);
 
@@ -181,16 +184,25 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-            <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className={`bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full overflow-hidden flex flex-col ${isFullscreen ? 'max-w-[90vw] h-[90vh]' : 'max-w-2xl h-[80vh]'}`}>
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-slate-800">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2">
                         <Settings className="w-5 h-5 text-indigo-400" />
                         Settings
                     </h2>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white">
-                        <X className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setIsFullscreen(prev => !prev)}
+                            className="text-slate-400 hover:text-white"
+                            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                        >
+                            {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+                        </button>
+                        <button onClick={onClose} className="text-slate-400 hover:text-white" title="Close">
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Tabs */}
@@ -251,7 +263,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     <p className="text-xs text-slate-500">
                                         Configure API keys. Leave empty to use .env values.
                                     </p>
-                                    <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                                    <div className="space-y-2 h-full overflow-y-auto pr-1">
                                         {allProvidersForKeys.map(provider => {
                                             const info = PROVIDER_INFO[provider] || { name: provider, description: '' };
                                             const baseUrl = PROVIDER_URLS[provider] || '';
@@ -292,17 +304,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        {isCustom && (
-                                                            <input
-                                                                type="text"
-                                                                value={settings.customEndpointUrl || ''}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
-                                                                placeholder="Base URL"
-                                                                className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
-                                                            />
-                                                        )}
                                                         {!isOllama && (
-                                                            <div className="relative flex-1 min-w-0">
+                                                            <div className="relative w-48 shrink-0">
                                                                 <input
                                                                     type={showKeys[provider] ? 'text' : 'password'}
                                                                     value={keyValue || ''}
@@ -362,15 +365,29 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             </div>
                                                         ) : (
                                                             <ModelSelector
-                                                                provider={provider as ExternalProvider}
+                                                                provider={provider as ModelListProvider}
                                                                 value={settings.providerDefaultModels?.[provider] || ''}
                                                                 onChange={(model) => updateDefaultModel(provider, model)}
-                                                                apiKey={settings.providerKeys?.[provider] || ''}
+                                                                apiKey={provider === 'gemini'
+                                                                    ? (settings.geminiApiKey || '')
+                                                                    : (settings.providerKeys?.[provider] || '')}
+                                                                customBaseUrl={provider === 'other' ? settings.customEndpointUrl : undefined}
                                                                 placeholder="Default Model"
-                                                                className="w-40"
+                                                                className="flex-1 min-w-[220px]"
                                                             />
                                                         )}
                                                     </div>
+                                                    {isCustom && (
+                                                        <div className="mt-2">
+                                                            <input
+                                                                type="text"
+                                                                value={settings.customEndpointUrl || ''}
+                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
+                                                                placeholder="Base URL"
+                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
+                                                            />
+                                                        </div>
+                                                    )}
                                                     {/* Ollama: Show loaded models list */}
                                                     {isOllama && ollamaStatus === 'online' && ollamaModels.length > 0 && (
                                                         <div className="flex flex-wrap gap-1 pl-28">
@@ -476,9 +493,9 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             </select>
                                                         )}
                                                         <ModelSelector
-                                                            provider={(settings.generalPurposeModel?.provider === 'external'
-                                                                ? settings.generalPurposeModel?.externalProvider
-                                                                : 'gemini') as ExternalProvider}
+                                                                provider={(settings.generalPurposeModel?.provider === 'external'
+                                                                    ? settings.generalPurposeModel?.externalProvider
+                                                                    : 'gemini') as ModelListProvider}
                                                             value={settings.generalPurposeModel?.model || ''}
                                                             onChange={(model) => updateSetting('generalPurposeModel', {
                                                                 ...settings.generalPurposeModel,
@@ -487,7 +504,12 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 provider: settings.generalPurposeModel?.provider || 'gemini',
                                                                 externalProvider: settings.generalPurposeModel?.externalProvider || ''
                                                             })}
-                                                            apiKey={settings.providerKeys?.[settings.generalPurposeModel?.externalProvider || ''] || ''}
+                                                                apiKey={settings.generalPurposeModel?.provider === 'external'
+                                                                    ? (settings.providerKeys?.[settings.generalPurposeModel?.externalProvider || ''] || '')
+                                                                    : (settings.geminiApiKey || '')}
+                                                                customBaseUrl={settings.generalPurposeModel?.externalProvider === 'other'
+                                                                    ? settings.customEndpointUrl
+                                                                    : undefined}
                                                             placeholder="Model ID"
                                                             className="flex-1 min-w-[120px]"
                                                         />
@@ -555,10 +577,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         <ModelSelector
                                                             provider={(settings.workflowDefaults?.generator.regular.provider === 'external'
                                                                 ? settings.workflowDefaults?.generator.regular.externalProvider
-                                                                : 'gemini') as ExternalProvider}
+                                                                : 'gemini') as ModelListProvider}
                                                             value={settings.workflowDefaults?.generator.regular.model || ''}
                                                             onChange={(model) => updateWorkflowDefault('generator', 'regular', null, 'model', model)}
-                                                            apiKey={settings.providerKeys?.[settings.workflowDefaults?.generator.regular.externalProvider || ''] || ''}
+                                                            apiKey={settings.workflowDefaults?.generator.regular.provider === 'external'
+                                                                ? (settings.providerKeys?.[settings.workflowDefaults?.generator.regular.externalProvider || ''] || '')
+                                                                : (settings.geminiApiKey || '')}
+                                                            customBaseUrl={settings.workflowDefaults?.generator.regular.externalProvider === 'other'
+                                                                ? settings.customEndpointUrl
+                                                                : undefined}
                                                             placeholder="Model ID"
                                                             className="flex-1 min-w-[120px]"
                                                         />
@@ -600,10 +627,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 <ModelSelector
                                                                     provider={(settings.workflowDefaults?.generator.deep[step]?.provider === 'external'
                                                                         ? settings.workflowDefaults?.generator.deep[step]?.externalProvider
-                                                                        : 'gemini') as ExternalProvider}
+                                                                        : 'gemini') as ModelListProvider}
                                                                     value={settings.workflowDefaults?.generator.deep[step]?.model || ''}
                                                                     onChange={(model) => updateWorkflowDefault('generator', 'deep', step, 'model', model)}
-                                                                    apiKey={settings.providerKeys?.[settings.workflowDefaults?.generator.deep[step]?.externalProvider || ''] || ''}
+                                                                    apiKey={settings.workflowDefaults?.generator.deep[step]?.provider === 'external'
+                                                                        ? (settings.providerKeys?.[settings.workflowDefaults?.generator.deep[step]?.externalProvider || ''] || '')
+                                                                        : (settings.geminiApiKey || '')}
+                                                                    customBaseUrl={settings.workflowDefaults?.generator.deep[step]?.externalProvider === 'other'
+                                                                        ? settings.customEndpointUrl
+                                                                        : undefined}
                                                                     placeholder="Model"
                                                                     className="flex-1 min-w-[100px]"
                                                                 />
@@ -662,10 +694,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         <ModelSelector
                                                             provider={(settings.workflowDefaults?.converter.regular.provider === 'external'
                                                                 ? settings.workflowDefaults?.converter.regular.externalProvider
-                                                                : 'gemini') as ExternalProvider}
+                                                                : 'gemini') as ModelListProvider}
                                                             value={settings.workflowDefaults?.converter.regular.model || ''}
                                                             onChange={(model) => updateWorkflowDefault('converter', 'regular', null, 'model', model)}
-                                                            apiKey={settings.providerKeys?.[settings.workflowDefaults?.converter.regular.externalProvider || ''] || ''}
+                                                            apiKey={settings.workflowDefaults?.converter.regular.provider === 'external'
+                                                                ? (settings.providerKeys?.[settings.workflowDefaults?.converter.regular.externalProvider || ''] || '')
+                                                                : (settings.geminiApiKey || '')}
+                                                            customBaseUrl={settings.workflowDefaults?.converter.regular.externalProvider === 'other'
+                                                                ? settings.customEndpointUrl
+                                                                : undefined}
                                                             placeholder="Model ID"
                                                             className="flex-1 min-w-[120px]"
                                                         />
@@ -707,10 +744,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 <ModelSelector
                                                                     provider={(settings.workflowDefaults?.converter.deep[step]?.provider === 'external'
                                                                         ? settings.workflowDefaults?.converter.deep[step]?.externalProvider
-                                                                        : 'gemini') as ExternalProvider}
+                                                                        : 'gemini') as ModelListProvider}
                                                                     value={settings.workflowDefaults?.converter.deep[step]?.model || ''}
                                                                     onChange={(model) => updateWorkflowDefault('converter', 'deep', step, 'model', model)}
-                                                                    apiKey={settings.providerKeys?.[settings.workflowDefaults?.converter.deep[step]?.externalProvider || ''] || ''}
+                                                                    apiKey={settings.workflowDefaults?.converter.deep[step]?.provider === 'external'
+                                                                        ? (settings.providerKeys?.[settings.workflowDefaults?.converter.deep[step]?.externalProvider || ''] || '')
+                                                                        : (settings.geminiApiKey || '')}
+                                                                    customBaseUrl={settings.workflowDefaults?.converter.deep[step]?.externalProvider === 'other'
+                                                                        ? settings.customEndpointUrl
+                                                                        : undefined}
                                                                     placeholder="Model"
                                                                     className="flex-1 min-w-[100px]"
                                                                 />

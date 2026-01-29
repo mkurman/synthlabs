@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
     PlusCircle, Plus, FileX, RefreshCcw, X, FileEdit, CloudUpload, CloudDownload, Calendar,
     LayoutDashboard, Bookmark, Beaker,
-    Play, Pause, Download, Settings, Database, Cpu, Terminal,
+    Play, Pause, Download, Settings, Database, Cpu, Terminal, Square,
     AlertCircle, RefreshCw, Eye,
     Wand2, Dice5, Trash2, Upload, Save, FileJson, ArrowLeftRight,
     Cloud, Laptop, ShieldCheck, Archive, FileText, Server, BrainCircuit,
@@ -14,7 +14,7 @@ import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider, ApiType,
     ProgressStats, HuggingFaceConfig, DetectedColumns, DEFAULT_HF_PREFETCH_CONFIG,
     CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, UserAgentConfig, ChatMessage,
-    StreamChunkCallback, StreamingConversationState, FirebaseConfig
+    StreamChunkCallback, StreamingConversationState
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
 import { logger, setVerbose } from './utils/logger';
@@ -30,8 +30,9 @@ import { prefetchModels } from './services/modelService';
 import { TaskClassifierService, TaskType } from './services/taskClassifierService';
 import { fetchHuggingFaceRows, searchDatasets, getDatasetStructure, getDatasetInfo } from './services/huggingFaceService';
 import { HFPrefetchManager, createPrefetchManager, PrefetchState } from './services/hfPrefetchService';
+import { toast } from './services/toastService';
+import { confirmService } from './services/confirmService';
 import LogFeed from './components/LogFeed';
-import ReasoningHighlighter from './components/ReasoningHighlighter';
 import MiniDbPanel from './components/MiniDbPanel';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import VerifierPanel from './components/VerifierPanel';
@@ -41,6 +42,7 @@ import ColumnSelector from './components/ColumnSelector';
 import GenerationParamsInput from './components/GenerationParamsInput';
 import ModelSelector from './components/ModelSelector';
 import { ToastContainer } from './components/Toast';
+import { ConfirmModalContainer } from './components/ConfirmModal';
 
 export default function App() {
     // --- State: Modes ---
@@ -208,16 +210,6 @@ export default function App() {
     const [converterInputText, setConverterInputText] = useState('');
     const [manualFileName, setManualFileName] = useState('');
 
-    // --- State: Firebase Config UI ---
-    const [firebaseConfigInput, setFirebaseConfigInput] = useState<FirebaseConfig>({
-        apiKey: '',
-        authDomain: '',
-        projectId: '',
-        storageBucket: '',
-        messagingSenderId: '',
-        appId: ''
-    });
-
     // --- State: Cloud Session Management ---
     const [showCloudLoadModal, setShowCloudLoadModal] = useState(false);
     const [cloudSessions, setCloudSessions] = useState<FirebaseService.SavedSession[]>([]);
@@ -240,10 +232,11 @@ export default function App() {
     const [isLoadingHfPreview, setIsLoadingHfPreview] = useState(false);
 
     // --- State: Progressive conversation streaming (supports concurrent requests) ---
-    const [streamingConversations, setStreamingConversations] = useState<Map<string, StreamingConversationState>>(new Map());
+    const [streamingConversationsVersion, setStreamingConversationsVersion] = useState(0);
     const streamingConversationsRef = useRef<Map<string, StreamingConversationState>>(new Map());
     const streamingAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
     const haltedStreamingIdsRef = useRef<Set<string>>(new Set());
+    const streamUpdateThrottleRef = useRef<number>(0);
 
     // --- State: Streaming mode toggle ---
     const [isStreamingEnabled, setIsStreamingEnabled] = useState<boolean>(true);
@@ -308,8 +301,10 @@ export default function App() {
     const [currentPage, setCurrentPage] = useState(1);
     const [logFilter, setLogFilter] = useState<'live' | 'invalid'>('live');
     const [showLatestOnly, setShowLatestOnly] = useState(false);
+    const prefetchedPageRef = useRef<{ page: number; sessionUid: string; filter: 'live' | 'invalid'; pageSize: number; logs: SynthLogItem[]; filteredCount: number } | null>(null);
 
     const [isRunning, setIsRunning] = useState(false);
+    const [isPaused, setIsPaused] = useState(false);
     const [isOptimizing, setIsOptimizing] = useState(false);
     const [progress, setProgress] = useState<ProgressStats>({ current: 0, total: 0, activeWorkers: 0 });
     const [error, setError] = useState<string | null>(null);
@@ -325,6 +320,7 @@ export default function App() {
     const [activeDeepTab, setActiveDeepTab] = useState<'meta' | 'retrieval' | 'derivation' | 'writer' | 'rewriter'>('meta');
 
     const abortControllerRef = useRef<AbortController | null>(null);
+    const isPausedRef = useRef(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const sessionFileInputRef = useRef<HTMLInputElement>(null);
     const sourceFileInputRef = useRef<HTMLInputElement>(null);
@@ -339,7 +335,6 @@ export default function App() {
         if (savedConfig) {
             try {
                 const parsed = JSON.parse(savedConfig);
-                setFirebaseConfigInput(parsed);
                 FirebaseService.initializeFirebase(parsed).then(success => {
                     if (success) {
                         logger.log("Restored Firebase config from storage");
@@ -351,6 +346,10 @@ export default function App() {
             }
         }
     }, []);
+
+    useEffect(() => {
+        isPausedRef.current = isPaused;
+    }, [isPaused]);
 
     // Load available prompt sets on mount
     useEffect(() => {
@@ -390,6 +389,18 @@ export default function App() {
         return log.status === 'TIMEOUT' || log.status === 'ERROR' || log.isError;
     }, []);
 
+    const bumpStreamingConversations = useCallback(() => {
+        setStreamingConversationsVersion(prev => prev + 1);
+    }, []);
+
+    const scheduleStreamingUpdate = useCallback(() => {
+        const now = Date.now();
+        if (now - streamUpdateThrottleRef.current > 50) {
+            streamUpdateThrottleRef.current = now;
+            bumpStreamingConversations();
+        }
+    }, [bumpStreamingConversations]);
+
     const haltStreamingItem = useCallback((id: string) => {
         haltedStreamingIdsRef.current.add(id);
         const controller = streamingAbortControllersRef.current.get(id);
@@ -398,26 +409,57 @@ export default function App() {
         }
         streamingAbortControllersRef.current.delete(id);
         streamingConversationsRef.current.delete(id);
-        setStreamingConversations(prev => {
-            const next = new Map(prev);
-            next.delete(id);
-            return next;
-        });
-    }, []);
+        bumpStreamingConversations();
+    }, [bumpStreamingConversations]);
 
     // Load logs from local storage when session changes or pagination upgrades
     const refreshLogs = useCallback(async () => {
         // Use ref to ensure we read from the same session the worker is writing to
         const currentSessionId = sessionUidRef.current;
-        const allLogs = await LogStorageService.getAllLogs(currentSessionId);
-        const filteredLogs = logFilter === 'invalid'
-            ? allLogs.filter(isInvalidLog)
-            : allLogs.filter((log) => !isInvalidLog(log));
-        const effectivePageSize = feedPageSize === -1 ? filteredLogs.length : feedPageSize;
-        const start = (currentPage - 1) * effectivePageSize;
-        setVisibleLogs(filteredLogs.slice(start, start + effectivePageSize));
-        setTotalLogCount(allLogs.length);
-        setFilteredLogCount(filteredLogs.length);
+        const effectivePageSize = feedPageSize === -1 ? Number.MAX_SAFE_INTEGER : feedPageSize;
+        const prefetched = prefetchedPageRef.current;
+        const shouldUsePrefetch = prefetched
+            && prefetched.page === currentPage
+            && prefetched.sessionUid === currentSessionId
+            && prefetched.filter === logFilter
+            && prefetched.pageSize === effectivePageSize;
+
+        const result = shouldUsePrefetch
+            ? { logs: prefetched.logs, totalCount: totalLogCount, filteredCount: prefetched.filteredCount }
+            : await LogStorageService.getLogsPage(
+                currentSessionId,
+                currentPage,
+                effectivePageSize,
+                logFilter
+            );
+
+        setVisibleLogs(result.logs);
+        const nextTotal = shouldUsePrefetch
+            ? (totalLogCount || result.totalCount)
+            : result.totalCount;
+        setTotalLogCount(nextTotal);
+        setFilteredLogCount(result.filteredCount);
+
+        // Prefetch next page into ref cache (no extra state)
+        if (feedPageSize !== -1 && !showLatestOnly) {
+            const nextPage = currentPage + 1;
+            LogStorageService.getLogsPage(currentSessionId, nextPage, effectivePageSize, logFilter)
+                .then(nextResult => {
+                    prefetchedPageRef.current = {
+                        page: nextPage,
+                        sessionUid: currentSessionId,
+                        filter: logFilter,
+                        pageSize: effectivePageSize,
+                        logs: nextResult.logs,
+                        filteredCount: nextResult.filteredCount
+                    };
+                })
+                .catch(() => {
+                    prefetchedPageRef.current = null;
+                });
+        } else {
+            prefetchedPageRef.current = null;
+        }
     }, [currentPage, feedPageSize, logsTrigger, logFilter, isInvalidLog]);
 
     // Initial Load & Session Switch
@@ -433,6 +475,10 @@ export default function App() {
     useEffect(() => {
         setCurrentPage(1);
     }, [logFilter]);
+
+    useEffect(() => {
+        prefetchedPageRef.current = null;
+    }, [sessionUid, logFilter, feedPageSize, showLatestOnly]);
 
     // Toggle verbose logging based on environment mode
     // Toggle verbose logging based on environment mode
@@ -1152,7 +1198,11 @@ export default function App() {
 
     const handleCloudSave = async () => {
         if (!FirebaseService.isFirebaseConfigured()) {
-            alert("Firebase not configured!");
+            await confirmService.alert({
+                title: 'Firebase not configured',
+                message: 'Please configure Firebase in Settings to enable cloud sync.',
+                variant: 'warning'
+            });
             return;
         }
         const name = prompt("Enter a name for this session snapshot:");
@@ -1161,15 +1211,27 @@ export default function App() {
             const sessionData = getSessionData();
             await FirebaseService.saveSessionToFirebase(sessionData, name);
             setSessionName(name);
-            alert("Session saved to cloud!");
+            await confirmService.alert({
+                title: 'Saved',
+                message: 'Session saved to cloud!',
+                variant: 'info'
+            });
         } catch (e: any) {
-            alert("Failed to save to cloud: " + e.message);
+            await confirmService.alert({
+                title: 'Save failed',
+                message: `Failed to save to cloud: ${e.message}`,
+                variant: 'danger'
+            });
         }
     };
 
     const handleCloudLoadOpen = async () => {
         if (!FirebaseService.isFirebaseConfigured()) {
-            alert("Firebase not configured!");
+            await confirmService.alert({
+                title: 'Firebase not configured',
+                message: 'Please configure Firebase in Settings to enable cloud sync.',
+                variant: 'warning'
+            });
             return;
         }
         setIsCloudLoading(true);
@@ -1178,7 +1240,11 @@ export default function App() {
             const sessions = await FirebaseService.getSessionsFromFirebase();
             setCloudSessions(sessions);
         } catch (e: any) {
-            alert("Failed to fetch sessions: " + e.message);
+            await confirmService.alert({
+                title: 'Fetch failed',
+                message: `Failed to fetch sessions: ${e.message}`,
+                variant: 'danger'
+            });
             setShowCloudLoadModal(false);
         } finally {
             setIsCloudLoading(false);
@@ -1205,12 +1271,23 @@ export default function App() {
 
     const handleCloudSessionDelete = async (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
-        if (!window.confirm("Are you sure you want to delete this session?")) return;
+        const confirmDelete = await confirmService.confirm({
+            title: 'Delete session?',
+            message: 'Are you sure you want to delete this session? This cannot be undone.',
+            confirmLabel: 'Delete',
+            cancelLabel: 'Cancel',
+            variant: 'danger'
+        });
+        if (!confirmDelete) return;
         try {
             await FirebaseService.deleteSessionFromFirebase(id);
             setCloudSessions(prev => prev.filter(s => s.id !== id));
         } catch (e: any) {
-            alert("Failed to delete session: " + e.message);
+            await confirmService.alert({
+                title: 'Delete failed',
+                message: `Failed to delete session: ${e.message}`,
+                variant: 'danger'
+            });
         }
     };
 
@@ -1277,7 +1354,7 @@ export default function App() {
         };
         const clearStreamingState = () => {
             streamingConversationsRef.current.delete(generationId);
-            setStreamingConversations(new Map(streamingConversationsRef.current));
+            bumpStreamingConversations();
             streamingAbortControllersRef.current.delete(generationId);
         };
         try {
@@ -1388,7 +1465,7 @@ export default function App() {
                             maxRetries,
                             retryDelay,
                             generationParams: genParams,
-                            structuredOutput: true,
+                            structuredOutput: genParams?.forceStructuredOutput ?? true,
                             maxTraces: hfConfig.maxMultiTurnTraces,
                             regularModeConfig: engineMode === 'regular' ? {
                                 provider: provider,
@@ -1398,264 +1475,362 @@ export default function App() {
                                 customBaseUrl: customBaseUrl
                             } : undefined,
                             // Streaming for real-time updates
-                            stream: true,
+                            stream: isStreamingEnabled,
                             onStreamChunk: handleStreamChunk,
                             // Message progression callback
                             onMessageRewritten: (index: number, total: number) => {
                                 const current = streamingConversationsRef.current.get(generationId);
                                 if (!current) return;
+                                const rewriteResult = await DeepReasoningService.orchestrateConversationRewrite({
+                                    messages: chatMessages,
+                                    config: effectiveDeepConfig,
+                                    engineMode: engineMode,
+                                    converterPrompt: effectiveConverterPrompt,
+                                    signal: itemAbortController.signal,
+                                    maxRetries,
+                                    retryDelay,
+                                    generationParams: genParams,
+                                    structuredOutput: true,
+                                    maxTraces: hfConfig.maxMultiTurnTraces,
+                                    regularModeConfig: engineMode === 'regular' ? {
+                                        provider: provider,
+                                        externalProvider: externalProvider,
+                                        apiKey: externalApiKey,
+                                        model: externalModel,
+                                        customBaseUrl: customBaseUrl
+                                    } : undefined,
+                                    // Streaming for real-time updates
+                                    stream: true,
+                                    onStreamChunk: handleStreamChunk,
+                                    // Message progression callback
+                                    onMessageRewritten: (index: number, total: number) => {
+                                        const current = streamingConversationsRef.current.get(generationId);
+                                        if (!current) return;
 
-                                // Get the user message for this index (find next user after current position)
-                                const userMsgs = chatMessages.filter(m => m.role === 'user');
-                                const assistantMsgs = chatMessages.filter(m => m.role === 'assistant');
+                                        // Get the user message for this index (find next user after current position)
+                                        const userMsgs = chatMessages.filter(m => m.role === 'user');
+                                        const assistantMsgs = chatMessages.filter(m => m.role === 'assistant');
 
-                                // Add current pair to completed messages
-                                const completedUser = userMsgs[index];
-                                const completedAssistant = assistantMsgs[index];
+                                        // Add current pair to completed messages
+                                        const completedUser = userMsgs[index];
+                                        const completedAssistant = assistantMsgs[index];
 
-                                // Helper to clean empty think tags from content
-                                const cleanEmptyThinkTags = (text: string) =>
-                                    text?.replace(/<think>\s*<\/think>\s*/gi, '').trim();
+                                        // Helper to clean empty think tags from content
+                                        const cleanEmptyThinkTags = (text: string) =>
+                                            text?.replace(/<think>\s*<\/think>\s*/gi, '').trim();
 
-                                const newCompleted = [...current.completedMessages];
-                                if (completedUser) {
-                                    newCompleted.push({ ...completedUser });
-                                }
-                                if (completedAssistant) {
-                                    // Clean content and use streamed reasoning/answer for this message
-                                    const cleanContent = cleanEmptyThinkTags(
-                                        current.currentAnswer || completedAssistant.content || ''
-                                    );
-                                    newCompleted.push({
-                                        role: 'assistant',
-                                        content: cleanContent,
-                                        reasoning: current.currentReasoning || completedAssistant.reasoning
-                                    });
-                                }
+                                        const newCompleted = [...current.completedMessages];
+                                        if (completedUser) {
+                                            newCompleted.push({ ...completedUser });
+                                        }
+                                        if (completedAssistant) {
+                                            // Clean content and use streamed reasoning/answer for this message
+                                            const cleanContent = cleanEmptyThinkTags(
+                                                current.currentAnswer || completedAssistant.content || ''
+                                            );
+                                            newCompleted.push({
+                                                role: 'assistant',
+                                                content: cleanContent,
+                                                reasoning: current.currentReasoning || completedAssistant.reasoning
+                                            });
+                                        }
 
-                                // Get next user message if there is one
-                                const nextUserMsg = userMsgs[index + 1];
+                                        // Get next user message if there is one
+                                        const nextUserMsg = userMsgs[index + 1];
 
-                                logger.log('[STREAMING] Message rewritten:', {
-                                    generationId,
-                                    index,
-                                    total,
-                                    completedCount: newCompleted.length,
-                                    nextUser: nextUserMsg?.content?.substring(0, 30)
+                                        logger.log('[STREAMING] Message rewritten:', {
+                                            generationId,
+                                            index,
+                                            total,
+                                            completedCount: newCompleted.length,
+                                            nextUser: nextUserMsg?.content?.substring(0, 30)
+                                        });
+
+                                        // Update state for next message
+                                        const updatedState: StreamingConversationState = {
+                                            ...current,
+                                            phase: index + 1 < total ? 'waiting_for_response' : 'message_complete',
+                                            currentMessageIndex: index + 1,
+                                            completedMessages: newCompleted,
+                                            currentUserMessage: nextUserMsg?.content,
+                                            currentReasoning: '',
+                                            currentAnswer: '',
+                                            rawAccumulated: ''
+                                        };
+                                        streamingConversationsRef.current.set(generationId, updatedState);
+                                        setStreamingConversations(new Map(streamingConversationsRef.current));
+                                    }
                                 });
 
-                                // Update state for next message
-                                const updatedState: StreamingConversationState = {
-                                    ...current,
-                                    phase: index + 1 < total ? 'waiting_for_response' : 'message_complete',
-                                    currentMessageIndex: index + 1,
-                                    completedMessages: newCompleted,
-                                    currentUserMessage: nextUserMsg?.content,
-                                    currentReasoning: '',
-                                    currentAnswer: '',
-                                    rawAccumulated: ''
+                                clearStreamingState(); // Clear streaming after completion
+                                return {
+                                    ...rewriteResult,
+                                    id: generationId,
+                                    sessionUid: sessionUid,
+                                    source: source,
+                                    status: 'DONE'
                                 };
-                                streamingConversationsRef.current.set(generationId, updatedState);
-                                setStreamingConversations(new Map(streamingConversationsRef.current));
                             }
-                        });
-
-                        clearStreamingState(); // Clear streaming after completion
-                        return {
-                            ...rewriteResult,
-                            id: generationId,
-                            sessionUid: sessionUid,
-                            source: source,
-                            status: 'DONE'
-                        };
-                    }
-                }
+                        }
 
 
                 if (engineMode === 'regular') {
-                    if (provider === 'gemini') {
-                        // Reinforce JSON structure for regular mode to ensure service parsing works
-                        let enhancedPrompt = activePrompt;
-                        if (!enhancedPrompt.toLowerCase().includes("json")) {
-                            enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields. If you are a writer/refiner, use the provided trace/logic as the 'reasoning' and output your result as the 'answer'.";
-                        }
+                            if (provider === 'gemini') {
+                                // Reinforce JSON structure for regular mode to ensure service parsing works
+                                let enhancedPrompt = activePrompt;
+                                if (!enhancedPrompt.toLowerCase().includes("json")) {
+                                    enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields. If you are a writer/refiner, use the provided trace/logic as the 'reasoning' and output your result as the 'answer'.";
+                                }
 
-                        if (appMode === 'generator') {
-                            result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, { ...retryConfig, model: externalModel });
-                        } else {
-                            const contentToConvert = extractInputContent(safeInput);
-                            result = await GeminiService.convertReasoningTrace(contentToConvert, enhancedPrompt, { ...retryConfig, model: externalModel });
-                        }
-                    } else {
-                        let promptInput = "";
-                        if (appMode === 'generator') {
-                            promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
-                        } else {
-                            const contentToConvert = extractInputContent(safeInput);
-                            promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
-                        }
+                                if (appMode === 'generator') {
+                                    result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, { ...retryConfig, model: externalModel });
+                                } else {
+                                    const contentToConvert = extractInputContent(safeInput);
+                                    result = await GeminiService.convertReasoningTrace(contentToConvert, enhancedPrompt, { ...retryConfig, model: externalModel });
+                                }
+                            } else {
+                                let promptInput = "";
+                                if (appMode === 'generator') {
+                                    promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
+                                } else {
+                                    const contentToConvert = extractInputContent(safeInput);
+                                    promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
+                                }
 
-                        // Reinforce JSON structure for external providers too
-                        let enhancedPrompt = activePrompt;
-                        if (!enhancedPrompt.toLowerCase().includes("json")) {
-                            enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
-                        }
+                                // Reinforce JSON structure for external providers too
+                                let enhancedPrompt = activePrompt;
+                                if (!enhancedPrompt.toLowerCase().includes("json")) {
+                                    enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
+                                }
 
-                        // Initialize streaming state for regular mode (non-chat input)
-                        const regularStreamState = initStreamingState(1, promptInput, true);
-                        streamingConversationsRef.current.set(generationId, regularStreamState);
-                        setStreamingConversations(new Map(streamingConversationsRef.current));
+                                // Initialize streaming state for regular mode (non-chat input)
+                                const regularStreamState = initStreamingState(1, promptInput, true);
+                                streamingConversationsRef.current.set(generationId, regularStreamState);
+                                setStreamingConversations(new Map(streamingConversationsRef.current));
 
-                        result = await ExternalApiService.callExternalApi({
-                            provider: externalProvider,
-                            apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
-                            model: externalModel,
-                            customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
-                            systemPrompt: enhancedPrompt,
-                            userPrompt: promptInput,
-                            signal: itemAbortController.signal,
-                            maxRetries,
-                            retryDelay,
-                            generationParams: genParams,
-                            structuredOutput: true,
-                            // Enable streaming for regular mode
-                            stream: true,
-                            onStreamChunk: handleStreamChunk,
-                            streamPhase: 'regular'
-                        });
-                        clearStreamingState();
-                    }
-                    const ensureString = (val: any) => {
-                        if (val === null || val === undefined) return "";
-                        if (typeof val === 'string') return val;
-                        return JSON.stringify(val);
-                    };
-                    const answer = ensureString(result.answer);
-                    const reasoning = ensureString(result.reasoning);
-
-                    // If in converter mode and we have a ground truth expectedAnswer, prioritize it?
-                    // Actually, if the user is RUNNING a converter, they might want to see the CONVERTED answer.
-                    // However, the user said "no answer from ground truth", implying they WANT the ground truth preserved.
-                    // In converter mode, usually the "answer" field in the dataset is the ground truth.
-                    const finalAnswer = (appMode === 'converter' && originalAnswer) ? originalAnswer : answer;
-
-                    return {
-                        id: generationId,
-                        sessionUid: sessionUid,
-                        source: source,
-                        seed_preview: safeInput.substring(0, 150) + "...",
-                        full_seed: safeInput,
-                        query: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
-                        reasoning: reasoning,
-                        original_reasoning: originalReasoning,
-                        answer: finalAnswer,
-                        original_answer: originalAnswer,
-                        timestamp: new Date().toISOString(),
-                        duration: Date.now() - startTime,
-                        tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4), // Rough estimate
-                        modelUsed: provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${externalModel}`,
-                        provider: externalProvider,
-                        status: 'DONE'
-                    };
-                } else {
-                    let inputPayload = safeInput;
-                    if (appMode === 'converter') {
-                        inputPayload = extractInputContent(safeInput);
-                    }
-
-                    // In generator mode, append the gold answer to the seed so all agents see it
-                    if (appMode === 'generator' && originalAnswer && originalAnswer.trim().length > 0) {
-                        inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${originalAnswer.trim()}`;
-                    }
-
-                    // Deep copy to prevent mutation of state (use effectiveDeepConfig for auto-routing)
-                    const runtimeDeepConfig = JSON.parse(JSON.stringify(effectiveDeepConfig));
-
-                    // REMOVED: Intelligent Sync. We now strictly respect the deepConfig.phases.writer.systemPrompt
-                    // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
-
-                    // Initialize streaming state for deep mode (non-chat input)
-                    const deepStreamState = initStreamingState(1, inputPayload, true);
-                    streamingConversationsRef.current.set(generationId, deepStreamState);
-                    setStreamingConversations(new Map(streamingConversationsRef.current));
-
-                    const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
-                        input: inputPayload,
-                        originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
-                        expectedAnswer: originalAnswer,
-                        config: runtimeDeepConfig,
-                        signal: itemAbortController.signal,
-                        maxRetries,
-                        retryDelay,
-                        generationParams: genParams,
-                        // Enable streaming for writer/rewriter phases
-                        stream: true,
-                        onStreamChunk: handleStreamChunk
-                    });
-
-                    // Clear streaming content after completion
-                    clearStreamingState();
-
-                    // If User Agent is enabled, run multi-turn conversation
-                    if (userAgentConfig.enabled && userAgentConfig.followUpCount > 0) {
-                        // Determine which responder to use based on user selection
-                        const responderPhase = userAgentConfig.responderPhase || 'writer';
-                        const responderConfig = responderPhase === 'responder'
-                            ? {
-                                provider: userAgentConfig.provider,
-                                externalProvider: userAgentConfig.externalProvider,
-                                apiKey: userAgentConfig.apiKey,
-                                model: userAgentConfig.model,
-                                customBaseUrl: userAgentConfig.customBaseUrl,
-                                systemPrompt: PromptService.getPrompt('generator', 'responder', runtimeConfig?.promptSet)
+                                result = await ExternalApiService.callExternalApi({
+                                    provider: externalProvider,
+                                    apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
+                                    model: externalModel,
+                                    apiType: apiType, // Pass API type (chat or responses)
+                                    customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
+                                    systemPrompt: enhancedPrompt,
+                                    userPrompt: promptInput,
+                                    signal: itemAbortController.signal,
+                                    maxRetries,
+                                    retryDelay,
+                                    generationParams: genParams,
+                                    structuredOutput: genParams?.forceStructuredOutput ?? true,
+                                    responsesSchema: 'reasoningTrace', // Use reasoning trace schema for generator
+                                    // Enable streaming for regular mode
+                                    stream: isStreamingEnabled,
+                                    onStreamChunk: handleStreamChunk,
+                                    streamPhase: 'regular'
+                                });
+                                clearStreamingState();
                             }
-                            : runtimeDeepConfig.phases[responderPhase as keyof typeof runtimeDeepConfig.phases];
+                            const ensureString = (val: any) => {
+                                if (val === null || val === undefined) return "";
+                                if (typeof val === 'string') return val;
+                                return JSON.stringify(val);
+                            };
+                            const answer = ensureString(result.answer);
+                            const reasoning = ensureString(result.reasoning);
+                            result = await ExternalApiService.callExternalApi({
+                                provider: externalProvider,
+                                apiKey: externalApiKey || SettingsService.getApiKey(externalProvider),
+                                model: externalModel,
+                                customBaseUrl: customBaseUrl || SettingsService.getCustomBaseUrl(),
+                                systemPrompt: enhancedPrompt,
+                                userPrompt: promptInput,
+                                signal: itemAbortController.signal,
+                                maxRetries,
+                                retryDelay,
+                                generationParams: genParams,
+                                structuredOutput: true,
+                                // Enable streaming for regular mode
+                                stream: true,
+                                onStreamChunk: handleStreamChunk,
+                                streamPhase: 'regular'
+                            });
+                            clearStreamingState();
+                        }
+                        const ensureString = (val: any) => {
+                            if (val === null || val === undefined) return "";
+                            if (typeof val === 'string') return val;
+                            return JSON.stringify(val);
+                        };
+                        const answer = ensureString(result.answer);
+                        const reasoning = ensureString(result.reasoning);
 
-                        const multiTurnResult = await DeepReasoningService.orchestrateMultiTurnConversation({
-                            initialInput: inputPayload,
-                            initialQuery: originalQuestion || deepResult.query || inputPayload, // Use detected question or query or fallback
-                            initialResponse: deepResult.answer || '',
-                            initialReasoning: deepResult.reasoning || '',
-                            userAgentConfig: {
-                                ...userAgentConfig,
-                                // Override with auto-routed prompt set if available
-                                systemPrompt: PromptService.getPrompt('generator', 'user_agent', runtimeConfig?.promptSet)
-                            },
-                            responderConfig: responderConfig,
-                            signal: itemAbortController.signal,
-                            maxRetries,
-                            retryDelay,
-                            generationParams: genParams,
-                            structuredOutput: true
-                        });
+                        // If in converter mode and we have a ground truth expectedAnswer, prioritize it?
+                        // Actually, if the user is RUNNING a converter, they might want to see the CONVERTED answer.
+                        // However, the user said "no answer from ground truth", implying they WANT the ground truth preserved.
+                        // In converter mode, usually the "answer" field in the dataset is the ground truth.
+                        const finalAnswer = (appMode === 'converter' && originalAnswer) ? originalAnswer : answer;
 
                         return {
-                            ...multiTurnResult,
                             id: generationId,
                             sessionUid: sessionUid,
                             source: source,
+                            seed_preview: safeInput.substring(0, 150) + "...",
+                            full_seed: safeInput,
+                            query: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
+                            reasoning: reasoning,
+                            original_reasoning: originalReasoning,
+                            answer: finalAnswer,
+                            original_answer: originalAnswer,
+                            timestamp: new Date().toISOString(),
                             duration: Date.now() - startTime,
-                            tokenCount: Math.round((multiTurnResult.answer?.length || 0 + (multiTurnResult.reasoning?.length || 0)) / 4),
-                            isMultiTurn: true,
+                            tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4), // Rough estimate
+                            modelUsed: provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${externalModel}`,
+                            provider: externalProvider,
                             status: 'DONE'
                         };
-                    }
+                    } else {
+                        let inputPayload = safeInput;
+                        if (appMode === 'converter') {
+                            inputPayload = extractInputContent(safeInput);
+                        }
 
-                    const answer = deepResult.answer || "";
-                    const reasoning = deepResult.reasoning || "";
-                    return {
-                        ...deepResult,
-                        id: generationId,
-                        original_reasoning: originalReasoning,
-                        original_answer: originalAnswer,
-                        sessionUid: sessionUid,
-                        source: source,
-                        duration: Date.now() - startTime,
-                        tokenCount: Math.round((answer.length + reasoning.length) / 4),
-                        status: 'DONE'
-                    };
-                }
-            });
+                        // In generator mode, append the gold answer to the seed so all agents see it
+                        if (appMode === 'generator' && originalAnswer && originalAnswer.trim().length > 0) {
+                            inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${originalAnswer.trim()}`;
+                        }
+
+                        // Deep copy to prevent mutation of state (use effectiveDeepConfig for auto-routing)
+                        const runtimeDeepConfig = JSON.parse(JSON.stringify(effectiveDeepConfig));
+
+                        // REMOVED: Intelligent Sync. We now strictly respect the deepConfig.phases.writer.systemPrompt
+                        // to avoid confusing behavior where the Main Prompt overwrites the Deep Mode prompt.
+
+                        // Initialize streaming state for deep mode (non-chat input)
+                        const deepStreamState = initStreamingState(1, inputPayload, true);
+                        streamingConversationsRef.current.set(generationId, deepStreamState);
+                        setStreamingConversations(new Map(streamingConversationsRef.current));
+
+                        const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
+                            input: inputPayload,
+                            originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
+                            expectedAnswer: originalAnswer,
+                            config: runtimeDeepConfig,
+                            signal: itemAbortController.signal,
+                            maxRetries,
+                            retryDelay,
+                            generationParams: genParams,
+                            // Enable streaming for writer/rewriter phases
+                            stream: isStreamingEnabled,
+                            onStreamChunk: handleStreamChunk
+                        });
+                        const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
+                            input: inputPayload,
+                            originalQuery: originalQuestion || (appMode === 'converter' ? extractInputContent(safeInput, { format: 'display' }) : safeInput), // Use raw column value if available
+                            expectedAnswer: originalAnswer,
+                            config: runtimeDeepConfig,
+                            signal: itemAbortController.signal,
+                            maxRetries,
+                            retryDelay,
+                            generationParams: genParams,
+                            // Enable streaming for writer/rewriter phases
+                            stream: true,
+                            onStreamChunk: handleStreamChunk
+                        });
+
+                        // Clear streaming content after completion
+                        clearStreamingState();
+
+                        // If User Agent is enabled, run multi-turn conversation
+                        if (userAgentConfig.enabled && userAgentConfig.followUpCount > 0) {
+                            // Determine which responder to use based on user selection
+                            const responderPhase = userAgentConfig.responderPhase || 'writer';
+                            const responderConfig = responderPhase === 'responder'
+                                ? {
+                                    provider: userAgentConfig.provider,
+                                    externalProvider: userAgentConfig.externalProvider,
+                                    apiType: userAgentConfig.apiType || 'chat', // Pass API type
+                                    apiKey: userAgentConfig.apiKey,
+                                    model: userAgentConfig.model,
+                                    customBaseUrl: userAgentConfig.customBaseUrl,
+                                    systemPrompt: PromptService.getPrompt('generator', 'responder', runtimeConfig?.promptSet)
+                                }
+                                : runtimeDeepConfig.phases[responderPhase as keyof typeof runtimeDeepConfig.phases];
+                            // If User Agent is enabled, run multi-turn conversation
+                            if (userAgentConfig.enabled && userAgentConfig.followUpCount > 0) {
+                                // Determine which responder to use based on user selection
+                                const responderPhase = userAgentConfig.responderPhase || 'writer';
+                                const responderConfig = responderPhase === 'responder'
+                                    ? {
+                                        provider: userAgentConfig.provider,
+                                        externalProvider: userAgentConfig.externalProvider,
+                                        apiKey: userAgentConfig.apiKey,
+                                        model: userAgentConfig.model,
+                                        customBaseUrl: userAgentConfig.customBaseUrl,
+                                        systemPrompt: PromptService.getPrompt('generator', 'responder', runtimeConfig?.promptSet)
+                                    }
+                                    : runtimeDeepConfig.phases[responderPhase as keyof typeof runtimeDeepConfig.phases];
+
+                                const multiTurnResult = await DeepReasoningService.orchestrateMultiTurnConversation({
+                                    initialInput: inputPayload,
+                                    initialQuery: originalQuestion || deepResult.query || inputPayload, // Use detected question or query or fallback
+                                    initialResponse: deepResult.answer || '',
+                                    initialReasoning: deepResult.reasoning || '',
+                                    userAgentConfig: {
+                                        ...userAgentConfig,
+                                        // Override with auto-routed prompt set if available
+                                        systemPrompt: PromptService.getPrompt('generator', 'user_agent', runtimeConfig?.promptSet)
+                                    },
+                                    responderConfig: responderConfig,
+                                    signal: itemAbortController.signal,
+                                    maxRetries,
+                                    retryDelay,
+                                    generationParams: genParams,
+                                    structuredOutput: genParams?.forceStructuredOutput ?? true
+                                });
+                                const multiTurnResult = await DeepReasoningService.orchestrateMultiTurnConversation({
+                                    initialInput: inputPayload,
+                                    initialQuery: originalQuestion || deepResult.query || inputPayload, // Use detected question or query or fallback
+                                    initialResponse: deepResult.answer || '',
+                                    initialReasoning: deepResult.reasoning || '',
+                                    userAgentConfig: {
+                                        ...userAgentConfig,
+                                        // Override with auto-routed prompt set if available
+                                        systemPrompt: PromptService.getPrompt('generator', 'user_agent', runtimeConfig?.promptSet)
+                                    },
+                                    responderConfig: responderConfig,
+                                    signal: itemAbortController.signal,
+                                    maxRetries,
+                                    retryDelay,
+                                    generationParams: genParams,
+                                    structuredOutput: true
+                                });
+
+                                return {
+                                    ...multiTurnResult,
+                                    id: generationId,
+                                    sessionUid: sessionUid,
+                                    source: source,
+                                    duration: Date.now() - startTime,
+                                    tokenCount: Math.round((multiTurnResult.answer?.length || 0 + (multiTurnResult.reasoning?.length || 0)) / 4),
+                                    isMultiTurn: true,
+                                    status: 'DONE'
+                                };
+                            }
+
+                            const answer = deepResult.answer || "";
+                            const reasoning = deepResult.reasoning || "";
+                            return {
+                                ...deepResult,
+                                id: generationId,
+                                original_reasoning: originalReasoning,
+                                original_answer: originalAnswer,
+                                sessionUid: sessionUid,
+                                source: source,
+                                duration: Date.now() - startTime,
+                                tokenCount: Math.round((answer.length + reasoning.length) / 4),
+                                status: 'DONE'
+                            };
+                        }
+                    });
         } catch (err: any) {
             if (err.name === 'AbortError' && !didTimeout) {
                 if (haltedStreamingIdsRef.current.has(generationId)) {
@@ -1835,7 +2010,11 @@ export default function App() {
     // Sync all unsaved items from current session to Firebase
     const syncAllUnsavedToDb = async () => {
         if (!FirebaseService.isFirebaseConfigured()) {
-            alert("Firebase is not configured. Please configure Firebase in Settings to enable cloud sync.");
+            await confirmService.alert({
+                title: 'Firebase not configured',
+                message: 'Please configure Firebase in Settings to enable cloud sync.',
+                variant: 'warning'
+            });
             return;
         }
 
@@ -1843,12 +2022,22 @@ export default function App() {
         const unsavedLogs = allLogs.filter((l: SynthLogItem) => !l.savedToDb && !isInvalidLog(l));
 
         if (unsavedLogs.length === 0) {
-            alert("No unsaved items to sync.");
+            await confirmService.alert({
+                title: 'Nothing to sync',
+                message: 'No unsaved items to sync.',
+                variant: 'info'
+            });
             return;
         }
 
-        const confirm = window.confirm(`Sync ${unsavedLogs.length} unsaved items to Firebase?`);
-        if (!confirm) return;
+        const confirmSync = await confirmService.confirm({
+            title: 'Sync unsaved items?',
+            message: `Sync ${unsavedLogs.length} unsaved items to Firebase?`,
+            confirmLabel: 'Sync',
+            cancelLabel: 'Cancel',
+            variant: 'warning'
+        });
+        if (!confirmSync) return;
 
         let synced = 0;
         let failed = 0;
@@ -1870,7 +2059,11 @@ export default function App() {
 
         updateDbStats();
         refreshLogs();
-        alert(`Synced ${synced} items to Firebase.${failed > 0 ? ` ${failed} failed.` : ''}`);
+        await confirmService.alert({
+            title: 'Sync complete',
+            message: `Synced ${synced} items to Firebase.${failed > 0 ? ` ${failed} failed.` : ''}`,
+            variant: failed > 0 ? 'warning' : 'info'
+        });
     };
 
     // Count unsaved items in current session
@@ -1881,7 +2074,11 @@ export default function App() {
     // Save a single item to Firebase
     const saveItemToDb = async (id: string) => {
         if (!FirebaseService.isFirebaseConfigured()) {
-            alert("Firebase not configured!");
+            await confirmService.alert({
+                title: 'Firebase not configured',
+                message: 'Please configure Firebase in Settings to enable cloud sync.',
+                variant: 'warning'
+            });
             return;
         }
 
@@ -1900,7 +2097,11 @@ export default function App() {
             refreshLogs();
         } catch (e: any) {
             logger.warn(`Failed to save item ${id}:`, e);
-            alert(`Failed to save: ${e.message}`);
+            await confirmService.alert({
+                title: 'Save failed',
+                message: `Failed to save: ${e.message}`,
+                variant: 'danger'
+            });
         } finally {
             setSavingToDbIds((prev: Set<string>) => {
                 const next = new Set(prev);
@@ -1945,8 +2146,14 @@ export default function App() {
 
     const startGeneration = async (append = false) => {
         if (environment === 'production' && !FirebaseService.isFirebaseConfigured()) {
-            const confirm = window.confirm("Firebase is not configured. Production mode will not save data remotely. Continue anyway?");
-            if (!confirm) return;
+            const confirmContinue = await confirmService.confirm({
+                title: 'Firebase not configured',
+                message: 'Production mode will not save data remotely. Continue anyway?',
+                confirmLabel: 'Continue',
+                cancelLabel: 'Cancel',
+                variant: 'warning'
+            });
+            if (!confirmContinue) return;
         }
         if (!append) {
             // Determine source for session naming
@@ -2012,6 +2219,7 @@ export default function App() {
         setError(null);
         setIsRunning(true);
         abortControllerRef.current = new AbortController();
+        toast.info('Generation started');
 
         try {
             // Updated item structure to preserve original row context
@@ -2341,8 +2549,17 @@ export default function App() {
             };
 
             // Worker function that handles both prefetch and array modes
+            const waitIfPaused = async () => {
+                while (isPausedRef.current && !abortControllerRef.current?.signal.aborted) {
+                    await new Promise(r => setTimeout(r, 200));
+                }
+            };
+
             const worker = async (id: number) => {
                 while (true) {
+                    if (abortControllerRef.current?.signal.aborted) break;
+
+                    await waitIfPaused();
                     if (abortControllerRef.current?.signal.aborted) break;
 
                     let item: WorkItem | null = null;
@@ -2364,6 +2581,9 @@ export default function App() {
                     }
 
                     if (!item) break;
+
+                    await waitIfPaused();
+                    if (abortControllerRef.current?.signal.aborted) break;
 
                     const { originalQuestion, originalAnswer, originalReasoning } = extractOriginals(item.row);
 
@@ -2439,26 +2659,33 @@ export default function App() {
         streamingAbortControllersRef.current.forEach(controller => controller.abort());
         streamingAbortControllersRef.current.clear();
         haltedStreamingIdsRef.current.clear();
-        setStreamingConversations(new Map()); // Clear active streaming views
-        streamingConversationsRef.current.clear(); // Clear ref to prevent resurrection
+        streamingConversationsRef.current.clear();
+        bumpStreamingConversations(); // Clear active streaming views
         // Clean up prefetch manager
         if (prefetchManagerRef.current) {
             prefetchManagerRef.current.abort();
             prefetchManagerRef.current = null;
             setPrefetchState(null);
         }
+        setIsPaused(false);
         setIsRunning(false);
+        toast.warning('Generation stopped');
+    };
+
+    const pauseGeneration = () => {
+        setIsPaused(true);
+        toast.info('Generation paused');
+    };
+
+    const resumeGeneration = () => {
+        setIsPaused(false);
     };
 
     const handleDeleteLog = async (id: string) => {
         // 1. Check if it's a streaming conversation and remove it
-        if (streamingConversations.has(id) || streamingConversationsRef.current.has(id)) {
-            setStreamingConversations(prev => {
-                const next = new Map(prev);
-                next.delete(id);
-                return next;
-            });
+        if (streamingConversationsRef.current.has(id)) {
             streamingConversationsRef.current.delete(id);
+            bumpStreamingConversations();
         }
 
         // 2. Check if it's a visible log item
@@ -2492,33 +2719,77 @@ export default function App() {
 
     const exportJsonl = async () => {
         if (totalLogCount === 0) return;
-        // Export all logs from storage is better. But for now invalid.
-        // Let's load all logs (warning: memory!)
-        const confirm = window.confirm(`Exporting ${totalLogCount} logs. This might take a moment.`);
-        if (!confirm) return;
+        const confirmExport = await confirmService.confirm({
+            title: 'Export logs?',
+            message: `Exporting ${totalLogCount} logs. This might take a moment.`,
+            confirmLabel: 'Export',
+            cancelLabel: 'Cancel',
+            variant: 'warning'
+        });
+        if (!confirmExport) return;
 
-        console.log('[Export] Session UID:', sessionUid);
-        console.log('[Export] Total Log Count:', totalLogCount);
+        const fileName = `synth_dataset_${new Date().toISOString().slice(0, 10)}.jsonl`;
+        const anyWindow = window as any;
 
-        const allLogs = await LogStorageService.getAllLogs(sessionUid);
-        console.log('[Export] Retrieved logs:', allLogs.length);
+        try {
+            if (typeof anyWindow.showSaveFilePicker === 'function') {
+                const handle = await anyWindow.showSaveFilePicker({
+                    suggestedName: fileName,
+                    types: [
+                        {
+                            description: 'JSON Lines',
+                            accept: { 'application/x-jsonlines': ['.jsonl'] }
+                        }
+                    ]
+                });
 
-        if (allLogs.length === 0) {
-            alert('No logs found to export. Check console for details.');
-            return;
+                const writable = await handle.createWritable();
+                const encoder = new TextEncoder();
+                let buffer = '';
+                const MAX_BUFFER_CHARS = 256 * 1024; // 256KB
+
+                await LogStorageService.iterateLogs(sessionUid, async (log: SynthLogItem) => {
+                    buffer += JSON.stringify(log) + '\n';
+                    if (buffer.length >= MAX_BUFFER_CHARS) {
+                        await writable.write(encoder.encode(buffer));
+                        buffer = '';
+                    }
+                });
+
+                if (buffer.length > 0) {
+                    await writable.write(encoder.encode(buffer));
+                }
+
+                await writable.close();
+                toast.success('Exported with streaming writer');
+                return;
+            }
+        } catch (e: any) {
+            console.error('Streaming export failed, falling back to in-memory export:', e);
+            toast.warning('Streaming export failed; using fallback');
         }
 
-        // allLogs is SynthLogItem[] because getLogs returns array
+        // Fallback: in-memory export (older browsers)
+        const allLogs = await LogStorageService.getAllLogs(sessionUid);
+        if (allLogs.length === 0) {
+            await confirmService.alert({
+                title: 'No logs found',
+                message: 'No logs found to export. Check console for details.',
+                variant: 'warning'
+            });
+            return;
+        }
         const jsonl = allLogs.map((log: SynthLogItem) => JSON.stringify(log)).join('\n');
         const blob = new Blob([jsonl], { type: 'application/x-jsonlines' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `synth_dataset_${new Date().toISOString().slice(0, 10)}.jsonl`;
+        a.download = fileName;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        toast.info('Exported with fallback method');
     };
 
     const renderDeepPhaseConfig = (phaseId: keyof DeepConfig['phases'], title: string, icon: React.ReactNode) => {
@@ -2569,10 +2840,12 @@ export default function App() {
                         <div className="space-y-1">
                             <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
                             <ModelSelector
-                                provider={phase.provider === 'gemini' ? 'openai' : phase.externalProvider}
+                                provider={phase.provider === 'gemini' ? 'gemini' : phase.externalProvider}
                                 value={phase.model}
                                 onChange={(model) => updateDeepPhase(phaseId, { model })}
-                                apiKey={phase.apiKey || SettingsService.getApiKey(phase.externalProvider)}
+                                apiKey={phase.provider === 'gemini'
+                                    ? SettingsService.getApiKey('gemini')
+                                    : (phase.apiKey || SettingsService.getApiKey(phase.externalProvider))}
                                 customBaseUrl={phase.customBaseUrl}
                                 placeholder="Select or enter model"
                             />
@@ -2979,9 +3252,34 @@ export default function App() {
                                         )}
                                     </button>
                                 ) : (
-                                    <button onClick={stopGeneration} className="flex-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all">
-                                        <Pause className="w-4 h-4 fill-current" /> Stop
-                                    </button>
+                                    <div className="flex-1 flex gap-2">
+                                        {isPaused ? (
+                                            <button onClick={resumeGeneration} className="flex-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all">
+                                                <Play className="w-4 h-4 fill-current" /> Resume
+                                            </button>
+                                        ) : (
+                                            <button onClick={pauseGeneration} className="flex-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 py-3 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all">
+                                                <Pause className="w-4 h-4 fill-current" /> Pause
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => {
+                                                confirmService.confirm({
+                                                    title: 'Stop generation?',
+                                                    message: 'Are you sure you want to stop generation? In-flight items may be lost.',
+                                                    confirmLabel: 'Stop',
+                                                    cancelLabel: 'Cancel',
+                                                    variant: 'warning'
+                                                }).then((confirmStop) => {
+                                                    if (confirmStop) stopGeneration();
+                                                });
+                                            }}
+                                            className="w-12 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 py-3 rounded-lg font-bold text-sm flex items-center justify-center transition-all"
+                                            title="Stop"
+                                        >
+                                            <Square className="w-4 h-4 fill-current" />
+                                        </button>
+                                    </div>
                                 )}
                             </div>
 
@@ -2995,9 +3293,15 @@ export default function App() {
                             {/* New Session Button - visible when items exist */}
                             {!isRunning && totalLogCount > 0 && (
                                 <button onClick={() => {
-                                    if (window.confirm("This will clear the feed and analytics, and start a new session. Continue?")) {
-                                        startNewSession();
-                                    }
+                                    confirmService.confirm({
+                                        title: 'Start new session?',
+                                        message: 'This will clear the feed and analytics, and start a new session. Continue?',
+                                        confirmLabel: 'Start',
+                                        cancelLabel: 'Cancel',
+                                        variant: 'warning'
+                                    }).then((confirmStart) => {
+                                        if (confirmStart) startNewSession();
+                                    });
                                 }} className="w-full mt-2 bg-pink-600/20 hover:bg-pink-600/30 text-pink-400 border border-pink-600/30 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all">
                                     <Plus className="w-3.5 h-3.5" />New Session
                                 </button>
@@ -3203,10 +3507,12 @@ export default function App() {
                                                 </div>
                                             ) : (
                                                 <ModelSelector
-                                                    provider={provider === 'gemini' ? 'openai' : externalProvider}
+                                                    provider={provider === 'gemini' ? 'gemini' : externalProvider}
                                                     value={externalModel}
                                                     onChange={setExternalModel}
-                                                    apiKey={externalApiKey || SettingsService.getApiKey(externalProvider)}
+                                                    apiKey={provider === 'gemini'
+                                                        ? SettingsService.getApiKey('gemini')
+                                                        : (externalApiKey || SettingsService.getApiKey(externalProvider))}
                                                     customBaseUrl={customBaseUrl}
                                                     placeholder={provider === 'gemini' ? 'gemini-2.0-flash-exp' : 'Select or enter model'}
                                                 />
@@ -3921,7 +4227,8 @@ export default function App() {
                                 retryingIds={retryingIds}
                                 savingIds={savingToDbIds}
                                 isProdMode={environment === 'production'}
-                                streamingConversations={logFilter === 'live' ? streamingConversations : undefined}
+                                streamingConversations={logFilter === 'live' ? streamingConversationsRef.current : undefined}
+                                streamingVersion={streamingConversationsVersion}
                                 showLatestOnly={showLatestOnly}
                                 onShowLatestOnlyChange={setShowLatestOnly}
                             />
@@ -3945,6 +4252,7 @@ export default function App() {
 
             {/* Toast Notifications */}
             <ToastContainer />
+            <ConfirmModalContainer />
         </div>
     );
 }
