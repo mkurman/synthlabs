@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2 } from 'lucide-react';
-import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, WorkflowDefaults, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG, EMPTY_DEEP_DEFAULTS } from '../services/settingsService';
+import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG } from '../services/settingsService';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
-import { TaskClassifierService, TASK_PROMPT_MAPPING, TaskType } from '../services/taskClassifierService';
+import { TaskClassifierService, TASK_PROMPT_MAPPING } from '../services/taskClassifierService';
 import { PROVIDERS } from '../constants';
 import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaModel } from '../services/externalApiService';
 import ModelSelector from './ModelSelector';
@@ -155,9 +155,6 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
         setSettings(prev => ({ ...prev, [key]: value }));
     };
 
-    // All providers including Gemini and custom endpoint
-    // externalProviders now includes 'other' (custom endpoint) for Default Models dropdowns
-    const externalProviders = AVAILABLE_PROVIDERS;
     // All providers including Gemini for unified dropdowns (Gemini first)
     const allProviders = ['gemini', ...AVAILABLE_PROVIDERS];
     const allProvidersForKeys = ['gemini', ...AVAILABLE_PROVIDERS.filter(p => p !== 'other'), 'other'];
@@ -249,7 +246,6 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                         {allProvidersForKeys.map(provider => {
                                             const providerConfig = PROVIDERS[provider];
                                             const info = providerConfig || { name: provider, description: '' };
-                                            const baseUrl = providerConfig?.url || '';
                                             const envVarMap: Record<string, string | undefined> = {
                                                 'gemini': import.meta.env.VITE_GEMINI_API_KEY,
                                                 'openai': import.meta.env.VITE_OPENAI_API_KEY,

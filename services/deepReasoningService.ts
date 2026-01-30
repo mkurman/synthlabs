@@ -1,5 +1,6 @@
 
-import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, StreamChunkCallback, StreamPhase, LogItemStatus, ProviderType, ApiType } from '../types';
+import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, StreamChunkCallback, StreamPhase, LogItemStatus, ProviderType, ApiType, ChatRole } from '../types';
+import { PromptCategory, PromptRole } from '../interfaces/enums';
 import { JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../constants';
 import * as GeminiService from './geminiService';
 import * as ExternalApiService from './externalApiService';
@@ -26,13 +27,13 @@ interface DeepOrchestrationParams {
 
 // Map phase IDs to prompt schemas (loaded once)
 const PHASE_TO_SCHEMA: Record<string, () => import('../types').PromptSchema> = {
-  'meta': () => PromptService.getPromptSchema('generator', 'meta'),
-  'retrieval': () => PromptService.getPromptSchema('generator', 'retrieval'),
-  'derivation': () => PromptService.getPromptSchema('generator', 'derivation'),
-  'writer': () => PromptService.getPromptSchema('converter', 'writer'),
-  'rewriter': () => PromptService.getPromptSchema('converter', 'rewriter'),
-  'responder': () => PromptService.getPromptSchema('generator', 'responder'),
-  'userAgent': () => PromptService.getPromptSchema('generator', 'user_agent')
+  'meta': () => PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Meta),
+  'retrieval': () => PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Retrieval),
+  'derivation': () => PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Derivation),
+  'writer': () => PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Writer),
+  'rewriter': () => PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Rewriter),
+  'responder': () => PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Responder),
+  'userAgent': () => PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.UserAgent)
 };
 
 const executePhase = async (
@@ -482,7 +483,7 @@ interface MultiTurnOrchestrationParams {
 export const orchestrateMultiTurnConversation = async (
   params: MultiTurnOrchestrationParams
 ): Promise<SynthLogItem> => {
-  const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, promptSet, structuredOutput, stream, onStreamChunk } = params;
+  const { initialInput, initialQuery, initialResponse: preGeneratedResponse, initialReasoning: preGeneratedReasoning, userAgentConfig, responderConfig, signal, maxRetries, retryDelay, generationParams, structuredOutput, stream, onStreamChunk } = params;
   const startTime = Date.now();
   const MAX_MESSAGES_TO_STORE = 50;
 
@@ -524,7 +525,7 @@ export const orchestrateMultiTurnConversation = async (
   try {
     // Initial user message from the query (not the full reasoning trace)
     messages.push({
-      role: 'user',
+      role: ChatRole.User,
       content: displayQuery
     });
 
@@ -574,7 +575,7 @@ export const orchestrateMultiTurnConversation = async (
     }
 
     messages.push({
-      role: 'assistant',
+      role: ChatRole.Assistant,
       content: formatAssistantContent(firstResponse, firstReasoning),
       reasoning: firstReasoning
     });
@@ -613,7 +614,7 @@ export const orchestrateMultiTurnConversation = async (
       const followUpQuestion = followUpResult.follow_up_question || followUpResult.question || "Could you elaborate further?";
 
       messages.push({
-        role: 'user',
+        role: ChatRole.User,
         content: followUpQuestion
       });
 
@@ -648,7 +649,7 @@ export const orchestrateMultiTurnConversation = async (
       }
 
       messages.push({
-        role: 'assistant',
+        role: ChatRole.Assistant,
         content: formatAssistantContent(responseResult.answer || responseResult.reasoning || "Response generated.", responseResult.reasoning),
         reasoning: responseResult.reasoning
       });
@@ -973,7 +974,7 @@ ${outsideThinkContent}
       } else {
         // Use regular converter with schema-based approach
         if (regularModeConfig?.provider === 'gemini') {
-          const geminiPrompt = converterPrompt || PromptService.getSystemPrompt('converter', 'writer', promptSet, structuredOutput);
+          const geminiPrompt = converterPrompt || PromptService.getSystemPrompt(PromptCategory.Converter, PromptRole.Writer, promptSet, structuredOutput);
           const result = await GeminiService.generateGenericJSON(
             rewriteInput,
             geminiPrompt,
@@ -1108,7 +1109,7 @@ ${outsideThinkContent}
     // If any message rewrite failed, mark the result as an error
     if (hasError) {
       finalResult.isError = true;
-      finalResult.status = 'ERROR';
+      finalResult.status = LogItemStatus.ERROR;
       finalResult.error = errorMessages.join('; ');
     }
 

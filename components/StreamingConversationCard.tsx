@@ -1,7 +1,7 @@
 import React from 'react';
 import { User, Bot, Loader, ChevronDown, ChevronUp, Sparkles, X, Square } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
-import { ChatMessage, StreamingConversationState } from '../types';
+import { ChatMessage, StreamingConversationState, ChatRole } from '../types';
 
 interface StreamingConversationCardProps {
     /** Streaming conversation state from App.tsx */
@@ -246,7 +246,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
 
                 {/* Current user message (if we have one) */}
                 {currentUserMessage && phase !== 'idle' && (
-                    renderMessage({ role: 'user', content: currentUserMessage }, completedMessages.length)
+                    renderMessage({ role: ChatRole.User, content: currentUserMessage }, completedMessages.length)
                 )}
 
                 {/* Current assistant response - streaming */}

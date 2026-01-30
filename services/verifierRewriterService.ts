@@ -6,6 +6,7 @@ import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import * as PromptSchemaAdapter from './promptSchemaAdapter';
+import { PromptCategory, PromptRole } from '../interfaces/enums';
 
 // Streaming callback type for real-time content display
 export type RewriterStreamCallback = (chunk: string, accumulated: string) => void;
@@ -24,6 +25,7 @@ export interface RewriterConfig {
      * Contains prompt text and output field definitions.
      */
     promptSchema?: import('../types').PromptSchema;
+    systemPrompt?: string;
     generationParams?: GenerationParams;
     // Streaming options
     stream?: boolean;
@@ -309,7 +311,7 @@ export async function callRewriterAI(
             provider: config.externalProvider,
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
-            apiType: config.apiType || 'chat',
+            apiType: config.apiType || ApiType.Chat,
             customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
             promptSchema: schema,
             userPrompt,
@@ -380,7 +382,7 @@ export async function callRewriterAIStreaming(
             provider: config.externalProvider,
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
-            apiType: config.apiType || 'chat',
+            apiType: config.apiType || ApiType.Chat,
             customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
             promptSchema: schema,
             userPrompt,
@@ -395,6 +397,53 @@ export async function callRewriterAIStreaming(
 
         return typeof result === 'string' ? result : cleanResponse(result);
     }
+}
+
+/**
+ * Calls the AI service to rewrite content with a custom system prompt
+ * Supports streaming for external providers
+ */
+export async function callRewriterAIStreamingWithSystemPrompt(
+    systemPrompt: string,
+    userPrompt: string,
+    config: RewriterConfig,
+    onChunk: RewriterStreamCallback,
+    signal?: AbortSignal
+): Promise<string> {
+    if (config.provider === 'gemini') {
+        const result = await GeminiService.generateReasoningTrace(
+            userPrompt,
+            systemPrompt,
+            {
+                maxRetries: config.maxRetries ?? 2,
+                retryDelay: config.retryDelay ?? 1000,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams()
+            }
+        );
+        const rawText = result.answer || result.reasoning || String(result);
+        const cleaned = cleanResponse(rawText);
+        onChunk(cleaned, cleaned);
+        return cleaned;
+    }
+
+    const result = await ExternalApiService.callExternalApi({
+        provider: config.externalProvider,
+        apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
+        model: config.model,
+        apiType: config.apiType || ApiType.Chat,
+        customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+        systemPrompt,
+        userPrompt,
+        signal,
+        maxRetries: config.maxRetries ?? 2,
+        retryDelay: config.retryDelay ?? 1000,
+        generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
+        structuredOutput: false,
+        stream: true,
+        onStreamChunk: (chunk, accumulated) => onChunk(chunk, accumulated)
+    });
+
+    return typeof result === 'string' ? result : cleanResponse(result);
 }
 
 /**
@@ -425,7 +474,7 @@ async function callRewriterAIRaw(
             provider: config.externalProvider,
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
-            apiType: config.apiType || 'chat', // Pass API type (defaults to 'chat')
+            apiType: config.apiType || ApiType.Chat, // Pass API type (defaults to 'chat')
             customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
             systemPrompt,
             userPrompt,
@@ -447,8 +496,12 @@ export async function rewriteField(params: RewriteFieldParams): Promise<string> 
     const { item, field, config, signal, promptSet } = params;
 
     // Load schema if not already in config
-    const promptName = `${field}_rewrite`;
-    const schema = config.promptSchema || PromptService.getPromptSchema('verifier', promptName, promptSet);
+    const promptRole = field === 'query'
+        ? PromptRole.QueryRewrite
+        : field === 'reasoning'
+            ? PromptRole.ReasoningRewrite
+            : PromptRole.AnswerRewrite;
+    const schema = config.promptSchema || PromptService.getPromptSchema(PromptCategory.Verifier, promptRole, promptSet);
     const enhancedConfig: RewriterConfig = {
         ...config,
         promptSchema: schema,
@@ -470,8 +523,12 @@ export async function rewriteFieldStreaming(
 ): Promise<string> {
     const { item, field, config, signal, promptSet } = params;
 
-    const promptName = `${field}_rewrite`;
-    const schema = config.promptSchema || PromptService.getPromptSchema('verifier', promptName, promptSet);
+    const promptRole = field === 'query'
+        ? PromptRole.QueryRewrite
+        : field === 'reasoning'
+            ? PromptRole.ReasoningRewrite
+            : PromptRole.AnswerRewrite;
+    const schema = config.promptSchema || PromptService.getPromptSchema(PromptCategory.Verifier, promptRole, promptSet);
     const enhancedConfig: RewriterConfig = {
         ...config,
         promptSchema: schema,
@@ -492,7 +549,7 @@ export async function rewriteMessage(params: RewriteMessageParams): Promise<stri
         throw new Error('Invalid message index or no messages in item');
     }
 
-    const schema = config.promptSchema || PromptService.getPromptSchema('verifier', 'message_rewrite', promptSet);
+    const schema = config.promptSchema || PromptService.getPromptSchema(PromptCategory.Verifier, PromptRole.MessageRewrite, promptSet);
     const enhancedConfig: RewriterConfig = {
         ...config,
         promptSchema: schema,
@@ -523,7 +580,7 @@ Keep the existing reasoning trace exactly as provided.`;
 
     const userPrompt = buildMessageContextForTarget(item, messageIndex, 'answer');
 
-    const result = await callRewriterAIStreaming(systemPrompt, userPrompt, config, onChunk, signal);
+    const result = await callRewriterAIStreamingWithSystemPrompt(systemPrompt, userPrompt, config, onChunk, signal);
     return result.trim();
 }
 
@@ -545,7 +602,7 @@ Given a conversation and a target message, regenerate BOTH the reasoning process
 
     const userPrompt = buildMessageContextForTarget(item, messageIndex, 'both');
 
-    const result = await callRewriterAIStreaming(systemPrompt, userPrompt, config, onChunk, signal);
+    const result = await callRewriterAIStreamingWithSystemPrompt(systemPrompt, userPrompt, config, onChunk, signal);
     return result.trim();
 }
 
@@ -599,7 +656,7 @@ The answer must remain EXACTLY as provided - do not modify it.`;
 
     const userPrompt = buildMessageContextForTarget(item, messageIndex, 'reasoning');
 
-    const result = await callRewriterAIStreaming(systemPrompt, userPrompt, config, onChunk, signal);
+    const result = await callRewriterAIStreamingWithSystemPrompt(systemPrompt, userPrompt, config, onChunk, signal);
     return result.trim();
 }
 

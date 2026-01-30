@@ -5,7 +5,6 @@ import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import StreamingConversationCard from './StreamingConversationCard';
 import { SynthLogItem, StreamingConversationState } from '../types';
-import { confirmService } from '../services/confirmService';
 
 interface LogFeedProps {
   logs: SynthLogItem[];

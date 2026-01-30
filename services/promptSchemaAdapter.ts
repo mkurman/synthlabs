@@ -12,9 +12,7 @@
 import { PromptSchema, ParsedSchemaOutput, OutputField } from '../types';
 import { JSON_OUTPUT_FALLBACK } from '../constants';
 import { PromptService } from './promptService';
-
-// Export the schema types for AI services
-type PromptCategory = 'generator' | 'converter' | 'verifier';
+import { PromptCategory, PromptRole } from '../interfaces/enums';
 
 /**
  * Convert PromptSchema output fields to OpenAI-compatible JSON schema
@@ -107,7 +105,7 @@ export function getResponsesSchemaName(
  */
 export function getPromptWithSchema(
     category: PromptCategory,
-    role: string,
+    role: PromptRole,
     forceSetId?: string
 ): { prompt: string; schema: PromptSchema; jsonSchema: Record<string, any> | null } {
     const schema = PromptService.getPromptSchema(category, role, forceSetId);
@@ -179,7 +177,7 @@ export function parseAndValidateResponse(
  */
 export function parseResponseWithSchema(
     category: PromptCategory,
-    role: string,
+    role: PromptRole,
     response: string | Record<string, any>,
     forceSetId?: string
 ): ParsedSchemaOutput {
@@ -255,7 +253,7 @@ export function getJsonOutputInstruction(schema: PromptSchema, format: 'compact'
  */
 export function getEnhancedPrompt(
     category: PromptCategory,
-    role: string,
+    role: PromptRole,
     forceSetId?: string,
     structuredOutput: boolean = true
 ): { systemPrompt: string; schema: PromptSchema; jsonSchema: Record<string, any> | null } {

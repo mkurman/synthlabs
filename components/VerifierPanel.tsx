@@ -18,7 +18,6 @@ import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsServic
 import ReasoningHighlighter from './ReasoningHighlighter';
 import ConversationView from './ConversationView';
 import ChatPanel from './ChatPanel';
-import { PromptService } from '../services/promptService';
 import { ToolExecutor } from '../services/toolService';
 import AutoResizeTextarea from './AutoResizeTextarea';
 import { AutoscoreConfig } from '../types';
@@ -28,7 +27,6 @@ import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import GenerationParamsInput from './GenerationParamsInput';
 
 interface VerifierPanelProps {
-    onImportFromDb: () => Promise<void>;
     currentSessionUid: string;
     modelConfig: {
         provider: 'gemini' | 'external';
@@ -39,7 +37,7 @@ interface VerifierPanelProps {
     };
 }
 
-export default function VerifierPanel({ onImportFromDb, currentSessionUid, modelConfig }: VerifierPanelProps) {
+export default function VerifierPanel({ currentSessionUid, modelConfig }: VerifierPanelProps) {
     const [data, setData] = useState<VerifierItem[]>([]);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [dataSource, setDataSource] = useState<'file' | 'db' | null>(null);
@@ -167,7 +165,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
 
     // Refs for ToolExecutor content access (must be declared at component level)
     const autoSaveEnabledRef = useRef(autoSaveEnabled);
-    const handleDbUpdateRef = useRef<((item: VerifierItem) => Promise<void>) | null>(null);
+    const handleDbUpdateRef = useRef<((item: VerifierItem) => Promise<void>) | undefined>(undefined);
 
     // Sync refs on render
     useEffect(() => {

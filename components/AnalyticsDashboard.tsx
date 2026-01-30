@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { SynthLogItem } from '../types';
 import { Clock, Zap, FileText, Activity, BarChart3, PieChart } from 'lucide-react';
 

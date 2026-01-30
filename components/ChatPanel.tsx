@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import {
     Bot, Sparkles,
-    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, Brain, RotateCcw, Sliders
+    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, Brain, RotateCcw
 } from 'lucide-react';
-import { GenerationParams } from '../types';
 import { ChatService } from '../services/chatService';
 import { ChatMessage } from '../types';
 import { ChatStorageService } from '../services/chatStorageService';
@@ -143,9 +142,6 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
     const [showModelSelector, setShowModelSelector] = useState(false);
 
-    // Generation Params Override
-    const [generationParamsOverride, setGenerationParamsOverride] = useState<GenerationParams | null>(null);
-    const [showGenParams, setShowGenParams] = useState(false);
     const allProviders = ['gemini', ...AVAILABLE_PROVIDERS];
 
     const handleProviderChange = (newProvider: string) => {

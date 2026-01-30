@@ -1,12 +1,11 @@
 import React from 'react';
 import { DeepPhaseConfig } from '../types';
-import { DeepPhase, ExternalProvider, ProviderType, ApiType } from '../interfaces/enums';
+import { ExternalProvider, ProviderType, ApiType } from '../interfaces/enums';
 import { SettingsService } from '../services/settingsService';
 import { EXTERNAL_PROVIDERS } from '../constants';
 import ModelSelector from './ModelSelector';
 
 interface DeepPhaseConfigPanelProps {
-  phaseId: DeepPhase;
   title: string;
   icon: React.ReactNode;
   phase: DeepPhaseConfig;
@@ -15,7 +14,6 @@ interface DeepPhaseConfigPanelProps {
 }
 
 export default function DeepPhaseConfigPanel({
-  phaseId,
   title,
   icon,
   phase,

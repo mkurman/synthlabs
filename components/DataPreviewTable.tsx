@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Maximize2, Minimize2, X, Table, ChevronLeft, ChevronRight, Search, Columns } from 'lucide-react';
 import ConversationView from './ConversationView';
+import { ChatMessage } from '../types';
 
 interface DataPreviewTableProps {
     rawText: string;
@@ -30,7 +31,7 @@ function getColumnType(values: unknown[]): ColumnInfo['type'] {
     const types = new Set(values.map(v => detectType(v)));
     types.delete('null'); // Ignore nulls for type detection
     if (types.size === 0) return 'null';
-    if (types.size === 1) return types.values().next().value;
+    if (types.size === 1) return (types.values().next().value ?? 'mixed') as ColumnInfo['type'];
     return 'mixed';
 }
 
@@ -55,7 +56,7 @@ function formatCellValue(value: unknown): string {
     return String(value);
 }
 
-export default function DataPreviewTable({ rawText, onClose }: DataPreviewTableProps) {
+export default function DataPreviewTable({ rawText }: DataPreviewTableProps) {
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
@@ -213,7 +214,7 @@ export default function DataPreviewTable({ rawText, onClose }: DataPreviewTableP
         if (!selectedRow) return null;
 
         // Check if this row has messages array
-        const messages = selectedRow.messages as Array<{ role: string; content: string }> | undefined;
+        const messages = selectedRow.messages as ChatMessage[] | undefined;
 
         return (
             <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">

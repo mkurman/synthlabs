@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Settings, ChevronDown, ChevronRight, RefreshCcw, HelpCircle } from 'lucide-react';
 import { GenerationParams } from '../types';
 
