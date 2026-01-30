@@ -4,7 +4,7 @@ import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, WorkflowDefaults, St
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING, TaskType } from '../services/taskClassifierService';
-import { PROVIDER_URLS } from '../constants';
+import { PROVIDERS } from '../constants';
 import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaModel } from '../services/externalApiService';
 import ModelSelector from './ModelSelector';
 import { ModelListProvider } from '../types';
@@ -15,25 +15,7 @@ interface SettingsPanelProps {
     onSettingsChanged?: () => void;
 }
 
-// Provider display names and descriptions
-const PROVIDER_INFO: Record<string, { name: string; description: string }> = {
-    'gemini': { name: 'Google Gemini', description: 'Primary provider (env: VITE_GEMINI_API_KEY)' },
-    'openai': { name: 'OpenAI', description: 'GPT-4, GPT-3.5, etc.' },
-    'anthropic': { name: 'Anthropic', description: 'Claude models' },
-    'openrouter': { name: 'OpenRouter', description: 'Multi-model router' },
-    'together': { name: 'Together AI', description: 'Open-source models' },
-    'groq': { name: 'Groq', description: 'Ultra-fast inference' },
-    'cerebras': { name: 'Cerebras', description: 'High-performance AI' },
-    'featherless': { name: 'Featherless', description: 'Serverless inference' },
-    'qwen': { name: 'Qwen', description: 'Alibaba Qwen models' },
-    'qwen-deepinfra': { name: 'Qwen (DeepInfra)', description: 'Qwen via DeepInfra' },
-    'kimi': { name: 'Kimi (Moonshot)', description: 'Moonshot AI' },
-    'z.ai': { name: 'Z.AI', description: 'Z.AI platform' },
-    'ollama': { name: 'Ollama', description: 'Local models (no key needed)' },
-    'chutes': { name: 'Chutes', description: 'Chutes LLM API' },
-    'huggingface': { name: 'HuggingFace Inference', description: 'HF Inference API' },
-    'other': { name: 'Custom Endpoint', description: 'Your own OpenAI-compatible API' },
-};
+
 
 export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: SettingsPanelProps) {
     const [settings, setSettings] = useState<AppSettings>({ providerKeys: {} });
@@ -265,8 +247,9 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     </p>
                                     <div className="space-y-2 h-full overflow-y-auto pr-1">
                                         {allProvidersForKeys.map(provider => {
-                                            const info = PROVIDER_INFO[provider] || { name: provider, description: '' };
-                                            const baseUrl = PROVIDER_URLS[provider] || '';
+                                            const providerConfig = PROVIDERS[provider];
+                                            const info = providerConfig || { name: provider, description: '' };
+                                            const baseUrl = providerConfig?.url || '';
                                             const envVarMap: Record<string, string | undefined> = {
                                                 'gemini': import.meta.env.VITE_GEMINI_API_KEY,
                                                 'openai': import.meta.env.VITE_OPENAI_API_KEY,
@@ -470,7 +453,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
@@ -559,7 +542,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
@@ -609,7 +592,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
-                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                                     ))}
                                                                 </select>
                                                                 {/* API Type dropdown for external providers */}
@@ -676,7 +659,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
@@ -726,7 +709,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
-                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                                     ))}
                                                                 </select>
                                                                 {/* API Type dropdown for external providers */}

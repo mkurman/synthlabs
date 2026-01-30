@@ -1,4 +1,0 @@
-Rewrite the ANSWER to be clear, concise, and responsive to the query.
-Preserve factual content.
-
-Return only: {"response": "[rewritten answer]"}

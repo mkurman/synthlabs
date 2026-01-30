@@ -25,3 +25,11 @@ release
 *.sln
 *.sw?
 pnpm-lock*
+.agent
+.cache
+.agents
+.claude
+.codex
+.factory
+.github
+.opencode

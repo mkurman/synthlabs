@@ -8,7 +8,7 @@ import {
     ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2, Save,
     Sparkles
 } from 'lucide-react';
-import { VerifierItem, ExternalProvider } from '../types';
+import { VerifierItem, ExternalProvider, ProviderType } from '../types';
 import * as FirebaseService from '../services/firebaseService';
 import * as HuggingFaceService from '../services/huggingFaceService';
 import * as VerifierRewriterService from '../services/verifierRewriterService';
@@ -113,7 +113,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
             customBaseUrl: '',
             maxRetries: 3,
             retryDelay: 2000,
-            systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite'),
+            promptCategory: 'verifier', promptRole: 'message_rewrite',
             concurrency: 1,
             delayMs: 0,
             generationParams: SettingsService.getDefaultGenerationParams()
@@ -142,7 +142,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
             apiKey: '',
             model: gpModel?.model || 'gemini-1.5-pro',
             customBaseUrl: '',
-            systemPrompt: PromptService.getPrompt('verifier', 'autoscore'),
+            promptCategory: 'verifier', promptRole: 'autoscore',
             concurrency: 5,
             sleepTime: 0,
             maxRetries: 3,
@@ -811,12 +811,12 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
 
         try {
             console.log('Calling query rewrite streaming...');
-            const systemPrompt = rewriterConfig.systemPrompt || `You are an expert at improving and clarifying user queries. 
+            const userPrompt = `You are an expert at improving and clarifying user queries. 
 Given a user's question or request, rewrite it to be clearer, more specific, and better structured.
 Preserve the original intent while improving clarity.
-Return ONLY the improved query text.`;
+Return ONLY the improved query text.
 
-            const userPrompt = `Rewrite and improve this user query:
+Rewrite and improve this user query:
 
 ${targetMessage.content}
 
@@ -829,10 +829,9 @@ Expected Output Format:
 
             // Direct streaming call
             const newValue = await VerifierRewriterService.callRewriterAIStreaming(
-                systemPrompt,
                 userPrompt,
                 rewriterConfig,
-                (_chunk, accumulated) => {
+                (_chunk: string, accumulated: string) => {
                     // Try to extract from JSON if LLM returns JSON
                     const extracted = extractJsonFields(accumulated);
                     if (extracted.answer) {
@@ -1283,10 +1282,12 @@ Expected Output Format:
     // --- Logic: Autoscore ---
 
     const autoscoreSingleItem = async (item: VerifierItem, signal?: AbortSignal): Promise<number> => {
-        const { provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt, maxRetries, retryDelay, generationParams } = autoscoreConfig;
+        const { provider, externalProvider, apiKey, model, customBaseUrl, maxRetries, retryDelay, generationParams } = autoscoreConfig;
 
-        const effectiveApiKey = apiKey || SettingsService.getApiKey(provider === 'external' ? externalProvider : 'gemini');
+        const effectiveApiKey = apiKey || SettingsService.getApiKey(provider === ProviderType.External ? externalProvider : ProviderType.Gemini);
         const effectiveBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
+
+        const systemPrompt = `You are an expert evaluator. Score the quality of the reasoning and answer on a scale of 1-5, where 1 is poor and 5 is excellent.`;
 
         const userPrompt = `## ITEM TO SCORE
 Query: ${item.query || (item as any).QUERY || item.full_seed || ''}
@@ -1298,7 +1299,7 @@ Based on the criteria above, provide a 1-5 score.`;
 
         let rawResult: string = '';
 
-        if (provider === 'gemini') {
+        if (provider === ProviderType.Gemini) {
             const result = await GeminiService.generateReasoningTrace(userPrompt, systemPrompt, {
                 maxRetries: maxRetries,
                 retryDelay: retryDelay,
@@ -1311,8 +1312,7 @@ Based on the criteria above, provide a 1-5 score.`;
                 apiKey: effectiveApiKey,
                 model: model,
                 customBaseUrl: effectiveBaseUrl,
-                systemPrompt,
-                userPrompt,
+                userPrompt: systemPrompt + "\n\n" + userPrompt,
                 signal,
                 maxRetries: maxRetries,
                 retryDelay: retryDelay,
@@ -1919,24 +1919,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                         />
                                     </div>
                                 </div>
-                                <div className="col-span-1 md:col-span-4">
-                                    <details className="group">
-                                        <summary className="flex items-center gap-2 cursor-pointer list-none text-[10px] text-slate-500 font-bold uppercase mb-1 select-none">
-                                            <span>System Prompt (optional)</span>
-                                            <span className="text-slate-600 group-open:rotate-90 transition-transform">▶</span>
-                                        </summary>
-                                        <textarea
-                                            value={rewriterConfig.systemPrompt || ''}
-                                            onChange={e => setRewriterConfig(prev => ({ ...prev, systemPrompt: e.target.value }))}
-                                            placeholder="Leave empty to use default prompt from selected prompt set..."
-                                            className="w-full h-32 bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300 rounded px-2 py-1.5 outline-none focus:border-teal-500 resize-y mt-1"
-                                            spellCheck={false}
-                                        />
-                                        <p className="text-[9px] text-slate-600 mt-1">
-                                            Custom prompt overrides the verifier rewrite prompts from PromptService
-                                        </p>
-                                    </details>
-                                </div>
+
                             </div>
                         )}
                     </div>
@@ -1958,19 +1941,19 @@ Based on the criteria above, provide a 1-5 score.`;
                                 <div>
                                     <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Provider</label>
                                     <select
-                                        value={autoscoreConfig.provider === 'external' ? autoscoreConfig.externalProvider : 'gemini'}
+                                        value={autoscoreConfig.provider === ProviderType.External ? autoscoreConfig.externalProvider : ProviderType.Gemini}
                                         onChange={e => {
                                             const val = e.target.value;
-                                            const isExt = val !== 'gemini';
+                                            const isExt = val !== ProviderType.Gemini;
                                             setAutoscoreConfig(prev => ({
                                                 ...prev,
-                                                provider: isExt ? 'external' : 'gemini',
+                                                provider: isExt ? ProviderType.External : ProviderType.Gemini,
                                                 externalProvider: isExt ? val as ExternalProvider : prev.externalProvider
                                             }));
                                         }}
                                         className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
                                     >
-                                        <option value="gemini">Gemini</option>
+                                        <option value={ProviderType.Gemini}>Gemini</option>
                                         {AVAILABLE_PROVIDERS.map(p => (
                                             <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
                                         ))}
@@ -2029,18 +2012,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                     </div>
                                 </div>
                                 <div className="col-span-1 md:col-span-4">
-                                    <details className="group">
-                                        <summary className="flex items-center gap-2 cursor-pointer list-none text-[10px] text-slate-500 font-bold uppercase mb-1 select-none">
-                                            <span>Scoring Prompt</span>
-                                            <span className="text-slate-600 group-open:rotate-90 transition-transform">▶</span>
-                                        </summary>
-                                        <textarea
-                                            value={autoscoreConfig.systemPrompt}
-                                            onChange={e => setAutoscoreConfig(prev => ({ ...prev, systemPrompt: e.target.value }))}
-                                            className="w-full h-32 bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300 rounded px-2 py-1.5 outline-none focus:border-emerald-500 resize-y mt-1"
-                                            spellCheck={false}
-                                        />
-                                    </details>
+
                                 </div>
                                 <div className="col-span-1 md:col-span-4 border-t border-slate-800 pt-4">
                                     <GenerationParamsInput

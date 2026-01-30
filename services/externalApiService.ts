@@ -1,9 +1,9 @@
 
 import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase, ApiType } from '../types';
-import { PROVIDER_URLS } from '../constants';
+import { PROVIDERS, JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../constants';
 import { logger } from '../utils/logger';
-import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import { SettingsService } from './settingsService';
+import { jsonrepair } from 'json-repair-js';
 
 // JSON Schema definitions for Responses API structured outputs
 export const RESPONSES_API_SCHEMAS = {
@@ -105,8 +105,11 @@ export interface ExternalApiConfig {
   model: string;
   apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
   customBaseUrl?: string;
-  systemPrompt: string;
   userPrompt: string;
+  /**
+   * System prompt to use. If not provided, falls back to promptSchema or default.
+   */
+  systemPrompt?: string;
   messages?: any[]; // Allow passing full history
   signal?: AbortSignal;
   maxRetries?: number;
@@ -115,6 +118,11 @@ export interface ExternalApiConfig {
   structuredOutput?: boolean;
   // For Responses API structured output - specifies which schema to use
   responsesSchema?: ResponsesSchemaName;
+  /**
+   * The prompt schema object. Contains prompt text and output field definitions.
+   * When provided, the system prompt is built from this schema.
+   */
+  promptSchema?: import('../types').PromptSchema;
   // Streaming support
   stream?: boolean;
   onStreamChunk?: StreamChunkCallback;
@@ -127,6 +135,41 @@ export interface ExternalApiConfig {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * Generate JSON Schema to append to system prompt
+ * when using json_object response format without native schema support
+ */
+function generateJsonSchemaForPrompt(
+  outputFields?: { name: string; description: string; optional?: boolean }[]
+): string {
+  if (!outputFields || outputFields.length === 0) {
+    return '\n\n' + JSON_OUTPUT_FALLBACK;
+  }
+
+  // Build proper JSON Schema
+  const properties: Record<string, any> = {};
+  const required: string[] = [];
+
+  for (const field of outputFields) {
+    properties[field.name] = {
+      type: 'string',
+      description: field.description
+    };
+    if (!field.optional) {
+      required.push(field.name);
+    }
+  }
+
+  const schema = {
+    type: 'object',
+    properties,
+    required,
+    additionalProperties: true
+  };
+
+  return '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify(schema);
+}
+
 // Helper to parse SSE stream and extract content chunks
 // Helper to parse SSE stream and extract content chunks
 async function processStreamResponse(
@@ -134,7 +177,7 @@ async function processStreamResponse(
   provider: ExternalProvider,
   onChunk: (chunk: string, accumulated: string, usage?: any) => void,
   signal?: AbortSignal,
-  apiType: ApiType = 'chat'
+  apiType: ApiType = ApiType.Chat
 ): Promise<string> {
   console.log('🔴 externalApiService: processStreamResponse STARTED', { apiType });
   const reader = response.body?.getReader();
@@ -357,14 +400,44 @@ async function processStreamResponse(
 
 export const callExternalApi = async (config: ExternalApiConfig): Promise<any> => {
   const {
-    provider, apiKey, model, apiType = 'chat', customBaseUrl, systemPrompt, userPrompt, signal,
+    provider, apiKey, model, apiType = ApiType.Chat, customBaseUrl, userPrompt, signal,
     maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
-    responsesSchema = 'reasoningTrace', stream = false, onStreamChunk, streamPhase, tools
+    responsesSchema = 'reasoningTrace', stream = false, onStreamChunk, streamPhase, tools,
+    promptSchema
   } = config;
 
-  let baseUrl = provider === 'other' ? customBaseUrl : PROVIDER_URLS[provider];
+  let baseUrl = provider === 'other' ? customBaseUrl : PROVIDERS[provider]?.url;
   let responseFormat = structuredOutput ? 'json_object' : 'text';
-  
+
+  // Build system prompt from schema if provided
+  let enhancedSystemPrompt: string;
+
+  if (config.systemPrompt) {
+    // Direct system prompt provided
+    if (structuredOutput) {
+      enhancedSystemPrompt = config.systemPrompt + generateJsonSchemaForPrompt();
+    } else {
+      enhancedSystemPrompt = config.systemPrompt + '\n\n' + JSON_OUTPUT_FALLBACK;
+    }
+  } else if (promptSchema) {
+    // Use schema directly - no lookup needed!
+    if (structuredOutput) {
+      // With structured output: use clean prompt + JSON schema appended
+      enhancedSystemPrompt = promptSchema.prompt + generateJsonSchemaForPrompt(promptSchema.output);
+    } else {
+      // Without structured output: use prompt with JSON instruction
+      const example: Record<string, string> = {};
+      for (const field of promptSchema.output || []) {
+        const suffix = field.optional ? ' (optional)' : '';
+        example[field.name] = field.description.substring(0, 50) + (field.description.length > 50 ? '...' : '') + suffix;
+      }
+      enhancedSystemPrompt = promptSchema.prompt + '\n\nOutput valid JSON only: ' + JSON.stringify(example);
+    }
+  } else {
+    // Fallback: no schema provided
+    enhancedSystemPrompt = '\n\n' + JSON_OUTPUT_FALLBACK;
+  }
+
   // Determine if using Responses API
   const isResponsesApi = apiType === 'responses';
 
@@ -431,7 +504,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     payload = {
       model,
       ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
-      system: systemPrompt,
+      system: enhancedSystemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
       temperature: cleanGenParams.temperature,
       top_p: cleanGenParams.top_p,
@@ -451,7 +524,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       // For other providers, try to construct proper endpoint
       url = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/chat\/completions$/, '')}/v1/responses`;
     }
-    
+
     // Build input for Responses API
     // The input can be a simple string or an array of input items
     // Input items for Responses API have specific types: message, file, etc.
@@ -481,28 +554,28 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
 
     // Get the appropriate schema for structured output
     const schema = structuredOutput ? RESPONSES_API_SCHEMAS[responsesSchema] : null;
-    
+
     payload = {
       model,
       input,
       // System instructions go in 'instructions' field, not in messages
-      ...(systemPrompt ? { instructions: systemPrompt } : {}),
+      ...(enhancedSystemPrompt ? { instructions: enhancedSystemPrompt } : {}),
       ...(config.maxTokens ? { max_output_tokens: config.maxTokens } : {}),
-      ...(schema ? { 
-        text: { 
+      ...(schema ? {
+        text: {
           format: {
             type: 'json_schema',
             name: schema.name,
             description: schema.description,
             schema: schema.schema,
             strict: schema.strict
-          } 
-        } 
+          }
+        }
       } : undefined),
       stream: shouldStream,
       ...cleanGenParams
     };
-    
+
     // Remove undefined values
     Object.keys(payload).forEach(key => {
       if (payload[key] === undefined) delete payload[key];
@@ -510,8 +583,9 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   } else {
     // Standard chat completions API
     url = baseUrl;
+
     const finalMessages = config.messages || [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: enhancedSystemPrompt },
       { role: 'user', content: userPrompt }
     ];
 
@@ -601,7 +675,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         // Responses API returns output array with content
         const output = data.output || [];
         const messageOutput = output.find((o: any) => o.type === 'message') || output[0];
-        
+
         let rawContent = '';
         if (messageOutput?.content) {
           // Content can be an array of content parts
@@ -614,7 +688,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
             rawContent = messageOutput.content;
           }
         }
-        
+
         // Fallback to text field if available
         if (!rawContent && data.text) {
           rawContent = typeof data.text === 'string' ? data.text : JSON.stringify(data.text);
@@ -628,7 +702,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         if (!structuredOutput) {
           return rawContent;
         }
-        
+
         // Parse JSON content for structured output
         const parsed = parseJsonContent(rawContent);
         return parsed;
@@ -706,8 +780,7 @@ export const generateSyntheticSeeds = async (
   try {
     const result = await callExternalApi({
       ...baseConfig,
-      systemPrompt: "You are a high-fidelity synthetic data generator. You output strict JSON arrays of strings.",
-      userPrompt: prompt
+      userPrompt: "You are a high-fidelity synthetic data generator. You output strict JSON arrays of strings.\n\n" + prompt
     });
 
     // Handle cases where the model might return { "seeds": [...] } instead of just [...]

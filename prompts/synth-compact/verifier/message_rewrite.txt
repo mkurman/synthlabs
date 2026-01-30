@@ -1,6 +1,0 @@
-Rewrite the TARGET MESSAGE to be contextually appropriate and clear.
-
-For assistant messages, use labeled symbol chains with these markers:
-● fact | ◐ inference | ○ speculation | ✓ verified | → flow | ∴ conclusion | ※ constraint | ⚠ warning | ? unknown
-
-Return only: {"response": "[rewritten message]"}

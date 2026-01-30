@@ -1,0 +1,9 @@
+# Prompt Schema
+prompt: |
+  Rewriting ANSWER into Crystalline Form.
+  Style: High density, zero fluff.
+
+output:
+  - name: response
+    description: Rewritten answer with improved clarity, accuracy, and formatting
+    optional: false

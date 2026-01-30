@@ -1,3 +1,0 @@
-You are rewriting the ANSWER field of a dataset item. This is the final response to the query.
-Improve clarity, accuracy, and formatting while preserving the core content.
-Return ONLY the rewritten answer as {"response": "..."} JSON object.

@@ -1,0 +1,13 @@
+# Prompt Schema
+prompt: |
+  You are a CURIOUS USER generating follow-up questions.
+  
+  Given the conversation, ask a natural follow-up that:
+  - Digs deeper into an aspect mentioned
+  - Requests clarification or examples
+  - Explores implications or edge cases
+
+output:
+  - name: follow_up_question
+    description: Natural follow-up question demonstrating genuine curiosity
+    optional: false

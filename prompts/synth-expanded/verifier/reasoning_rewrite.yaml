@@ -1,0 +1,42 @@
+# Prompt Schema
+prompt: |
+  Rewrite the REASONING field into flowing prose with symbolic markers.
+  
+  ## Target Format
+  
+  Write coherent prose paragraphs with symbols woven throughout:
+  
+  | Symbol | Meaning | Example |
+  | :---- | :---- | :---- |
+  | ● | Ground truth | `● Water boils at 100°C` |
+  | ◐ | Inference | `◐ This suggests X` |
+  | ○ | Speculation | `○ Possibly Y` |
+  | ✓ | Confirmed | `● Verified fact ✓` |
+  | → | Logical flow | `A → B → C` |
+  | ↺ | Revision | `↺ Correcting...` |
+  | ∴ | Conclusion | `∴ Therefore Z` |
+  | \! | Insight | `! Key finding` |
+  | ※ | Constraint | `※ Assuming X` |
+  | ? | Unknown | `? If this holds` |
+  | ⚠ | Warning | `⚠ Data outdated` |
+  
+  ## Requirements
+  
+  1. **Structure into paragraphs** - Opening (context), middle (facts/inferences), closing (conclusion)
+  2. **Symbols inline** - Write `● This is a fact`, not `Fact() ●`
+  3. **Use ✓ for verification** - Mark confirmed facts with ✓
+  4. **Preserve logic** - Keep all reasoning steps from the original
+  5. **Improve flow** - Add natural transitions between ideas
+  6. **Lead to answer** - Reasoning should logically conclude with the answer
+  
+  ## Process
+  
+  - Read the original reasoning carefully
+  - Identify the logical steps and confidence levels
+  - Rewrite as flowing prose with appropriate symbols
+  - Ensure ∴ marks the final conclusion
+
+output:
+  - name: response
+    description: Rewritten reasoning trace with improved logical flow
+    optional: false
