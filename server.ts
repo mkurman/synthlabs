@@ -5,6 +5,8 @@
 
 export { }; // Make this a module
 
+declare const Bun: any;
+
 const port = process.env.PORT || 3000;
 const distPath = "./dist";
 

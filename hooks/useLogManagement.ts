@@ -2,11 +2,11 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { LogStorageService } from '../services/logStorageService';
 import * as FirebaseService from '../services/firebaseService';
 import { SynthLogItem } from '../types';
-import { LogFilter, LogItemStatus } from '../interfaces/enums';
+import { Environment, LogFilter, LogItemStatus } from '../interfaces/enums';
 
 interface UseLogManagementProps {
   sessionUid: string;
-  environment: string;
+  environment: Environment;
 }
 
 interface UseLogManagementReturn {
@@ -25,6 +25,10 @@ interface UseLogManagementReturn {
   setLogFilter: (filter: LogFilter) => void;
   setShowLatestOnly: (show: boolean) => void;
   setFeedPageSize: (size: number) => void;
+  setVisibleLogs: (logs: SynthLogItem[]) => void;
+  setTotalLogCount: (count: number) => void;
+  setFilteredLogCount: (count: number) => void;
+  setLogsTrigger: (fn: (prev: number) => number) => void;
   refreshLogs: () => Promise<void>;
   handlePageChange: (page: number) => void;
   handleDeleteLog: (id: string) => Promise<void>;
@@ -163,7 +167,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
       await LogStorageService.deleteLog(sessionUid, id);
       
       // Delete from Firebase if in Production and Saved
-      if (environment === 'production' && FirebaseService.isFirebaseConfigured() && logItem.savedToDb) {
+      if (environment === Environment.Production && FirebaseService.isFirebaseConfigured() && logItem.savedToDb) {
         try {
           await FirebaseService.deleteLogItem(id);
         } catch (e) {
@@ -196,6 +200,10 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
     setLogFilter,
     setShowLatestOnly,
     setFeedPageSize,
+    setVisibleLogs,
+    setTotalLogCount,
+    setFilteredLogCount,
+    setLogsTrigger,
     refreshLogs,
     handlePageChange,
     handleDeleteLog,

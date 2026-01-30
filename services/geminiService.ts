@@ -119,12 +119,12 @@ export const generateContentStream = async (
     });
 
     let accumulated = '';
-    for await (const chunk of result.stream) {
+    for await (const chunk of result) {
       if (abortSignal?.aborted) {
         throw new Error('Aborted by user');
       }
-      const text = chunk.text();
-      if (text) {
+      const text = chunk.text;
+      if (typeof text === 'string' && text) {
         accumulated += text;
         onChunk(text, accumulated);
       }

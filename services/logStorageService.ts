@@ -116,7 +116,7 @@ export const LogStorageService = {
     },
 
     // Synchronous version for backwards compatibility (deprecated - throws error)
-    getLogsSync: (sessionUid: string, page: number, pageSize: number): SynthLogItem[] => {
+    getLogsSync: (_sessionUid: string, _page: number, _pageSize: number): SynthLogItem[] => {
         // This method is deprecated and no longer returns data.
         // Callers must use the async getLogs API instead.
         throw new Error('getLogsSync is deprecated. Use the async getLogs(sessionUid, page, pageSize) method for log retrieval.');
@@ -244,7 +244,7 @@ export const LogStorageService = {
     },
 
     // Synchronous version for backwards compatibility
-    getTotalCountSync: (sessionUid: string): number => {
+    getTotalCountSync: (_sessionUid: string): number => {
         console.warn('getTotalCountSync called - use getTotalCount async version for accurate data');
         return 0;
     },
