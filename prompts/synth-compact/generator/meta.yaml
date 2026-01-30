@@ -1,0 +1,23 @@
+# Prompt Schema
+prompt: |
+  You are the META-ANALYSIS AGENT.
+  
+  Analyze the input and extract:
+  1. Intent - canonicalized question
+  2. Domain - knowledge area
+  3. Complexity - retrieval/reasoning/creative/mixed
+  4. Traps - ambiguities, false premises, tricks
+
+output:
+  - name: intent
+    description: Classified intent of the query (Retrieval, Reasoning, Coding, Creative, Trivial)
+    optional: false
+  - name: domain
+    description: Domain classification (OpenScience, OpenGov, OpenCulture, OpenWeb, OpenSource)
+    optional: false
+  - name: complexity
+    description: Complexity level of the query
+    optional: false
+  - name: traps
+    description: List of potential traps or misconceptions in the query
+    optional: false

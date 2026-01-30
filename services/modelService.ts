@@ -3,8 +3,8 @@
  * Fetches and caches available models from various LLM providers
  */
 
-import { ExternalProvider, ProviderModel, CachedModelList, ModelListProvider } from '../types';
-import { PROVIDER_URLS } from '../constants';
+import { ExternalProvider, ProviderType, ProviderModel, CachedModelList, ModelListProvider } from '../types';
+import { PROVIDERS } from '../constants';
 
 const DB_NAME = 'SynthLabsSettingsDB';
 const DB_VERSION = 3; // Bump version to update models store key
@@ -159,50 +159,50 @@ const saveModelsToCache = async (cacheKey: string, provider: ModelListProvider, 
 
 // Hardcoded model lists for providers without /models endpoint or as fallback defaults
 const HARDCODED_MODELS: Partial<Record<ModelListProvider, ProviderModel[]>> = {
-    gemini: [
-        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'openai' },
-        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Exp)', provider: 'openai' },
-        { id: 'gemini-2.0-pro-exp', name: 'Gemini 2.0 Pro (Exp)', provider: 'openai' },
-        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'openai' },
-        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'openai' },
+    [ProviderType.Gemini]: [
+        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ExternalProvider.OpenAI },
+        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Exp)', provider: ExternalProvider.OpenAI },
+        { id: 'gemini-2.0-pro-exp', name: 'Gemini 2.0 Pro (Exp)', provider: ExternalProvider.OpenAI },
+        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: ExternalProvider.OpenAI },
+        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: ExternalProvider.OpenAI },
     ],
-    anthropic: [
-        { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic' },
-        { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', provider: 'anthropic' },
-        { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', provider: 'anthropic' },
-        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet v2', provider: 'anthropic' },
-        { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', provider: 'anthropic' },
-        { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: 'anthropic' },
-        { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', provider: 'anthropic' },
-        { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', provider: 'anthropic' },
+    [ExternalProvider.Anthropic]: [
+        { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: ExternalProvider.Anthropic },
+        { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', provider: ExternalProvider.Anthropic },
+        { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', provider: ExternalProvider.Anthropic },
+        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet v2', provider: ExternalProvider.Anthropic },
+        { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', provider: ExternalProvider.Anthropic },
+        { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: ExternalProvider.Anthropic },
+        { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', provider: ExternalProvider.Anthropic },
+        { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', provider: ExternalProvider.Anthropic },
     ],
-    huggingface: [
-        { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B', provider: 'huggingface' },
-        { id: 'meta-llama/Llama-3.1-70B-Instruct', name: 'Llama 3.1 70B', provider: 'huggingface' },
-        { id: 'meta-llama/Llama-3.1-8B-Instruct', name: 'Llama 3.1 8B', provider: 'huggingface' },
-        { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', name: 'Mixtral 8x7B', provider: 'huggingface' },
-        { id: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B v0.3', provider: 'huggingface' },
-        { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: 'huggingface' },
-        { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen 2.5 7B', provider: 'huggingface' },
-        { id: 'google/gemma-2-27b-it', name: 'Gemma 2 27B', provider: 'huggingface' },
-        { id: 'google/gemma-2-9b-it', name: 'Gemma 2 9B', provider: 'huggingface' },
+    [ExternalProvider.HuggingFace]: [
+        { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.HuggingFace },
+        { id: 'meta-llama/Llama-3.1-70B-Instruct', name: 'Llama 3.1 70B', provider: ExternalProvider.HuggingFace },
+        { id: 'meta-llama/Llama-3.1-8B-Instruct', name: 'Llama 3.1 8B', provider: ExternalProvider.HuggingFace },
+        { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', name: 'Mixtral 8x7B', provider: ExternalProvider.HuggingFace },
+        { id: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B v0.3', provider: ExternalProvider.HuggingFace },
+        { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: ExternalProvider.HuggingFace },
+        { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen 2.5 7B', provider: ExternalProvider.HuggingFace },
+        { id: 'google/gemma-2-27b-it', name: 'Gemma 2 27B', provider: ExternalProvider.HuggingFace },
+        { id: 'google/gemma-2-9b-it', name: 'Gemma 2 9B', provider: ExternalProvider.HuggingFace },
     ],
-    kimi: [
-        { id: 'moonshot-v1-8k', name: 'Moonshot v1 8K', provider: 'kimi', context_length: 8192 },
-        { id: 'moonshot-v1-32k', name: 'Moonshot v1 32K', provider: 'kimi', context_length: 32768 },
-        { id: 'moonshot-v1-128k', name: 'Moonshot v1 128K', provider: 'kimi', context_length: 131072 },
+    [ExternalProvider.Kimi]: [
+        { id: 'moonshot-v1-8k', name: 'Moonshot v1 8K', provider: ExternalProvider.Kimi, context_length: 8192 },
+        { id: 'moonshot-v1-32k', name: 'Moonshot v1 32K', provider: ExternalProvider.Kimi, context_length: 32768 },
+        { id: 'moonshot-v1-128k', name: 'Moonshot v1 128K', provider: ExternalProvider.Kimi, context_length: 131072 },
     ],
-    'z.ai': [
-        { id: 'glm-4-plus', name: 'GLM-4 Plus', provider: 'z.ai' },
-        { id: 'glm-4-0520', name: 'GLM-4 0520', provider: 'z.ai' },
-        { id: 'glm-4-air', name: 'GLM-4 Air', provider: 'z.ai' },
-        { id: 'glm-4-airx', name: 'GLM-4 AirX', provider: 'z.ai' },
-        { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: 'z.ai' },
+    [ExternalProvider.ZAi]: [
+        { id: 'glm-4-plus', name: 'GLM-4 Plus', provider: ExternalProvider.ZAi },
+        { id: 'glm-4-0520', name: 'GLM-4 0520', provider: ExternalProvider.ZAi },
+        { id: 'glm-4-air', name: 'GLM-4 Air', provider: ExternalProvider.ZAi },
+        { id: 'glm-4-airx', name: 'GLM-4 AirX', provider: ExternalProvider.ZAi },
+        { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: ExternalProvider.ZAi },
     ],
-    qwen: [
-        { id: 'qwen-turbo', name: 'Qwen Turbo', provider: 'qwen' },
-        { id: 'qwen-plus', name: 'Qwen Plus', provider: 'qwen' },
-        { id: 'qwen-max', name: 'Qwen Max', provider: 'qwen' },
+    [ExternalProvider.Qwen]: [
+        { id: 'qwen-turbo', name: 'Qwen Turbo', provider: ExternalProvider.Qwen },
+        { id: 'qwen-plus', name: 'Qwen Plus', provider: ExternalProvider.Qwen },
+        { id: 'qwen-max', name: 'Qwen Max', provider: ExternalProvider.Qwen },
         { id: 'qwen-max-longcontext', name: 'Qwen Max Long Context', provider: 'qwen' },
     ],
 };
@@ -348,7 +348,7 @@ const fetchModelsFromProvider = async (
             .filter((m: ProviderModel) => m.id);
     }
 
-    const baseUrl = customBaseUrl || PROVIDER_URLS[provider];
+    const baseUrl = customBaseUrl || PROVIDERS[provider]?.url;
     if (!baseUrl) {
         console.warn(`[ModelService] No base URL for provider: ${provider}`);
         return [];
@@ -401,7 +401,7 @@ const fetchModelsFromProvider = async (
         const data = await response.json();
 
         // Normalize based on provider
-        if (provider === 'ollama') {
+    if (provider === ExternalProvider.Ollama) {
             return normalizeOllamaModels(data, provider);
         }
 
@@ -533,16 +533,16 @@ export const getDefaultModels = (provider: ModelListProvider): ProviderModel[] =
  */
 export const hasModelsEndpoint = (provider: ModelListProvider): boolean => {
     const providersWithEndpoint: ModelListProvider[] = [
-        'openai',
-        'openrouter',
-        'together',
-        'groq',
-        'cerebras',
-        'featherless',
-        'qwen-deepinfra',
-        'ollama',
-        'chutes',
-        'gemini',
+        ExternalProvider.OpenAI,
+        ExternalProvider.OpenRouter,
+        ExternalProvider.Together,
+        ExternalProvider.Groq,
+        ExternalProvider.Cerebras,
+        ExternalProvider.Featherless,
+        ExternalProvider.QwenDeepInfra,
+        ExternalProvider.Ollama,
+        ExternalProvider.Chutes,
+        ProviderType.Gemini,
     ];
     return providersWithEndpoint.includes(provider);
 };
@@ -626,7 +626,7 @@ export const prefetchModels = async (
     const providersToFetch: { provider: ExternalProvider; apiKey: string }[] = [];
 
     // Collect providers that need fetching
-    for (const provider of Object.keys(PROVIDER_URLS) as ExternalProvider[]) {
+    for (const provider of Object.keys(PROVIDERS) as ExternalProvider[]) {
         // Skip 'other' provider - requires manual entry
         if (provider === 'other') continue;
 

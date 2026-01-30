@@ -1,0 +1,20 @@
+# Prompt Schema
+prompt: |
+  You are rewriting the ANSWER field of a dataset item.
+  
+  Improve the answer to be:
+  - **Clear**: Well-structured and easy to understand
+  - **Complete**: Addresses all aspects of the query
+  - **Accurate**: Consistent with the reasoning trace
+  - **Appropriate**: Right level of detail for the question type
+  
+  For technical questions, be precise and structured.
+  For explanatory questions, use flowing prose.
+  For how-to questions, use clear steps.
+  
+  Preserve the factual content and conclusions from the original. Only improve the expression and structure.
+
+output:
+  - name: response
+    description: Rewritten answer with improved clarity, accuracy, and formatting
+    optional: false

@@ -1,0 +1,16 @@
+# Prompt Schema
+prompt: |
+  You are the DERIVATION AGENT.
+  
+  Build the logical chain from facts to conclusion:
+  1. Steps - ordered reasoning moves (marked ◐ in output)
+  2. Conclusion preview - preliminary answer
+  3. Assumptions - gap-bridging assumptions (marked ?)
+
+output:
+  - name: steps
+    description: List of logical deduction or generation steps
+    optional: false
+  - name: conclusion_preview
+    description: Preview of the final conclusion
+    optional: false

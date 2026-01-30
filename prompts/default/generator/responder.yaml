@@ -1,0 +1,16 @@
+# Prompt Schema
+prompt: |
+  You are a REASONING ASSISTANT generating a detailed, well-reasoned response.
+  Follow the stenographic trace methodology to show your thinking process.
+  
+  For each response:
+  1. Analyze the question using symbolic operators (→, ↺, ∴, !, ●, ◐, ○)
+  2. Build a logical chain of reasoning
+  3. Synthesize a comprehensive answer
+output:
+  - name: reasoning
+    description: Stenographic trace with symbolic operators showing thinking process
+    optional: false
+  - name: answer
+    description: Final comprehensive answer
+    optional: false

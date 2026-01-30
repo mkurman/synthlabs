@@ -1,10 +1,12 @@
 
-import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, StreamChunkCallback, StreamPhase } from '../types';
+import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, StreamChunkCallback, StreamPhase, LogItemStatus, ProviderType, ApiType } from '../types';
+import { JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../constants';
 import * as GeminiService from './geminiService';
 import * as ExternalApiService from './externalApiService';
 import { SettingsService } from './settingsService';
 import { logger } from '../utils/logger';
 import { PromptService } from './promptService';
+import * as PromptSchemaAdapter from './promptSchemaAdapter';
 
 interface DeepOrchestrationParams {
   input: string;
@@ -22,6 +24,17 @@ interface DeepOrchestrationParams {
   onStreamChunk?: StreamChunkCallback;
 }
 
+// Map phase IDs to prompt schemas (loaded once)
+const PHASE_TO_SCHEMA: Record<string, () => import('../types').PromptSchema> = {
+  'meta': () => PromptService.getPromptSchema('generator', 'meta'),
+  'retrieval': () => PromptService.getPromptSchema('generator', 'retrieval'),
+  'derivation': () => PromptService.getPromptSchema('generator', 'derivation'),
+  'writer': () => PromptService.getPromptSchema('converter', 'writer'),
+  'rewriter': () => PromptService.getPromptSchema('converter', 'rewriter'),
+  'responder': () => PromptService.getPromptSchema('generator', 'responder'),
+  'userAgent': () => PromptService.getPromptSchema('generator', 'user_agent')
+};
+
 const executePhase = async (
   phaseConfig: DeepPhaseConfig,
   userContent: string,
@@ -32,45 +45,56 @@ const executePhase = async (
   structuredOutput: boolean = true,
   streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<{ result: any; model: string; input: string; duration: number; timestamp: string }> => {
-  const { id, provider, externalProvider, apiType, apiKey, model, customBaseUrl, systemPrompt } = phaseConfig;
+  const { id, provider, externalProvider, apiType, apiKey, model, customBaseUrl, promptSchema: configSchema } = phaseConfig;
   const modelName = provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
   const startTime = Date.now();
   const timestamp = new Date().toISOString();
 
+  // Get schema: from config if provided, otherwise lookup by phase ID
+  const schema = configSchema || PHASE_TO_SCHEMA[id]?.();
+  
   logger.groupCollapsed(`[Deep Phase: ${id.toUpperCase()}]`);
   logger.log("Model:", modelName);
   logger.log("Input Snippet:", userContent.substring(0, 150).replace(/\n/g, ' ') + "...");
-  logger.log("System Prompt Snippet:", systemPrompt.substring(0, 100) + "...");
+  logger.log("System Prompt Snippet:", schema?.prompt.substring(0, 100) + "..." || '(none)');
 
   let result;
   try {
     if (provider === 'gemini') {
-      result = await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams, structuredOutput });
+      // For Gemini, build the prompt with schema
+      const geminiSystemPrompt = schema 
+        ? (structuredOutput 
+            ? schema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
+                type: 'object',
+                properties: Object.fromEntries(schema.output.map(f => [f.name, { type: 'string', description: f.description }])),
+                required: schema.output.filter(f => !f.optional).map(f => f.name),
+                additionalProperties: true
+              })
+            : schema.prompt + '\n\n' + JSON_OUTPUT_FALLBACK)
+        : '\n\n' + JSON_OUTPUT_FALLBACK;
+      result = await GeminiService.generateGenericJSON(userContent, geminiSystemPrompt, { maxRetries, retryDelay, generationParams, structuredOutput });
     } else {
       // Resolve API key from phaseConfig first, then fall back to SettingsService
       const resolvedApiKey = apiKey || (externalProvider ? SettingsService.getApiKey(externalProvider) : '');
       const resolvedBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
 
-      // Determine appropriate schema based on phase
-      let responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
-      if (id === 'userAgent' || systemPrompt.toLowerCase().includes('follow-up') || systemPrompt.toLowerCase().includes('follow_up')) {
-        responsesSchema = 'userAgentResponse';
-      }
+      // Determine appropriate schema for Responses API
+      const responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
 
       result = await ExternalApiService.callExternalApi({
         provider: externalProvider,
         apiKey: resolvedApiKey,
         model: model,
-        apiType: apiType || 'chat', // Pass API type (defaults to 'chat')
+        apiType: apiType || ApiType.Chat,
         customBaseUrl: resolvedBaseUrl,
-        systemPrompt: systemPrompt,
+        promptSchema: schema,
         userPrompt: userContent,
         signal: signal,
         maxRetries,
         retryDelay,
         generationParams,
         structuredOutput,
-        responsesSchema, // Pass schema for Responses API
+        responsesSchema,
         // Streaming: only enable if streamOptions provided with callback
         stream: streamOptions?.stream,
         onStreamChunk: streamOptions?.onStreamChunk,
@@ -81,6 +105,30 @@ const executePhase = async (
     const duration = Date.now() - startTime;
     logger.log("✅ Success Payload:", result);
     logger.log(`⏱️ Duration: ${duration}ms`);
+
+    // Schema validation: validate result against expected schema for this phase
+    if (schema && result && typeof result === 'object') {
+      try {
+        const validation = PromptSchemaAdapter.parseAndValidateResponse(result, schema);
+
+        if (!validation.isValid) {
+          logger.warn(`⚠️ Phase ${id} result missing required fields:`, validation.missingFields);
+          // Add ERROR marker to result but don't throw - let downstream handle it
+          (result as any)._schemaValidation = {
+            isValid: false,
+            missingFields: validation.missingFields,
+            error: validation.error
+          };
+        } else {
+          // Replace result with filtered data (only schema-defined fields)
+          result = validation.data;
+          (result as any)._schemaValidation = { isValid: true };
+        }
+      } catch (validationError) {
+        logger.warn(`⚠️ Schema validation error for phase ${id}:`, validationError);
+      }
+    }
+
     logger.groupEnd();
 
     // Check if result is an empty object (parsing failure)
@@ -252,7 +300,7 @@ ${writerResult.query}
 ${writerResult.reasoning}
 
 Instructions: Based on the reasoning trace above, write the final high-quality response.
-CRITICAL: Output valid JSON only. Format: { "answer": "Your final refined answer string here" }
+CRITICAL: " + JSON_OUTPUT_FALLBACK + " Format: { "answer": "Your final refined answer string here" }
 `;
       const rewriterRes = await executePhase(
         config.phases.rewriter,
@@ -308,14 +356,15 @@ CRITICAL: Output valid JSON only. Format: { "answer": "Your final refined answer
         });
       }
     } else {
-      // Use Derivation result as the answer if Rewriter is disabled
-      writerResult.answer = derivationResult.conclusion_preview || "See reasoning trace for details.";
-      writerResult.answer = writerResult.answer.trim();
-
-      // PRESERVATION LOGIC: If we have an expectedAnswer from the dataset AND Rewriter is disabled,
-      // we use the dataset's answer instead of the model's conclusion.
-      if (expectedAnswer && expectedAnswer.trim().length > 0) {
-        writerResult.answer = expectedAnswer.trim();
+      // Get the writer schema to check what output fields are defined
+      const writerSchema = config.phases.writer.promptSchema || PHASE_TO_SCHEMA['writer']?.();
+      const schemaOutputFields = writerSchema?.output?.map(f => f.name) || [];
+      const schemaDefinesAnswer = schemaOutputFields.includes('answer');
+      
+      // If schema defines answer, we must use what the model produced.
+      // If model didn't produce it, that's an error - we don't fallback.
+      if (schemaDefinesAnswer && !writerResult.answer) {
+        throw new Error("[WRITER] Schema requires 'answer' field but model did not produce it.");
       }
     }
 
@@ -326,13 +375,35 @@ CRITICAL: Output valid JSON only. Format: { "answer": "Your final refined answer
     logger.groupEnd();
 
     // 5. Return formatted log item
+    // Check writer schema to determine if answer is a defined output field
+    const writerSchema = config.phases.writer.promptSchema || PHASE_TO_SCHEMA['writer']?.();
+    const schemaOutputFields = writerSchema?.output?.map(f => f.name) || [];
+    const schemaDefinesAnswer = schemaOutputFields.includes('answer');
+    
+    // Schema compliance logic:
+    // - If schema has "answer" key: MUST use model output (writerResult.answer)
+    //   If model didn't produce it, throw error
+    // - If schema doesn't have "answer" key: use expectedAnswer (from dataset)
+    //   We ONLY care about fields defined in the schema
+    let finalAnswer: string;
+    if (schemaDefinesAnswer) {
+      // Schema requires answer - model MUST produce it
+      if (!writerResult.answer) {
+        throw new Error("[WRITER] Schema requires 'answer' field but model did not produce it.");
+      }
+      finalAnswer = writerResult.answer;
+    } else {
+      // Schema doesn't define answer - use expectedAnswer from dataset
+      finalAnswer = expectedAnswer || "";
+    }
+    
     const finalLogItem: SynthLogItem = {
       id: crypto.randomUUID(),
       seed_preview: cleanQuery.substring(0, 150) + "...",
       full_seed: cleanQuery,
       query: cleanQuery.trim(), // Use clean input (without expected answer) as query
       reasoning: writerResult.reasoning || "Writer failed to generate reasoning.",
-      answer: writerResult.answer || "Writer failed to generate answer.",
+      answer: finalAnswer,
       timestamp: new Date().toISOString(),
       modelUsed: `DEEP: ${config.phases.writer.model}`,
       provider: config.phases.writer.provider === 'gemini' ? 'gemini' : config.phases.writer.externalProvider,
@@ -380,12 +451,13 @@ interface MultiTurnOrchestrationParams {
   initialReasoning?: string; // Pre-generated reasoning from DEEP mode
   userAgentConfig: UserAgentConfig;
   responderConfig: {
-    provider: 'gemini' | 'external';
+    provider: ProviderType;
     externalProvider: string;
     apiKey: string;
     model: string;
     customBaseUrl: string;
-    systemPrompt: string;
+    apiType?: ApiType;
+    promptSchema?: import('../types').PromptSchema;
     generationParams?: GenerationParams;
   };
   signal?: AbortSignal;
@@ -443,6 +515,12 @@ export const orchestrateMultiTurnConversation = async (
   logger.log("Follow-up Count:", userAgentConfig.followUpCount);
   logger.log("Using pre-generated response:", !!preGeneratedResponse);
 
+  // Get responder schema once for schema compliance checks
+  const responderSchema = responderConfig.promptSchema || PHASE_TO_SCHEMA['responder']?.();
+  const schemaOutputFields = responderSchema?.output?.map((f: any) => f.name) || [];
+  const schemaDefinesAnswer = schemaOutputFields.includes('answer');
+  const schemaDefinesReasoning = schemaOutputFields.includes('reasoning');
+
   try {
     // Initial user message from the query (not the full reasoning trace)
     messages.push({
@@ -461,9 +539,17 @@ export const orchestrateMultiTurnConversation = async (
     } else {
       logger.log("📝 Generating initial response...");
       const generatedResponse = await callAgent(
-        responderConfig,
+        {
+          provider: responderConfig.provider,
+          externalProvider: responderConfig.externalProvider,
+          apiType: responderConfig.apiType,
+          apiKey: responderConfig.apiKey,
+          model: responderConfig.model,
+          customBaseUrl: responderConfig.customBaseUrl,
+          promptSchema: responderSchema,
+          generationParams: responderConfig.generationParams
+        },
         initialInput,
-        responderConfig.systemPrompt || PromptService.getPrompt('generator', 'responder', promptSet),
         signal,
         maxRetries,
         retryDelay,
@@ -471,6 +557,18 @@ export const orchestrateMultiTurnConversation = async (
         structuredOutput,
         stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'user_followup' } : undefined
       );
+      
+      // Schema compliance: check responder schema for required fields
+      // If schema requires answer, model must produce it
+      if (schemaDefinesAnswer && !generatedResponse.answer) {
+        throw new Error("[MULTI-TURN] Schema requires 'answer' field but model did not produce it.");
+      }
+      
+      // If schema requires reasoning, model must produce it
+      if (schemaDefinesReasoning && !generatedResponse.reasoning) {
+        throw new Error("[MULTI-TURN] Schema requires 'reasoning' field but model did not produce it.");
+      }
+      
       firstResponse = generatedResponse.answer || generatedResponse.reasoning || "No response generated.";
       firstReasoning = generatedResponse.reasoning;
     }
@@ -501,11 +599,10 @@ export const orchestrateMultiTurnConversation = async (
           apiKey: userAgentConfig.apiKey,
           model: userAgentConfig.model,
           customBaseUrl: userAgentConfig.customBaseUrl,
-          systemPrompt: userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent', promptSet),
+          promptSchema: userAgentConfig.promptSchema || PHASE_TO_SCHEMA['userAgent']?.(),
           generationParams: userAgentConfig.generationParams
         },
         userAgentInput,
-        userAgentConfig.systemPrompt || PromptService.getPrompt('generator', 'user_agent', promptSet),
         signal,
         maxRetries,
         retryDelay,
@@ -521,12 +618,19 @@ export const orchestrateMultiTurnConversation = async (
       });
 
       // Generate response to follow-up
-      // System prompt is passed separately via callAgent, so user input only needs conversation context
-      const responseInput = `Previous conversation:\n${conversationContext}\n\n[USER]: ${followUpQuestion}\n\nProvide a detailed response using symbolic reasoning (→, ↺, ∴, !, ●, ◐, ○).\n\nOutput valid JSON only:\n{\n  "reasoning": "[Stenographic trace with symbols]",\n  "answer": "[Final comprehensive answer]"\n}`;
+      const responseInput = `Previous conversation:\n${conversationContext}\n\n[USER]: ${followUpQuestion}\n\nProvide a detailed response using symbolic reasoning.`;
       const responseResult = await callAgent(
-        responderConfig,
+        {
+          provider: responderConfig.provider,
+          externalProvider: responderConfig.externalProvider,
+          apiType: responderConfig.apiType,
+          apiKey: responderConfig.apiKey,
+          model: responderConfig.model,
+          customBaseUrl: responderConfig.customBaseUrl,
+          promptSchema: responderSchema,
+          generationParams: responderConfig.generationParams
+        },
         responseInput,
-        responderConfig.systemPrompt || PromptService.getPrompt('generator', 'responder', promptSet),
         signal,
         maxRetries,
         retryDelay,
@@ -534,6 +638,14 @@ export const orchestrateMultiTurnConversation = async (
         structuredOutput,
         stream && onStreamChunk ? { stream: true, onStreamChunk, streamPhase: 'user_followup' } : undefined
       );
+
+      // Schema compliance: check responder schema for required fields
+      if (schemaDefinesAnswer && !responseResult.answer) {
+        throw new Error("[MULTI-TURN] Schema requires 'answer' field but model did not produce it for follow-up response.");
+      }
+      if (schemaDefinesReasoning && !responseResult.reasoning) {
+        throw new Error("[MULTI-TURN] Schema requires 'reasoning' field but model did not produce it for follow-up response.");
+      }
 
       messages.push({
         role: 'assistant',
@@ -558,7 +670,7 @@ export const orchestrateMultiTurnConversation = async (
         duration: Date.now() - startTime,
         modelUsed: `MULTI: ${responderConfig.model}`,
         isError: true,
-        status: 'ERROR',
+        status: LogItemStatus.ERROR,
         error: 'Halted by user',
         isMultiTurn: true,
         messages: messages.length > MAX_MESSAGES_TO_STORE ? messages.slice(-MAX_MESSAGES_TO_STORE) : messages,
@@ -616,19 +728,22 @@ export const orchestrateMultiTurnConversation = async (
 };
 
 // Helper function to call an agent (Gemini or External)
+// Uses PromptSchema object directly - no string lookups!
 const callAgent = async (
   config: {
-    provider: 'gemini' | 'external';
+    provider: ProviderType;
     externalProvider: string;
-    apiType?: 'chat' | 'responses'; // API type for external providers
+    apiType?: ApiType;
     apiKey: string;
     model: string;
     customBaseUrl: string;
-    systemPrompt: string;
+    /**
+     * The prompt schema object. Pass this directly instead of strings!
+     */
+    promptSchema?: import('../types').PromptSchema;
     generationParams?: GenerationParams;
   },
   userContent: string,
-  systemPrompt: string,
   signal?: AbortSignal,
   maxRetries = 3,
   retryDelay = 2000,
@@ -637,32 +752,50 @@ const callAgent = async (
   streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<any> => {
   const effectiveParams = config.generationParams || generationParams;
+  const schema = config.promptSchema;
+  
+  // Determine responses schema based on output fields
+  let responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
+  if (schema?.output.some(f => f.name === 'follow_up_question' || f.name === 'question')) {
+    responsesSchema = 'userAgentResponse';
+  }
+  
   if (config.provider === 'gemini') {
-    return await GeminiService.generateGenericJSON(userContent, systemPrompt, { maxRetries, retryDelay, generationParams: effectiveParams });
-  } else {
-    // Determine appropriate schema based on prompt content
-    let responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
-    if (systemPrompt.toLowerCase().includes('follow-up') ||
-      systemPrompt.toLowerCase().includes('follow_up') ||
-      systemPrompt.toLowerCase().includes('followup') ||
-      userContent.toLowerCase().includes('follow-up')) {
-      responsesSchema = 'userAgentResponse';
+    // Build system prompt from schema
+    let geminiSystemPrompt = '\n\n' + JSON_OUTPUT_FALLBACK;
+    if (schema) {
+      if (structuredOutput) {
+        geminiSystemPrompt = schema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
+          type: 'object',
+          properties: Object.fromEntries(schema.output.map(f => [f.name, { type: 'string', description: f.description }])),
+          required: schema.output.filter(f => !f.optional).map(f => f.name),
+          additionalProperties: true
+        });
+      } else {
+        const example: Record<string, string> = {};
+        for (const field of schema.output) {
+          const suffix = field.optional ? ' (optional)' : '';
+          example[field.name] = field.description.substring(0, 50) + (field.description.length > 50 ? '...' : '') + suffix;
+        }
+        geminiSystemPrompt = schema.prompt + '\n\n' + JSON_OUTPUT_FALLBACK + ': ' + JSON.stringify(example);
+      }
     }
-
+    return await GeminiService.generateGenericJSON(userContent, geminiSystemPrompt, { maxRetries, retryDelay, generationParams: effectiveParams });
+  } else {
     return await ExternalApiService.callExternalApi({
       provider: config.externalProvider as any,
       apiKey: config.apiKey,
       model: config.model,
-      apiType: config.apiType || 'chat', // Pass API type (defaults to 'chat')
+      apiType: config.apiType || ApiType.Chat,
       customBaseUrl: config.customBaseUrl,
-      systemPrompt: systemPrompt,
+      promptSchema: schema,
       userPrompt: userContent,
       signal,
       maxRetries,
       retryDelay,
       generationParams: effectiveParams,
       structuredOutput,
-      responsesSchema, // Pass schema for Responses API
+      responsesSchema,
       stream: streamOptions?.stream,
       onStreamChunk: streamOptions?.onStreamChunk,
       streamPhase: streamOptions?.streamPhase
@@ -737,6 +870,8 @@ export const orchestrateConversationRewrite = async (
   const rewrittenMessages: ChatMessage[] = [];
   const MAX_MESSAGES_TO_STORE = 50;
   const thinkTagRegex = /<think>([\s\S]*?)<\/think>/i;
+  let hasError = false;
+  let errorMessages: string[] = [];
 
   logger.group("🔄 STARTING CONVERSATION TRACE REWRITING");
   logger.log("Total messages:", messages.length);
@@ -824,20 +959,24 @@ ${outsideThinkContent}
         // Check if orchestration failed - if so, use original values instead of error values
         if (deepResult.isError) {
           logger.warn(`⚠️ Message rewrite failed for message ${i}, using original content`);
+          hasError = true;
+          errorMessages.push(`Message ${i}: ${deepResult.error || 'Unknown error'}`);
           newReasoning = originalThinking;
           // outsideThinkContent remains unchanged (original answer)
         } else {
           newReasoning = deepResult.reasoning || originalThinking;
-          outsideThinkContent = deepResult.answer || outsideThinkContent;
+          // Use deepResult.answer which already applies schema logic:
+          // - If schema has "answer" key: uses model output (or errors if missing)
+          // - If schema doesn't have "answer" key: uses expectedAnswer (outsideThinkContent)
+          outsideThinkContent = deepResult.answer;
         }
       } else {
-        // Use regular converter
-        const prompt = converterPrompt || PromptService.getPrompt('converter', 'writer', promptSet);
-
+        // Use regular converter with schema-based approach
         if (regularModeConfig?.provider === 'gemini') {
+          const geminiPrompt = converterPrompt || PromptService.getSystemPrompt('converter', 'writer', promptSet, structuredOutput);
           const result = await GeminiService.generateGenericJSON(
             rewriteInput,
-            prompt,
+            geminiPrompt,
             { maxRetries, retryDelay, generationParams: regularModeConfig.generationParams || generationParams }
           );
           newReasoning = result.reasoning || originalThinking;
@@ -847,7 +986,7 @@ ${outsideThinkContent}
             apiKey: regularModeConfig.apiKey || SettingsService.getApiKey(regularModeConfig.externalProvider as any),
             model: regularModeConfig.model,
             customBaseUrl: regularModeConfig.customBaseUrl || SettingsService.getCustomBaseUrl(),
-            systemPrompt: prompt,
+            // Use schema-based approach
             userPrompt: `[INPUT LOGIC START]\n${rewriteInput}\n[INPUT LOGIC END]`,
             signal,
             maxRetries,
@@ -935,7 +1074,7 @@ ${outsideThinkContent}
         duration: Date.now() - startTime,
         modelUsed: engineMode === 'deep' ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
         isError: true,
-        status: 'ERROR',
+        status: LogItemStatus.ERROR,
         error: 'Halted by user',
         isMultiTurn: true,
         messages: rewrittenMessages.length > MAX_MESSAGES_TO_STORE ? rewrittenMessages.slice(-MAX_MESSAGES_TO_STORE) : rewrittenMessages,
@@ -949,7 +1088,8 @@ ${outsideThinkContent}
       .map(m => m.reasoning)
       .join('\n---\n');
 
-    return {
+    // Build final result, marking as error if any message rewrite failed
+    const finalResult: SynthLogItem = {
       id: crypto.randomUUID(),
       seed_preview: displayQuery + (displayQuery.length >= 150 ? "..." : ""),
       full_seed: messagesForLog.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
@@ -964,6 +1104,15 @@ ${outsideThinkContent}
       messages: messagesForLog,
       messagesTruncated
     };
+
+    // If any message rewrite failed, mark the result as an error
+    if (hasError) {
+      finalResult.isError = true;
+      finalResult.status = 'ERROR';
+      finalResult.error = errorMessages.join('; ');
+    }
+
+    return finalResult;
 
   } catch (error: any) {
     logger.error("💥 Conversation rewrite failed:", error);

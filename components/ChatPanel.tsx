@@ -8,29 +8,13 @@ import { ChatService } from '../services/chatService';
 import { ChatMessage } from '../types';
 import { ChatStorageService } from '../services/chatStorageService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
+import { PROVIDERS } from '../constants';
 import { ToolExecutor } from '../services/toolService';
 import { VerifierItem } from '../types';
 import { confirmService } from '../services/confirmService';
+import { ChatRole } from '../interfaces/enums';
 
-// Provider display names and descriptions
-const PROVIDER_INFO: Record<string, { name: string; description: string }> = {
-    'gemini': { name: 'Google Gemini', description: 'Primary provider' },
-    'openai': { name: 'OpenAI', description: 'GPT-4, GPT-3.5, etc.' },
-    'anthropic': { name: 'Anthropic', description: 'Claude models' },
-    'openrouter': { name: 'OpenRouter', description: 'Multi-model router' },
-    'together': { name: 'Together AI', description: 'Open-source models' },
-    'groq': { name: 'Groq', description: 'Ultra-fast inference' },
-    'cerebras': { name: 'Cerebras', description: 'High-performance AI' },
-    'featherless': { name: 'Featherless', description: 'Serverless inference' },
-    'qwen': { name: 'Qwen', description: 'Alibaba Qwen models' },
-    'qwen-deepinfra': { name: 'Qwen (DeepInfra)', description: 'Qwen via DeepInfra' },
-    'kimi': { name: 'Kimi (Moonshot)', description: 'Moonshot AI' },
-    'z.ai': { name: 'Z.AI', description: 'Z.AI platform' },
-    'ollama': { name: 'Ollama', description: 'Local models (no key needed)' },
-    'chutes': { name: 'Chutes', description: 'Chutes LLM API' },
-    'huggingface': { name: 'HuggingFace Inference', description: 'HF Inference API' },
-    'other': { name: 'Custom Endpoint', description: 'Your own OpenAI-compatible API' },
-};
+
 
 interface ChatPanelProps {
     data: VerifierItem[];
@@ -413,7 +397,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             await processTurn();
         } catch (e) {
             console.error(e);
-            setMessages(prev => [...prev, { role: 'model', content: "Error: " + String(e) } as ChatMessage]);
+            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(e) } as ChatMessage]);
         } finally {
             setIsStreaming(false);
             abortControllerRef.current = null;
@@ -434,7 +418,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         const continueMsg = 'continue';
         setIsStreaming(true);
 
-        const newHistory = [...messages, { role: 'user', content: continueMsg } as ChatMessage];
+        const newHistory = [...messages, { role: ChatRole.User, content: continueMsg } as ChatMessage];
         setMessages(newHistory);
         chatServiceRef.current.addUserMessage(continueMsg);
 
@@ -448,19 +432,20 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             await processTurn();
         } catch (e) {
             console.error(e);
-            setMessages(prev => [...prev, { role: 'model', content: "Error: " + String(e) } as ChatMessage]);
+            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(e) } as ChatMessage]);
         } finally {
             setIsStreaming(false);
             abortControllerRef.current = null;
         }
     };
 
+
     const processTurn = async () => {
         // Use prop executor or local ref
         const executor = toolExecutor || toolExecutorRef.current;
         if (!chatServiceRef.current || !executor) return;
 
-        let currentAssistantMessage: ChatMessage = { role: 'model', content: '' };
+        let currentAssistantMessage: ChatMessage = { role: ChatRole.Model, content: '' };
         setMessages(prev => [...prev, currentAssistantMessage]);
 
         let maxTurns = 5;
@@ -489,7 +474,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                     setMessages(prev => {
                         const next = [...prev];
                         next[next.length - 1] = {
-                            role: 'model',
+                            role: ChatRole.Model,
                             content: content,
                             reasoning: thinking,
                             toolCalls: toolCalls
@@ -503,7 +488,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             const { thinking: finalThink, content: finalContent, toolCalls } = ChatService.parseResponse(fullText);
 
             const modelMsgEntry: ChatMessage = {
-                role: 'model',
+                role: ChatRole.Model,
                 content: finalContent,
                 reasoning: finalThink || undefined,
                 toolCalls: toolCalls
@@ -515,7 +500,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                 for (const tc of toolCalls) {
                     // Add UI message for tool execution
                     setMessages(prev => [...prev, {
-                        role: 'tool',
+                        role: ChatRole.Tool,
                         content: tc.name === 'invalid_tool_call' ? 'Error parsing tool call...' : `Executing ${tc.name}...`,
                         toolCallId: tc.id
                     } as ChatMessage]);
@@ -543,7 +528,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                     setMessages(prev => {
                         const next = [...prev];
                         next[next.length - 1] = {
-                            role: 'tool',
+                            role: ChatRole.Tool,
                             content: resultStr,
                             toolCallId: tc.id
                         };
@@ -551,13 +536,13 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                     });
 
                     chatServiceRef.current.getHistory().push({
-                        role: 'tool',
+                        role: ChatRole.Tool,
                         content: resultStr,
                         toolCallId: tc.id
                     } as ChatMessage);
                 }
                 turnCount++;
-                setMessages(prev => [...prev, { role: 'model', content: '' }]);
+                setMessages(prev => [...prev, { role: ChatRole.Model, content: '' }]);
             } else {
                 break;
             }
@@ -853,7 +838,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                 >
                                                     {allProviders.map(p => (
                                                         <option key={p} value={p}>
-                                                            {PROVIDER_INFO[p]?.name || p}
+                                                            {PROVIDERS[p]?.name || p}
                                                         </option>
                                                     ))}
                                                 </select>

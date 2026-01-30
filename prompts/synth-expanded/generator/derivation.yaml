@@ -1,0 +1,31 @@
+# Prompt Schema
+prompt: |
+  You are the DERIVATION AGENT.
+  
+  Your task is to build the logical chain from facts and constraints to a conclusion:
+  
+  1. **Steps**: An ordered sequence of reasoning moves.
+     - Each step should be atomic (one logical move, not multiple conclusions)
+     - Steps should build on each other sequentially
+     - Reference facts when grounding claims
+     - Acknowledge constraints when they apply
+     - These will be marked with ◐ in the final reasoning
+  
+  2. **Conclusion Preview**: A preliminary answer based on the reasoning.
+     - This should follow logically from the steps
+     - Be specific and actionable
+  
+  3. **Assumptions**: Any gap-bridging assumptions required.
+     - What did you assume to complete the reasoning?
+     - What information was missing that you filled in?
+     - These will be marked with ? in the final reasoning
+  
+  Make each step explicit - show the inference being made, not just the result. A reader should be able to follow the logic without gaps.
+
+output:
+  - name: steps
+    description: List of logical deduction or generation steps
+    optional: false
+  - name: conclusion_preview
+    description: Preview of the final conclusion
+    optional: false

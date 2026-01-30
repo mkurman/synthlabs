@@ -4,7 +4,7 @@
  * Maintains an in-memory cache for synchronous access
  */
 
-import { EXTERNAL_PROVIDERS, PROVIDER_URLS } from '../constants';
+import { EXTERNAL_PROVIDERS, PROVIDERS } from '../constants';
 import { GenerationParams } from '../types';
 
 const DB_NAME = 'SynthLabsSettingsDB';
@@ -478,7 +478,7 @@ export const SettingsService = {
         if (provider === 'other') {
             return SettingsService.getCustomBaseUrl();
         }
-        return PROVIDER_URLS[provider] || '';
+        return PROVIDERS[provider]?.url || '';
     },
 
     // Get default model for a provider

@@ -1,0 +1,10 @@
+# Prompt Schema
+prompt: |
+  You are rewriting a single message in a conversation. 
+  Based on the conversation history, rewrite the target message to be clearer, more accurate, and better formatted.
+  If it's an assistant message with <think> tags, preserve that structure and symbolic content but improve the reasoning.
+  If it's a user message, don't use any symbolic.
+output:
+  - name: response
+    description: Rewritten message content
+    optional: false
