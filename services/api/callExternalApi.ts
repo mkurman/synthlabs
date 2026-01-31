@@ -1,0 +1,321 @@
+import { ExternalProvider, ApiType, ChatRole } from '../../types';
+import { PROVIDERS, JSON_OUTPUT_FALLBACK } from '../../constants';
+import { logger } from '../../utils/logger';
+import { SettingsService } from '../settingsService';
+import { ExternalApiConfig, RESPONSES_API_SCHEMAS, sleep, generateJsonSchemaForPrompt } from './schemas';
+import { processStreamResponse } from './streaming';
+import { parseJsonContent } from './jsonParser';
+
+export type { ExternalApiConfig } from './schemas';
+
+export const callExternalApi = async (config: ExternalApiConfig): Promise<any> => {
+  const {
+    provider, apiKey, model, apiType = ApiType.Chat, customBaseUrl, userPrompt, signal,
+    maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
+    responsesSchema = 'reasoningTrace', stream = false, onStreamChunk, streamPhase, tools,
+    promptSchema
+  } = config;
+
+  let baseUrl = provider === ExternalProvider.Other ? customBaseUrl : PROVIDERS[provider]?.url;
+  let responseFormat = structuredOutput ? 'json_object' : 'text';
+
+  // Build system prompt from schema if provided
+  let enhancedSystemPrompt: string;
+
+  if (config.systemPrompt) {
+    if (structuredOutput) {
+      enhancedSystemPrompt = config.systemPrompt + generateJsonSchemaForPrompt();
+    } else {
+      enhancedSystemPrompt = config.systemPrompt + '\n\n' + JSON_OUTPUT_FALLBACK;
+    }
+  } else if (promptSchema) {
+    if (structuredOutput) {
+      enhancedSystemPrompt = promptSchema.prompt + generateJsonSchemaForPrompt(promptSchema.output);
+    } else {
+      const example: Record<string, string> = {};
+      for (const field of promptSchema.output || []) {
+        const suffix = field.optional ? ' (optional)' : '';
+        example[field.name] = field.description.substring(0, 50) + (field.description.length > 50 ? '...' : '') + suffix;
+      }
+      enhancedSystemPrompt = promptSchema.prompt + '\n\nOutput valid JSON only: ' + JSON.stringify(example);
+    }
+  } else {
+    enhancedSystemPrompt = '\n\n' + JSON_OUTPUT_FALLBACK;
+  }
+
+  const isResponsesApi = apiType === ApiType.Responses;
+
+  // Ensure custom endpoint ends with correct path
+  if (baseUrl) {
+    const isAnthropicFormat = baseUrl.includes('/messages');
+    const alreadyHasChatPath = baseUrl.includes('/chat/completions');
+    const alreadyHasResponsesPath = baseUrl.includes('/responses');
+    const alreadyHasPath = alreadyHasChatPath || alreadyHasResponsesPath || isAnthropicFormat;
+
+    if (!alreadyHasPath) {
+      if (isResponsesApi) {
+        baseUrl = `${baseUrl}/responses`;
+      } else {
+        baseUrl = `${baseUrl}/chat/completions`;
+      }
+    }
+  }
+
+  if (!baseUrl) {
+    throw new Error(`No base URL found for provider: ${provider}`);
+  }
+
+  baseUrl = baseUrl.replace(/\/$/, '');
+
+  const safeApiKey = apiKey ? apiKey.replace(/[^\x20-\x7E]/g, '').trim() : '';
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+
+  if (provider === ExternalProvider.Anthropic) {
+    headers['x-api-key'] = safeApiKey;
+    headers['anthropic-version'] = '2023-06-01';
+  } else if (provider === ExternalProvider.Ollama && !safeApiKey) {
+    headers['Authorization'] = 'Bearer ollama-local';
+  } else {
+    headers['Authorization'] = `Bearer ${safeApiKey}`;
+  }
+
+  const cleanGenParams: Record<string, any> = {};
+  if (generationParams) {
+    if (generationParams.temperature !== undefined) cleanGenParams.temperature = generationParams.temperature;
+    if (generationParams.topP !== undefined) cleanGenParams.top_p = generationParams.topP;
+    if (generationParams.topK !== undefined) cleanGenParams.top_k = generationParams.topK;
+    if (generationParams.frequencyPenalty !== undefined) cleanGenParams.frequency_penalty = generationParams.frequencyPenalty;
+    if (generationParams.presencePenalty !== undefined) cleanGenParams.presence_penalty = generationParams.presencePenalty;
+  }
+
+  let url = '';
+  let payload: any = {};
+  const shouldStream = Boolean(stream && onStreamChunk);
+
+  if (provider === ExternalProvider.Anthropic) {
+    url = `${baseUrl}/messages`;
+    payload = {
+      model,
+      ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
+      system: enhancedSystemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+      temperature: cleanGenParams.temperature,
+      top_p: cleanGenParams.top_p,
+      top_k: cleanGenParams.top_k,
+      stream: shouldStream
+    };
+  } else if (isResponsesApi) {
+    if (baseUrl.includes('/responses')) {
+      url = baseUrl;
+    } else if (provider === ExternalProvider.OpenAI) {
+      url = 'https://api.openai.com/v1/responses';
+    } else {
+      url = `${baseUrl.replace(/\/v1\/?$/, '').replace(/\/chat\/completions$/, '')}/v1/responses`;
+    }
+
+    let input: any;
+    if (config.messages && config.messages.length > 0) {
+      const nonSystemMessages = config.messages.filter((m: any) => m.role !== ChatRole.System);
+      input = nonSystemMessages.map((m: any) => {
+        if (m.role === ChatRole.User) {
+          return { role: 'user', content: m.content };
+        } else if (m.role === ChatRole.Assistant || m.role === ChatRole.Model) {
+          return { role: 'assistant', content: m.content };
+        }
+        return { role: 'user', content: m.content };
+      });
+    } else {
+      input = userPrompt;
+    }
+
+    const schema = structuredOutput ? RESPONSES_API_SCHEMAS[responsesSchema] : null;
+
+    payload = {
+      model,
+      input,
+      ...(enhancedSystemPrompt ? { instructions: enhancedSystemPrompt } : {}),
+      ...(config.maxTokens ? { max_output_tokens: config.maxTokens } : {}),
+      ...(schema ? {
+        text: {
+          format: {
+            type: 'json_schema',
+            name: schema.name,
+            description: schema.description,
+            schema: schema.schema,
+            strict: schema.strict
+          }
+        }
+      } : undefined),
+      stream: shouldStream,
+      ...cleanGenParams
+    };
+
+    Object.keys(payload).forEach(key => {
+      if (payload[key] === undefined) delete payload[key];
+    });
+  } else {
+    url = baseUrl;
+
+    const finalMessages = config.messages || [
+      { role: 'system', content: enhancedSystemPrompt },
+      { role: 'user', content: userPrompt }
+    ];
+
+    payload = {
+      model,
+      messages: finalMessages,
+      ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
+      response_format: structuredOutput && provider !== ExternalProvider.Ollama ? { type: responseFormat } : undefined,
+      stream: shouldStream,
+      ...(tools && tools.length > 0 ? { tools } : {}),
+      ...cleanGenParams
+    };
+    
+    if (cleanGenParams.temperature === undefined) {
+      const defaults = SettingsService.getSettings().defaultGenerationParams;
+      if (defaults && defaults.temperature !== undefined) {
+        payload.temperature = defaults.temperature;
+      }
+    }
+  }
+
+  let lastError: any;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal
+      });
+
+      if (response.status === 429 || response.status >= 500) {
+        if (attempt < maxRetries) {
+          const backoff = retryDelay * Math.pow(2, attempt);
+          logger.warn(`Attempt ${attempt + 1} failed (${response.status}). Retrying in ${backoff}ms...`);
+          await sleep(backoff);
+          continue;
+        } else {
+          const errText = await response.text();
+          throw new Error(`${provider} API Error ${response.status} after ${maxRetries} retries: ${errText}`);
+        }
+      }
+
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`${provider} API Error: ${response.status} - ${err}`);
+      }
+
+      if (shouldStream) {
+        const rawContent = await processStreamResponse(
+          response,
+          provider,
+          (chunk, accumulated, usage) => {
+            console.log('externalApiService callExternalApi wrapper - usage:', usage);
+            onStreamChunk!(chunk, accumulated, streamPhase, usage);
+          },
+          signal,
+          apiType
+        );
+
+        if (!rawContent) {
+          logger.warn("Streaming returned empty content");
+          throw new Error("Streaming returned empty content");
+        }
+
+        if (!structuredOutput) {
+          return rawContent;
+        }
+        return parseJsonContent(rawContent);
+      }
+
+      const data = await response.json();
+
+      if (provider === ExternalProvider.Anthropic) {
+        const content = data.content?.[0]?.text || "";
+        return parseJsonContent(content);
+      } else if (isResponsesApi) {
+        const output = data.output || [];
+        const messageOutput = output.find((o: any) => o.type === 'message') || output[0];
+
+        let rawContent = '';
+        if (messageOutput?.content) {
+          if (Array.isArray(messageOutput.content)) {
+            rawContent = messageOutput.content
+              .filter((c: any) => c.type === 'output_text')
+              .map((c: any) => c.text)
+              .join('');
+          } else if (typeof messageOutput.content === 'string') {
+            rawContent = messageOutput.content;
+          }
+        }
+
+        if (!rawContent && data.text) {
+          rawContent = typeof data.text === 'string' ? data.text : JSON.stringify(data.text);
+        }
+
+        if (!rawContent) {
+          logger.warn("Responses API returned empty content", data);
+          throw new Error("Responses API returned empty content (check console for details)");
+        }
+
+        if (!structuredOutput) {
+          return rawContent;
+        }
+
+        const parsed = parseJsonContent(rawContent);
+        return parsed;
+      } else {
+        const choice = data.choices?.[0];
+        const message = choice?.message;
+
+        let rawContent = message?.content;
+        if (!rawContent && !message?.tool_calls) {
+          rawContent = message?.reasoning || message?.reasoning_content || "";
+        }
+
+        if (message?.tool_calls) {
+          rawContent = rawContent || "";
+          for (const tc of message.tool_calls) {
+            rawContent += `\n<tool_call>\n${JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments) }, null, 2)}\n</tool_call>\n`;
+          }
+        }
+
+        if (!rawContent) {
+          logger.warn("Provider returned empty content", data);
+          throw new Error("Provider returned empty content (check console for details)");
+        }
+
+        if (structuredOutput && provider === ExternalProvider.Ollama) {
+          const parsed = parseJsonContent(rawContent);
+          return parsed;
+        }
+
+        if (!structuredOutput) {
+          return rawContent;
+        }
+
+        const parsed = parseJsonContent(rawContent);
+        return parsed;
+      }
+
+    } catch (err: any) {
+      if (err.name === 'AbortError') throw err;
+
+      lastError = err;
+
+      if (attempt < maxRetries) {
+        const backoff = retryDelay * Math.pow(2, attempt);
+        logger.warn(`Attempt ${attempt + 1} network error. Retrying in ${backoff}ms...`, err);
+        await sleep(backoff);
+        continue;
+      }
+    }
+  }
+
+  throw lastError;
+};

@@ -3,5 +3,7 @@ export enum DeepPhase {
   Retrieval = 'retrieval',
   Derivation = 'derivation',
   Writer = 'writer',
-  Rewriter = 'rewriter'
+  Rewriter = 'rewriter',
+  Responder = 'responder',
+  UserAgent = 'userAgent'
 }

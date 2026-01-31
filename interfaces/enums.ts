@@ -68,3 +68,11 @@ export { ChatRole } from './enums/ChatRole';
 // Prompt-related enums
 export { PromptCategory } from './enums/PromptCategory';
 export { PromptRole } from './enums/PromptRole';
+
+// Settings panel enums
+export { SettingsPanelTab } from './enums/SettingsPanelTab';
+export { ApiSubTab } from './enums/ApiSubTab';
+
+// Theme and classification enums
+export { ThemeMode } from './enums/ThemeMode';
+export { ClassificationMethod } from './enums/ClassificationMethod';

@@ -1,7 +1,14 @@
 import { useCallback } from 'react';
 import type { Dispatch, SetStateAction, MutableRefObject } from 'react';
 
-import { GenerationService, createGenerationService } from '../services/generationService';
+import { createGenerationService } from '../services/generationService';
+import {
+    retryItem as retryItemOp,
+    retrySave as retrySaveOp,
+    retryAllFailed as retryAllFailedOp,
+    syncAllUnsavedToDb as syncAllUnsavedToDbOp,
+    saveItemToDb as saveItemToDbOp
+} from '../services/generation/retryOperations';
 import { SessionService } from '../services/sessionService';
 import type { CompleteGenerationConfig, RuntimePromptConfig } from '../interfaces';
 import type { SynthLogItem } from '../types';
@@ -70,7 +77,7 @@ export function useGenerationActions({
     }, [buildGenerationConfig]);
 
     const retryItem = useCallback(async (id: string) => {
-        await GenerationService.retryItem(
+        await retryItemOp(
             id,
             sessionUid,
             environment,
@@ -83,7 +90,7 @@ export function useGenerationActions({
     }, [environment, generateSingleItem, refreshLogs, sessionUid, setRetryingIds, updateDbStats, visibleLogs]);
 
     const retrySave = useCallback(async (id: string) => {
-        await GenerationService.retrySave(
+        await retrySaveOp(
             id,
             sessionUid,
             visibleLogs,
@@ -94,7 +101,7 @@ export function useGenerationActions({
     }, [refreshLogs, sessionUid, setRetryingIds, updateDbStats, visibleLogs]);
 
     const retryAllFailed = useCallback(async () => {
-        await GenerationService.retryAllFailed(
+        await retryAllFailedOp(
             sessionUid,
             environment,
             concurrency,
@@ -107,7 +114,7 @@ export function useGenerationActions({
     }, [concurrency, environment, generateSingleItem, isInvalidLog, refreshLogs, sessionUid, setRetryingIds, visibleLogs]);
 
     const syncAllUnsavedToDb = useCallback(async () => {
-        await GenerationService.syncAllUnsavedToDb(
+        await syncAllUnsavedToDbOp(
             sessionUid,
             isInvalidLog,
             refreshLogs,
@@ -118,7 +125,7 @@ export function useGenerationActions({
     const saveItemToDb = useCallback(async (id: string) => {
         setSavingToDbIds((prev: Set<string>) => new Set([...prev, id]));
         try {
-            await GenerationService.saveItemToDb(
+            await saveItemToDbOp(
                 id,
                 sessionUid,
                 visibleLogs,
