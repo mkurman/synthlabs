@@ -29,25 +29,10 @@ import { DataSource, Environment, ProviderType as ProviderTypeEnum, ExternalProv
 import type { CompleteGenerationConfig } from './interfaces';
 import { toast } from './services/toastService';
 import { confirmService } from './services/confirmService';
-import LogFeed from './components/LogFeed';
-import AnalyticsDashboard from './components/AnalyticsDashboard';
-import VerifierPanel from './components/VerifierPanel';
-import SettingsPanel from './components/SettingsPanel';
-import CloudLoadModal from './components/modals/CloudLoadModal';
-import OverwriteModal from './components/modals/OverwriteModal';
-import SessionConfigPanel from './components/panels/SessionConfigPanel';
-import ControlPanel from './components/panels/ControlPanel';
-import DataSourcePanel from './components/panels/DataSourcePanel';
-import ProviderConfigPanel from './components/panels/ProviderConfigPanel';
-import GenerationPromptPanel from './components/panels/GenerationPromptPanel';
-import UserAgentConfigPanel from './components/panels/UserAgentConfigPanel';
-import DeepPhaseTabsPanel from './components/panels/DeepPhaseTabsPanel';
-import ConversationRewritePanel from './components/panels/ConversationRewritePanel';
-import EngineHeaderPanel from './components/panels/EngineHeaderPanel';
-import AppNavbar from './components/layout/AppNavbar';
-import FeedControlBar from './components/layout/FeedControlBar';
-import { ToastContainer } from './components/Toast';
-import { ConfirmModalContainer } from './components/ConfirmModal';
+import AppOverlays from './components/layout/AppOverlays';
+import AppMainContent from './components/layout/AppMainContent';
+import AppHeader from './components/layout/AppHeader';
+import { useAppViewProps } from './hooks/useAppViewProps';
 
 export default function App() {
     // --- State: Modes ---
@@ -1255,29 +1240,190 @@ export default function App() {
         });
     }, [refreshPrompts]);
 
+    const { sidebarProps, feedProps, verifierProps } = useAppViewProps({
+        sessionName,
+        environment,
+        onLoadSession: handleLoadSession,
+        onSaveSession: handleSaveSession,
+        onCloudLoadOpen: handleCloudLoadOpen,
+        onCloudSave: handleCloudSave,
+        appMode,
+        onAppModeChange: setAppMode,
+        isRunning,
+        isPaused,
+        progress,
+        dataSourceMode,
+        prefetchState,
+        error,
+        isStreamingEnabled,
+        onStreamingChange: setIsStreamingEnabled,
+        onStart: handleStart,
+        onPause: pauseGeneration,
+        onResume: resumeGeneration,
+        onStop: stopGeneration,
+        totalLogCount,
+        invalidLogCount,
+        detectedTaskType,
+        autoRoutedPromptSet,
+        showMiniDbPanel: environment === Environment.Production,
+        dbStats,
+        sparklineHistory,
+        unsavedCount: getUnsavedCount(),
+        onSyncAll: syncAllUnsavedToDb,
+        onRetryAllFailed: retryAllFailed,
+        onStartNewSession: startNewSession,
+        engineMode,
+        onEngineModeChange: setEngineMode,
+        sessionPromptSet,
+        onSessionPromptSetChange: setSessionPromptSet,
+        availablePromptSets,
+        provider,
+        externalProvider,
+        externalModel,
+        apiType,
+        externalApiKey,
+        customBaseUrl,
+        externalProviders: EXTERNAL_PROVIDERS,
+        onProviderSelect: handleProviderSelect,
+        onApiTypeChange: setApiType,
+        onExternalModelChange: setExternalModel,
+        onExternalApiKeyChange: setExternalApiKey,
+        onCustomBaseUrlChange: setCustomBaseUrl,
+        ollamaStatus,
+        ollamaModels,
+        ollamaLoading,
+        onRefreshOllamaModels: refreshOllamaModels,
+        modelSelectorProvider: provider === ProviderTypeEnum.Gemini ? ProviderTypeEnum.Gemini : externalProvider,
+        modelSelectorApiKey: provider === ProviderTypeEnum.Gemini
+            ? SettingsService.getApiKey('gemini')
+            : (externalApiKey || SettingsService.getApiKey(externalProvider)),
+        modelSelectorPlaceholder: provider === ProviderTypeEnum.Gemini ? 'gemini-2.0-flash-exp' : 'Select or enter model',
+        defaultCustomBaseUrl: SettingsService.getCustomBaseUrl(),
+        generationParams,
+        onGenerationParamsChange: setGenerationParams,
+        systemPrompt,
+        converterPrompt,
+        onSystemPromptChange: setSystemPrompt,
+        onConverterPromptChange: setConverterPrompt,
+        onLoadRubric: handleLoadRubric,
+        onSaveRubric: handleSaveRubric,
+        onOptimizePrompt: optimizePrompt,
+        isOptimizing,
+        fileInputRef,
+        hfConfig,
+        onHfConfigChange: setHfConfig,
+        activeDeepTab,
+        onActiveDeepTabChange: setActiveDeepTab,
+        deepConfig,
+        onUpdatePhase: updateDeepPhase,
+        onCopyToAll: copyDeepConfigToAll,
+        conversationRewriteMode,
+        onConversationRewriteModeChange: setConversationRewriteMode,
+        onDisableUserAgent: () => setUserAgentConfig(prev => ({ ...prev, enabled: false })),
+        userAgentConfig,
+        onUserAgentConfigChange: setUserAgentConfig,
+        concurrency,
+        onConcurrencyChange: setConcurrency,
+        sleepTime,
+        onSleepTimeChange: setSleepTime,
+        maxRetries,
+        onMaxRetriesChange: setMaxRetries,
+        retryDelay,
+        onRetryDelayChange: setRetryDelay,
+        topicCategory,
+        onTopicCategoryChange: setTopicCategory,
+        isGeneratingTopic,
+        onGenerateRandomTopic: generateRandomTopic,
+        geminiTopic,
+        onGeminiTopicChange: setGeminiTopic,
+        rowsToFetch,
+        onRowsToFetchChange: setRowsToFetch,
+        skipRows,
+        onSkipRowsChange: setSkipRows,
+        hfStructure,
+        hfSearchResults,
+        isSearchingHF,
+        showHFResults,
+        setShowHFResults,
+        onHFSearch: handleHFSearch,
+        onSelectHFDataset: handleSelectHFDataset,
+        onConfigChange: handleConfigChange,
+        onSplitChange: handleSplitChange,
+        prefetchColumns,
+        isPrefetching,
+        availableColumns,
+        detectedColumns,
+        hfTotalRows,
+        hfPreviewData,
+        isLoadingHfPreview,
+        onClearHfPreview: () => setHfPreviewData([]),
+        converterInputText,
+        setConverterInputText,
+        setRowsToFetch,
+        sourceFileInputRef,
+        onLoadSourceFile: handleLoadSourceFile,
+        onDataSourceModeChange: handleDataSourceModeChange,
+        viewMode,
+        logFilter,
+        hasInvalidLogs,
+        showLatestOnly,
+        feedPageSize,
+        onViewModeChange: setViewMode,
+        onLogFilterChange: setLogFilter,
+        onShowLatestOnlyChange: setShowLatestOnly,
+        onFeedPageSizeChange: setFeedPageSize,
+        visibleLogs,
+        filteredLogCount,
+        currentPage,
+        onPageChange: handlePageChange,
+        onRetry: retryItem,
+        onRetrySave: retrySave,
+        onSaveToDb: saveItemToDb,
+        onDelete: handleDeleteLog,
+        onHalt: haltStreamingItem,
+        retryingIds,
+        savingIds: savingToDbIds,
+        streamingConversations: streamingConversationsRef.current,
+        streamingVersion: streamingConversationsVersion,
+        sessionUid
+    });
+
     return (
         <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
-            {/* Modals */}
-            <CloudLoadModal
-                isOpen={showCloudLoadModal}
-                sessions={cloudSessions}
-                isLoading={isCloudLoading}
-                onSelect={handleCloudSessionSelect}
-                onDelete={handleCloudSessionDelete}
-                onClose={() => setShowCloudLoadModal(false)}
-            />
-
-            <OverwriteModal
-                isOpen={showOverwriteModal}
+            <AppOverlays
+                showCloudLoadModal={showCloudLoadModal}
+                cloudSessions={cloudSessions}
+                isCloudLoading={isCloudLoading}
+                onCloudSelect={handleCloudSessionSelect}
+                onCloudDelete={handleCloudSessionDelete}
+                onCloudClose={() => setShowCloudLoadModal(false)}
+                showOverwriteModal={showOverwriteModal}
                 totalLogCount={totalLogCount}
-                onDownloadAndContinue={() => { exportJsonl(); setTimeout(() => { setShowOverwriteModal(false); startGeneration(true); }, 500); }}
-                onContinue={() => { setShowOverwriteModal(false); startGeneration(true); }}
-                onStartNew={() => { setShowOverwriteModal(false); startGeneration(false); }}
-                onCancel={() => setShowOverwriteModal(false)}
+                onOverwriteDownloadAndContinue={() => {
+                    exportJsonl();
+                    setTimeout(() => {
+                        setShowOverwriteModal(false);
+                        startGeneration(true);
+                    }, 500);
+                }}
+                onOverwriteContinue={() => {
+                    setShowOverwriteModal(false);
+                    startGeneration(true);
+                }}
+                onOverwriteStartNew={() => {
+                    setShowOverwriteModal(false);
+                    startGeneration(false);
+                }}
+                onOverwriteCancel={() => setShowOverwriteModal(false)}
+                showSettings={showSettings}
+                onSettingsClose={() => setShowSettings(false)}
+                onSettingsChanged={async () => {
+                    refreshPrompts();
+                    await refreshLogs();
+                }}
             />
 
-            {/* Navbar */}
-            <AppNavbar
+            <AppHeader
                 appView={appView}
                 environment={environment}
                 totalLogCount={totalLogCount}
@@ -1287,256 +1433,13 @@ export default function App() {
                 onSettingsOpen={() => setShowSettings(true)}
             />
 
-            {/* Main Content Area */}
-            {appView === 'verifier' ? (
-                <main className="max-w-7xl mx-auto p-4 mt-4 pb-20">
-                    <VerifierPanel
-                        currentSessionUid={sessionUid}
-                        modelConfig={{
-                            provider: provider,
-                            externalProvider: externalProvider,
-                            externalModel: externalModel,
-                            apiKey: provider === 'external' ? externalApiKey : '', // Or handle appropriately
-                            externalApiKey: externalApiKey
-                        }}
-                    />
-                </main>
-            ) : (
-                <main className="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-6 mt-4 pb-20">
-
-                    {/* Sidebar Controls (CREATOR MODE) */}
-                    <div className="lg:col-span-4 space-y-6">
-
-                        {/* Session Manager */}
-                        <SessionConfigPanel
-                            sessionName={sessionName}
-                            environment={environment}
-                            onLoadSession={handleLoadSession}
-                            onSaveSession={handleSaveSession}
-                            onCloudLoadOpen={handleCloudLoadOpen}
-                            onCloudSave={handleCloudSave}
-                        />
-
-                        <ControlPanel
-                            appMode={appMode}
-                            environment={environment}
-                            isRunning={isRunning}
-                            isPaused={isPaused}
-                            progress={progress}
-                            dataSourceMode={dataSourceMode}
-                            prefetchState={prefetchState}
-                            error={error}
-                            isStreamingEnabled={isStreamingEnabled}
-                            onStreamingChange={setIsStreamingEnabled}
-                            onAppModeChange={setAppMode}
-                            onStart={handleStart}
-                            onPause={pauseGeneration}
-                            onResume={resumeGeneration}
-                            onStop={stopGeneration}
-                            totalLogCount={totalLogCount}
-                            invalidLogCount={invalidLogCount}
-                            detectedTaskType={detectedTaskType}
-                            autoRoutedPromptSet={autoRoutedPromptSet}
-                            showMiniDbPanel={environment === Environment.Production}
-                            dbStats={dbStats}
-                            sparklineHistory={sparklineHistory}
-                            unsavedCount={getUnsavedCount()}
-                            onSyncAll={syncAllUnsavedToDb}
-                            onRetryAllFailed={retryAllFailed}
-                            onStartNewSession={startNewSession}
-                        />
-
-                        {/* Model Config, Source Config, Prompt Editor... (Same as before) */}
-                        <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5 space-y-4">
-                            <EngineHeaderPanel
-                                engineMode={engineMode}
-                                onEngineModeChange={setEngineMode}
-                                sessionPromptSet={sessionPromptSet}
-                                onSessionPromptSetChange={setSessionPromptSet}
-                                availablePromptSets={availablePromptSets}
-                            />
-                            {engineMode === 'regular' ? (
-                                <div className="animate-in fade-in slide-in-from-left-2 duration-300 space-y-4">
-                                    <ProviderConfigPanel
-                                        provider={provider}
-                                        externalProvider={externalProvider}
-                                        externalModel={externalModel}
-                                        apiType={apiType}
-                                        externalApiKey={externalApiKey}
-                                        customBaseUrl={customBaseUrl}
-                                        externalProviders={EXTERNAL_PROVIDERS}
-                                        providerSelectValue={provider === ProviderTypeEnum.Gemini ? 'gemini' : externalProvider}
-                                        onProviderSelect={handleProviderSelect}
-                                        onApiTypeChange={setApiType}
-                                        onExternalModelChange={setExternalModel}
-                                        onExternalApiKeyChange={setExternalApiKey}
-                                        onCustomBaseUrlChange={setCustomBaseUrl}
-                                        ollamaStatus={ollamaStatus}
-                                        ollamaModels={ollamaModels}
-                                        ollamaLoading={ollamaLoading}
-                                        onRefreshOllamaModels={refreshOllamaModels}
-                                        modelSelectorProvider={provider === ProviderTypeEnum.Gemini ? ProviderTypeEnum.Gemini : externalProvider}
-                                        modelSelectorApiKey={provider === ProviderTypeEnum.Gemini
-                                            ? SettingsService.getApiKey('gemini')
-                                            : (externalApiKey || SettingsService.getApiKey(externalProvider))}
-                                        modelSelectorPlaceholder={provider === ProviderTypeEnum.Gemini ? 'gemini-2.0-flash-exp' : 'Select or enter model'}
-                                        defaultCustomBaseUrl={SettingsService.getCustomBaseUrl()}
-                                    />
-                                    <GenerationPromptPanel
-                                        generationParams={generationParams}
-                                        onGenerationParamsChange={setGenerationParams}
-                                        appMode={appMode}
-                                        systemPrompt={systemPrompt}
-                                        converterPrompt={converterPrompt}
-                                        onSystemPromptChange={setSystemPrompt}
-                                        onConverterPromptChange={setConverterPrompt}
-                                        onLoadRubric={handleLoadRubric}
-                                        onSaveRubric={handleSaveRubric}
-                                        onOptimizePrompt={optimizePrompt}
-                                        isOptimizing={isOptimizing}
-                                        fileInputRef={fileInputRef}
-                                        dataSourceMode={dataSourceMode}
-                                        hfConfig={hfConfig}
-                                        onHfConfigChange={setHfConfig}
-                                    />
-                                </div>
-                            ) : (
-                                <div className="space-y-4">
-                                    <DeepPhaseTabsPanel
-                                        activeDeepTab={activeDeepTab}
-                                        onActiveDeepTabChange={setActiveDeepTab}
-                                        deepConfig={deepConfig}
-                                        onUpdatePhase={updateDeepPhase}
-                                        onCopyToAll={copyDeepConfigToAll}
-                                    />
-
-                                    <ConversationRewritePanel
-                                        appMode={appMode}
-                                        dataSourceMode={dataSourceMode}
-                                        conversationRewriteMode={conversationRewriteMode}
-                                        onConversationRewriteModeChange={setConversationRewriteMode}
-                                        onDisableUserAgent={() => setUserAgentConfig(prev => ({ ...prev, enabled: false }))}
-                                        hfConfig={hfConfig}
-                                        onHfConfigChange={setHfConfig}
-                                    />
-
-                                    <UserAgentConfigPanel
-                                        userAgentConfig={userAgentConfig}
-                                        onUserAgentConfigChange={setUserAgentConfig}
-                                        onDisableConversationRewrite={() => setConversationRewriteMode(false)}
-                                    />
-                                </div>
-                            )}
-                            {/* Generation Params & Retry Config */}
-                            <div className="pt-2 border-t border-slate-800 grid grid-cols-2 gap-3">
-                                <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Concurrency</label><input type="number" min="1" max="50" value={concurrency} onChange={e => setConcurrency(Math.max(1, parseInt(e.target.value) || 1))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none" /></div>
-                                <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Sleep (ms)</label><input type="number" min="0" step="100" value={sleepTime} onChange={e => setSleepTime(Math.max(0, parseInt(e.target.value) || 0))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none" /></div>
-                                <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Max Retries</label><input type="number" min="0" max="10" value={maxRetries} onChange={e => setMaxRetries(Math.max(0, parseInt(e.target.value) || 0))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none" /></div>
-                                <div className="space-y-1"><label className="text-[10px] text-slate-500 font-bold uppercase">Retry Delay</label><input type="number" min="500" step="500" value={retryDelay} onChange={e => setRetryDelay(Math.max(500, parseInt(e.target.value) || 500))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none" /></div>
-                            </div>
-                        </div>
-
-                        <DataSourcePanel
-                            dataSourceMode={dataSourceMode}
-                            onDataSourceModeChange={handleDataSourceModeChange}
-                            topicCategory={topicCategory}
-                            onTopicCategoryChange={setTopicCategory}
-                            isGeneratingTopic={isGeneratingTopic}
-                            onGenerateRandomTopic={generateRandomTopic}
-                            geminiTopic={geminiTopic}
-                            onGeminiTopicChange={setGeminiTopic}
-                            rowsToFetch={rowsToFetch}
-                            onRowsToFetchChange={setRowsToFetch}
-                            skipRows={skipRows}
-                            onSkipRowsChange={setSkipRows}
-                            hfConfig={hfConfig}
-                            setHfConfig={setHfConfig}
-                            hfStructure={hfStructure}
-                            hfSearchResults={hfSearchResults}
-                            isSearchingHF={isSearchingHF}
-                            showHFResults={showHFResults}
-                            setShowHFResults={setShowHFResults}
-                            onHFSearch={handleHFSearch}
-                            onSelectHFDataset={handleSelectHFDataset}
-                            onConfigChange={handleConfigChange}
-                            onSplitChange={handleSplitChange}
-                            prefetchColumns={prefetchColumns}
-                            isPrefetching={isPrefetching}
-                            availableColumns={availableColumns}
-                            detectedColumns={detectedColumns}
-                            concurrency={concurrency}
-                            hfTotalRows={hfTotalRows}
-                            hfPreviewData={hfPreviewData}
-                            isLoadingHfPreview={isLoadingHfPreview}
-                            onClearHfPreview={() => setHfPreviewData([])}
-                            converterInputText={converterInputText}
-                            onConverterInputChange={(value) => {
-                                setConverterInputText(value);
-                                setRowsToFetch(value.split('\n').filter((l: string) => l.trim()).length);
-                            }}
-                            sourceFileInputRef={sourceFileInputRef}
-                            onLoadSourceFile={handleLoadSourceFile}
-                        />
-
-                        {/* Prompt Editor (Same) */}
-
-                    </div>
-
-                    {/* Feed / Analytics (CREATOR MODE) */}
-                    <div className="lg:col-span-8">
-                        <FeedControlBar
-                            viewMode={viewMode}
-                            logFilter={logFilter}
-                            hasInvalidLogs={hasInvalidLogs}
-                            showLatestOnly={showLatestOnly}
-                            feedPageSize={feedPageSize}
-                            onViewModeChange={setViewMode}
-                            onLogFilterChange={setLogFilter}
-                            onShowLatestOnlyChange={setShowLatestOnly}
-                            onFeedPageSizeChange={setFeedPageSize}
-                        />
-
-                        {viewMode === ViewMode.Feed ? (
-                            <LogFeed
-                                logs={visibleLogs}
-                                pageSize={feedPageSize}
-                                totalLogCount={filteredLogCount}
-                                currentPage={currentPage}
-                                onPageChange={handlePageChange}
-                                onRetry={retryItem}
-                                onRetrySave={retrySave}
-                                onSaveToDb={saveItemToDb}
-                                onDelete={handleDeleteLog}
-                                onHalt={haltStreamingItem}
-                                retryingIds={retryingIds}
-                                savingIds={savingToDbIds}
-                                isProdMode={environment === 'production'}
-                                streamingConversations={logFilter === 'live' ? streamingConversationsRef.current : undefined}
-                                streamingVersion={streamingConversationsVersion}
-                                showLatestOnly={showLatestOnly}
-                                onShowLatestOnlyChange={setShowLatestOnly}
-                            />
-                        ) : (
-                            <AnalyticsDashboard logs={visibleLogs} />
-                        )}
-                    </div>
-                </main>
-            )}
-
-            {/* Settings Panel */}
-            <SettingsPanel
-                isOpen={showSettings}
-                onClose={() => setShowSettings(false)}
-                onSettingsChanged={async () => {
-                    refreshPrompts();
-                    // Refresh logs to pick up any storage changes
-                    await refreshLogs();
-                }}
+            <AppMainContent
+                appView={appView}
+                verifierProps={verifierProps}
+                sidebarProps={sidebarProps}
+                feedProps={feedProps}
             />
 
-            {/* Toast Notifications */}
-            <ToastContainer />
-            <ConfirmModalContainer />
         </div>
     );
 }
