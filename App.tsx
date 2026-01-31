@@ -1,10 +1,4 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import {
-    RefreshCcw, FileEdit,
-    Settings, Cpu, RefreshCw,
-    Wand2, Upload, Save, FileText, BrainCircuit,
-    MessageSquare, Layers, Search, PenTool, GitBranch
-} from 'lucide-react';
 
 import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider, ApiType,
@@ -45,13 +39,15 @@ import SessionConfigPanel from './components/panels/SessionConfigPanel';
 import ControlPanel from './components/panels/ControlPanel';
 import DataSourcePanel from './components/panels/DataSourcePanel';
 import ProviderConfigPanel from './components/panels/ProviderConfigPanel';
+import GenerationPromptPanel from './components/panels/GenerationPromptPanel';
+import UserAgentConfigPanel from './components/panels/UserAgentConfigPanel';
+import DeepPhaseTabsPanel from './components/panels/DeepPhaseTabsPanel';
+import ConversationRewritePanel from './components/panels/ConversationRewritePanel';
+import EngineHeaderPanel from './components/panels/EngineHeaderPanel';
 import AppNavbar from './components/layout/AppNavbar';
 import FeedControlBar from './components/layout/FeedControlBar';
-import GenerationParamsInput from './components/GenerationParamsInput';
-import ModelSelector from './components/ModelSelector';
 import { ToastContainer } from './components/Toast';
 import { ConfirmModalContainer } from './components/ConfirmModal';
-import DeepPhaseConfigPanel from './components/DeepPhaseConfigPanel';
 
 export default function App() {
     // --- State: Modes ---
@@ -1352,52 +1348,13 @@ export default function App() {
 
                         {/* Model Config, Source Config, Prompt Editor... (Same as before) */}
                         <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5 space-y-4">
-                            {/* ... (Engine, Deep Config, Gen Params logic same as before, simplified for brevity in this update) ... */}
-                            {/* Re-injecting previous render logic for brevity since it didn't change materially other than being in the sidebar */}
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                                    <Cpu className="w-4 h-4 text-slate-400" /> ENGINE
-                                </h3>
-                                <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800">
-                                    <button onClick={() => setEngineMode(EngineModeEnum.Regular)} className={`px-2 py-1 text-[10px] font-bold rounded transition-all ${engineMode === 'regular' ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>REGULAR</button>
-                                    <button onClick={() => setEngineMode(EngineModeEnum.Deep)} className={`px-2 py-1 text-[10px] font-bold rounded transition-all flex items-center gap-1 ${engineMode === 'deep' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
-                                        <Layers className="w-3 h-3" /> DEEP
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Session-level Prompt Set Override */}
-                            <div className="space-y-1">
-                                <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
-                                    <FileText className="w-3 h-3" /> Prompts (Session)
-                                </label>
-                                <div className="flex gap-1">
-                                    <select
-                                        value={sessionPromptSet || ''}
-                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSessionPromptSet(e.target.value || null)}
-                                        className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none"
-                                    >
-                                        <option value="">{SettingsService.getSettings().promptSet || 'default'} (your default)</option>
-                                        {availablePromptSets.filter((s: string) => s !== (SettingsService.getSettings().promptSet || 'default')).map((setId: string) => (
-                                            <option key={setId} value={setId}>{setId}</option>
-                                        ))}
-                                    </select>
-                                    {sessionPromptSet && (
-                                        <button
-                                            onClick={() => setSessionPromptSet(null)}
-                                            className="px-2 py-1 text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded border border-slate-700 transition-colors"
-                                            title="Reset to your default prompt set"
-                                        >
-                                            Reset
-                                        </button>
-                                    )}
-                                </div>
-                                {sessionPromptSet && (
-                                    <p className="text-[9px] text-amber-400/70">
-                                        Session override active — will not persist after reload
-                                    </p>
-                                )}
-                            </div>
+                            <EngineHeaderPanel
+                                engineMode={engineMode}
+                                onEngineModeChange={setEngineMode}
+                                sessionPromptSet={sessionPromptSet}
+                                onSessionPromptSetChange={setSessionPromptSet}
+                                availablePromptSets={availablePromptSets}
+                            />
                             {engineMode === 'regular' ? (
                                 <div className="animate-in fade-in slide-in-from-left-2 duration-300 space-y-4">
                                     <ProviderConfigPanel
@@ -1425,290 +1382,49 @@ export default function App() {
                                         modelSelectorPlaceholder={provider === ProviderTypeEnum.Gemini ? 'gemini-2.0-flash-exp' : 'Select or enter model'}
                                         defaultCustomBaseUrl={SettingsService.getCustomBaseUrl()}
                                     />
-                                    {/* Generation Parameters */}
-                                    <div className="pt-2 border-t border-slate-800/50">
-                                        <GenerationParamsInput
-                                            params={generationParams}
-                                            onChange={setGenerationParams}
-                                            label="Generation Parameters"
-                                        />
-                                    </div>
-
-                                    {/* System Prompt */}
-                                    <div className="space-y-2">
-                                        <div className="flex items-center justify-between">
-                                            <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
-                                                <Settings className="w-3 h-3" /> System Prompt
-                                            </label>
-                                            <div className="flex items-center gap-1">
-                                                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 text-[9px] px-1.5 py-1 rounded transition-colors">
-                                                    <Upload className="w-2.5 h-2.5" /> Load
-                                                </button>
-                                                <input type="file" ref={fileInputRef} onChange={handleLoadRubric} className="hidden" accept=".txt,.md,.json" />
-                                                <button onClick={handleSaveRubric} className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 text-[9px] px-1.5 py-1 rounded transition-colors">
-                                                    <Save className="w-2.5 h-2.5" /> Save
-                                                </button>
-                                                <button onClick={optimizePrompt} disabled={isOptimizing} className="bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 text-[9px] px-1.5 py-1 rounded flex items-center gap-1 transition-all">
-                                                    {isOptimizing ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />} Optimize
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <textarea
-                                            value={appMode === 'generator' ? systemPrompt : converterPrompt}
-                                            onChange={e => appMode === 'generator' ? setSystemPrompt(e.target.value) : setConverterPrompt(e.target.value)}
-                                            className="w-full h-40 bg-slate-950 border border-slate-700 rounded-lg p-2 text-[9px] font-mono text-slate-400 focus:border-indigo-500 outline-none resize-y leading-relaxed"
-                                            spellCheck={false}
-                                            placeholder={appMode === 'generator' ? "# ROLE..." : "# CONVERTER ROLE..."}
-                                        />
-                                    </div>
-
-                                    {/* Max Traces for messages columns - visible in regular mode for HF/manual sources */}
-                                    {(dataSourceMode === DataSource.HuggingFace || dataSourceMode === DataSource.Manual) && (
-                                        <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg space-y-2">
-                                            <p className="text-[10px] text-slate-400">
-                                                When processing messages/conversation columns, limit the number of turns to rewrite:
-                                            </p>
-                                            <div className="flex items-center gap-3">
-                                                <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                                                    <Layers className="w-3 h-3" /> Max Traces
-                                                </label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    value={hfConfig.maxMultiTurnTraces || ''}
-                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHfConfig({ ...hfConfig, maxMultiTurnTraces: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
-                                                    className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
-                                                    placeholder="All"
-                                                />
-                                                <span className="text-[10px] text-slate-500">Empty = process all traces</span>
-                                            </div>
-                                        </div>
-                                    )}
+                                    <GenerationPromptPanel
+                                        generationParams={generationParams}
+                                        onGenerationParamsChange={setGenerationParams}
+                                        appMode={appMode}
+                                        systemPrompt={systemPrompt}
+                                        converterPrompt={converterPrompt}
+                                        onSystemPromptChange={setSystemPrompt}
+                                        onConverterPromptChange={setConverterPrompt}
+                                        onLoadRubric={handleLoadRubric}
+                                        onSaveRubric={handleSaveRubric}
+                                        onOptimizePrompt={optimizePrompt}
+                                        isOptimizing={isOptimizing}
+                                        fileInputRef={fileInputRef}
+                                        dataSourceMode={dataSourceMode}
+                                        hfConfig={hfConfig}
+                                        onHfConfigChange={setHfConfig}
+                                    />
                                 </div>
                             ) : (
-                                <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-                                    <div className="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 mb-4 overflow-x-auto no-scrollbar">
-                                        <button onClick={() => setActiveDeepTab(DeepPhase.Meta)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Meta ? 'bg-purple-600 text-white' : 'text-slate-500 hover:text-white'}`}><BrainCircuit className="w-3.5 h-3.5" /></button>
-                                        <button onClick={() => setActiveDeepTab(DeepPhase.Retrieval)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Retrieval ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}><Search className="w-3.5 h-3.5" /></button>
-                                        <button onClick={() => setActiveDeepTab(DeepPhase.Derivation)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Derivation ? 'bg-amber-600 text-white' : 'text-slate-500 hover:text-white'}`}><GitBranch className="w-3.5 h-3.5" /></button>
-                                        <button onClick={() => setActiveDeepTab(DeepPhase.Writer)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Writer ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-white'}`}><PenTool className="w-3.5 h-3.5" /></button>
-                                        <button onClick={() => setActiveDeepTab(DeepPhase.Rewriter)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Rewriter ? 'bg-pink-600 text-white' : 'text-slate-500 hover:text-white'}`}><FileEdit className="w-3.5 h-3.5" /></button>
-                                    </div>
-                                    {activeDeepTab === DeepPhase.Writer && (
-                                        <DeepPhaseConfigPanel
-                                            title="Step 4: The Writer (Synthesis)"
-                                            icon={<PenTool className="w-4 h-4" />}
-                                            phase={deepConfig.phases.writer}
-                                            onUpdatePhase={(updates) => updateDeepPhase('writer', updates)}
-                                            onCopyToAll={() => copyDeepConfigToAll('writer')}
-                                        />
-                                    )}
-                                    {activeDeepTab === DeepPhase.Meta && (
-                                        <DeepPhaseConfigPanel
-                                            title="Step 1: Meta-Analysis"
-                                            icon={<BrainCircuit className="w-4 h-4" />}
-                                            phase={deepConfig.phases.meta}
-                                            onUpdatePhase={(updates) => updateDeepPhase('meta', updates)}
-                                            onCopyToAll={() => copyDeepConfigToAll('meta')}
-                                        />
-                                    )}
-                                    {activeDeepTab === DeepPhase.Retrieval && (
-                                        <DeepPhaseConfigPanel
-                                            title="Step 2: Retrieval & Constraints"
-                                            icon={<Search className="w-4 h-4" />}
-                                            phase={deepConfig.phases.retrieval}
-                                            onUpdatePhase={(updates) => updateDeepPhase('retrieval', updates)}
-                                            onCopyToAll={() => copyDeepConfigToAll('retrieval')}
-                                        />
-                                    )}
-                                    {activeDeepTab === DeepPhase.Derivation && (
-                                        <DeepPhaseConfigPanel
-                                            title="Step 3: Logical Derivation"
-                                            icon={<GitBranch className="w-4 h-4" />}
-                                            phase={deepConfig.phases.derivation}
-                                            onUpdatePhase={(updates) => updateDeepPhase('derivation', updates)}
-                                            onCopyToAll={() => copyDeepConfigToAll('derivation')}
-                                        />
-                                    )}
-                                    {activeDeepTab === DeepPhase.Rewriter && (
-                                        <DeepPhaseConfigPanel
-                                            title="Step 5: Response Rewriter (Optional)"
-                                            icon={<FileEdit className="w-4 h-4" />}
-                                            phase={deepConfig.phases.rewriter}
-                                            onUpdatePhase={(updates) => updateDeepPhase('rewriter', updates)}
-                                            onCopyToAll={() => copyDeepConfigToAll('rewriter')}
-                                        />
-                                    )}
+                                <div className="space-y-4">
+                                    <DeepPhaseTabsPanel
+                                        activeDeepTab={activeDeepTab}
+                                        onActiveDeepTabChange={setActiveDeepTab}
+                                        deepConfig={deepConfig}
+                                        onUpdatePhase={updateDeepPhase}
+                                        onCopyToAll={copyDeepConfigToAll}
+                                    />
 
-                                    {/* Conversation Trace Rewriting Section - supported in both converter and generator modes */}
-                                    {(appMode === 'converter' || appMode === 'generator') && (dataSourceMode === DataSource.HuggingFace || dataSourceMode === DataSource.Manual) && (
-                                        <div className="mt-4 pt-4 border-t border-slate-700">
-                                            <div className="flex items-center justify-between mb-3">
-                                                <div className="flex items-center gap-2">
-                                                    <RefreshCcw className="w-4 h-4 text-amber-400" />
-                                                    <span className="text-sm font-medium text-white">Generate/Rewrite Conversation Traces</span>
-                                                </div>
-                                                <button
-                                                    onClick={() => {
-                                                        const newValue = !conversationRewriteMode;
-                                                        setConversationRewriteMode(newValue);
-                                                        // Auto-disable multi-turn if enabling conversation rewrite
-                                                        if (newValue) {
-                                                            setUserAgentConfig(prev => ({ ...prev, enabled: false }));
-                                                        }
-                                                    }}
-                                                    className={`w-10 h-5 rounded-full transition-all relative ${conversationRewriteMode ? 'bg-amber-600' : 'bg-slate-700'}`}
-                                                >
-                                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${conversationRewriteMode ? 'left-5' : 'left-0.5'}`} />
-                                                </button>
-                                            </div>
-                                            {conversationRewriteMode && (
-                                                <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-lg animate-in fade-in duration-200 space-y-3">
-                                                    <p className="text-[10px] text-amber-300/70">
-                                                        Process existing conversation columns (messages/conversation) and rewrite only the {'<think>...</think>'} reasoning traces using symbolic notation.
-                                                        User messages and final answers are preserved unchanged.
-                                                    </p>
-                                                    <div className="flex items-center gap-3">
-                                                        <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                                                            <Layers className="w-3 h-3" /> Max Traces
-                                                        </label>
-                                                        <input
-                                                            type="number"
-                                                            min="0"
-                                                            value={hfConfig.maxMultiTurnTraces || ''}
-                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHfConfig({ ...hfConfig, maxMultiTurnTraces: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0) })}
-                                                            className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-amber-500 outline-none"
-                                                            placeholder="All"
-                                                        />
-                                                        <span className="text-[10px] text-slate-500">Empty = process all traces</span>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
+                                    <ConversationRewritePanel
+                                        appMode={appMode}
+                                        dataSourceMode={dataSourceMode}
+                                        conversationRewriteMode={conversationRewriteMode}
+                                        onConversationRewriteModeChange={setConversationRewriteMode}
+                                        onDisableUserAgent={() => setUserAgentConfig(prev => ({ ...prev, enabled: false }))}
+                                        hfConfig={hfConfig}
+                                        onHfConfigChange={setHfConfig}
+                                    />
 
-                                    {/* User Agent (Multi-Turn) Section */}
-
-                                    <div className="mt-4 pt-4 border-t border-slate-700">
-                                        <div className="flex items-center justify-between mb-3">
-                                            <div className="flex items-center gap-2">
-                                                <MessageSquare className="w-4 h-4 text-cyan-400" />
-                                                <span className="text-sm font-medium text-white">User Agent (Multi-Turn)</span>
-                                            </div>
-                                            <button
-                                                onClick={() => {
-                                                    const newEnabled = !userAgentConfig.enabled;
-                                                    setUserAgentConfig(prev => ({ ...prev, enabled: newEnabled }));
-                                                    // Auto-disable conversation rewrite mode if enabling multi-turn
-                                                    if (newEnabled) {
-                                                        setConversationRewriteMode(false);
-                                                    }
-                                                }}
-                                                className={`w-10 h-5 rounded-full transition-all relative ${userAgentConfig.enabled ? 'bg-cyan-600' : 'bg-slate-700'}`}
-                                            >
-                                                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${userAgentConfig.enabled ? 'left-5' : 'left-0.5'}`} />
-                                            </button>
-
-                                        </div>
-                                        {userAgentConfig.enabled && (
-                                            <div className="space-y-3 p-3 bg-cyan-500/5 border border-cyan-500/20 rounded-lg animate-in fade-in duration-200">
-                                                <p className="text-[10px] text-cyan-300/70">Generates follow-up questions from a simulated user after DEEP reasoning.</p>
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    <div className="space-y-1">
-                                                        <label className="text-[10px] text-slate-500 font-bold uppercase flex justify-between">
-                                                            <span>Follow-up Turns</span>
-                                                            <span className="text-cyan-400">{userAgentConfig.followUpCount}</span>
-                                                        </label>
-                                                        <input
-                                                            type="range"
-                                                            min={1}
-                                                            max={10}
-                                                            value={userAgentConfig.followUpCount}
-                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUserAgentConfig(prev => ({ ...prev, followUpCount: parseInt(e.target.value) }))}
-                                                            className="w-full accent-cyan-500"
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        <label className="text-[10px] text-slate-500 font-bold uppercase">Responder</label>
-                                                        <select
-                                                            value={userAgentConfig.responderPhase}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setUserAgentConfig(prev => ({ ...prev, responderPhase: e.target.value as ResponderPhase }))}
-                                                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-cyan-500 outline-none"
-                                                        >
-                                                            <option value={ResponderPhase.Writer}>Writer</option>
-                                                            <option value={ResponderPhase.Rewriter}>Rewriter</option>
-                                                            <option value={ResponderPhase.Responder}>Custom Responder</option>
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-1">
-                                                    <label className="text-[10px] text-slate-500 font-bold uppercase">User Agent Provider</label>
-                                                    <div className="flex bg-slate-950 p-0.5 rounded border border-slate-700">
-                                                        <button onClick={() => setUserAgentConfig(prev => ({ ...prev, provider: ProviderTypeEnum.Gemini }))} className={`flex-1 py-1 text-[10px] font-medium rounded transition-all ${userAgentConfig.provider === ProviderTypeEnum.Gemini ? 'bg-cyan-600 text-white' : 'text-slate-400'}`}>Gemini</button>
-                                                        <button onClick={() => setUserAgentConfig(prev => ({ ...prev, provider: ProviderTypeEnum.External }))} className={`flex-1 py-1 text-[10px] font-medium rounded transition-all ${userAgentConfig.provider === ProviderTypeEnum.External ? 'bg-cyan-600 text-white' : 'text-slate-400'}`}>External</button>
-                                                    </div>
-                                                </div>
-                                                {userAgentConfig.provider === 'external' && (
-                                                    <div className="grid grid-cols-2 gap-2">
-                                                        <div className="space-y-1">
-                                                            <label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label>
-                                                            <select
-                                                                value={userAgentConfig.externalProvider}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setUserAgentConfig(prev => ({ ...prev, externalProvider: e.target.value as ExternalProvider }))}
-                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none"
-                                                            >
-                                                                {EXTERNAL_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}
-                                                            </select>
-                                                        </div>
-                                                        <div className="space-y-1">
-                                                            <label className="text-[10px] text-slate-500 font-bold uppercase">Model</label>
-                                                            <ModelSelector
-                                                                provider={userAgentConfig.externalProvider}
-                                                                value={userAgentConfig.model}
-                                                                onChange={(model) => setUserAgentConfig(prev => ({ ...prev, model }))}
-                                                                apiKey={userAgentConfig.apiKey || SettingsService.getApiKey(userAgentConfig.externalProvider)}
-                                                                customBaseUrl={userAgentConfig.customBaseUrl}
-                                                                placeholder="Select model"
-                                                            />
-                                                        </div>
-                                                        <div className="space-y-1">
-                                                            <label className="text-[10px] text-slate-500 font-bold uppercase">API Type</label>
-                                                            <select
-                                                                value={userAgentConfig.apiType || 'chat'}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setUserAgentConfig(prev => ({ ...prev, apiType: e.target.value as ApiType }))}
-                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none"
-                                                                title="API Type: chat=completions, responses=responses API"
-                                                            >
-                                                                <option value="chat">Chat</option>
-                                                                <option value="responses">Responses</option>
-                                                            </select>
-                                                        </div>
-                                                        <div className="space-y-1">
-                                                            <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
-                                                            <input
-                                                                type="password"
-                                                                value={userAgentConfig.apiKey}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUserAgentConfig(prev => ({ ...prev, apiKey: e.target.value }))}
-                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none"
-                                                            />
-                                                        </div>
-                                                        {userAgentConfig.externalProvider === 'other' && (
-                                                            <div className="col-span-2 space-y-1">
-                                                                <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={userAgentConfig.customBaseUrl}
-                                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUserAgentConfig(prev => ({ ...prev, customBaseUrl: e.target.value }))}
-                                                                    placeholder="https://api.example.com/v1"
-                                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none"
-                                                                />
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
+                                    <UserAgentConfigPanel
+                                        userAgentConfig={userAgentConfig}
+                                        onUserAgentConfigChange={setUserAgentConfig}
+                                        onDisableConversationRewrite={() => setConversationRewriteMode(false)}
+                                    />
                                 </div>
                             )}
                             {/* Generation Params & Retry Config */}
