@@ -65,7 +65,7 @@ export default function DeepPhaseConfigPanel({
             >
               <option value={ProviderType.Gemini}>Native Gemini</option>
               {EXTERNAL_PROVIDERS.map(ep => (
-                <option key={ep} value={ep}>{ep === 'other' ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}</option>
+                <option key={ep} value={ep}>{ep === ExternalProvider.Other ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}</option>
               ))}
             </select>
           </div>

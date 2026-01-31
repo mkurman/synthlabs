@@ -1,5 +1,5 @@
 
-import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, StreamChunkCallback, StreamPhase, LogItemStatus, ProviderType, ApiType, ChatRole } from '../types';
+import { DeepConfig, DeepPhaseConfig, SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, StreamChunkCallback, StreamPhase, LogItemStatus, ProviderType, ApiType, ChatRole, EngineMode, ExternalProvider } from '../types';
 import { PromptCategory, PromptRole } from '../interfaces/enums';
 import { JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../constants';
 import * as GeminiService from './geminiService';
@@ -47,7 +47,7 @@ const executePhase = async (
   streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<{ result: any; model: string; input: string; duration: number; timestamp: string }> => {
   const { id, provider, externalProvider, apiType, apiKey, model, customBaseUrl, promptSchema: configSchema } = phaseConfig;
-  const modelName = provider === 'gemini' ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
+  const modelName = provider === ProviderType.Gemini ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
   const startTime = Date.now();
   const timestamp = new Date().toISOString();
 
@@ -61,7 +61,7 @@ const executePhase = async (
 
   let result;
   try {
-    if (provider === 'gemini') {
+    if (provider === ProviderType.Gemini) {
       // For Gemini, build the prompt with schema
       const geminiSystemPrompt = schema 
         ? (structuredOutput 
@@ -148,7 +148,7 @@ const executePhase = async (
 };
 
 const getModelName = (cfg: DeepPhaseConfig) => {
-  if (cfg.provider === 'gemini') return 'Gemini 3 Flash';
+  if (cfg.provider === ProviderType.Gemini) return 'Gemini 3 Flash';
   return `${cfg.externalProvider}/${cfg.model}`;
 };
 
@@ -407,7 +407,7 @@ CRITICAL: " + JSON_OUTPUT_FALLBACK + " Format: { "answer": "Your final refined a
       answer: finalAnswer,
       timestamp: new Date().toISOString(),
       modelUsed: `DEEP: ${config.phases.writer.model}`,
-      provider: config.phases.writer.provider === 'gemini' ? 'gemini' : config.phases.writer.externalProvider,
+      provider: config.phases.writer.provider === ProviderType.Gemini ? ProviderType.Gemini : config.phases.writer.externalProvider,
       deepMetadata: {
         meta: getModelName(config.phases.meta),
         retrieval: getModelName(config.phases.retrieval),
@@ -665,7 +665,7 @@ export const orchestrateMultiTurnConversation = async (
         seed_preview: displayQuery.substring(0, 150) + (displayQuery.length > 150 ? "..." : ""),
         full_seed: initialInput,
         query: initialQuery || displayQuery,
-        reasoning: messages.filter(m => m.role === 'assistant').map(m => m.reasoning).filter(Boolean).join('\n---\n'),
+        reasoning: messages.filter(m => m.role === ChatRole.Assistant).map(m => m.reasoning).filter(Boolean).join('\n---\n'),
         answer: "Halted",
         timestamp: new Date().toISOString(),
         duration: Date.now() - startTime,
@@ -692,7 +692,7 @@ export const orchestrateMultiTurnConversation = async (
       full_seed: initialInput,
       query: initialQuery || displayQuery,
 
-      reasoning: messagesForLog.filter(m => m.role === 'assistant').map(m => m.reasoning).filter(Boolean).join('\n---\n'),
+      reasoning: messagesForLog.filter(m => m.role === ChatRole.Assistant).map(m => m.reasoning).filter(Boolean).join('\n---\n'),
       answer: messagesForLog[messagesForLog.length - 1]?.content || "",
       timestamp: new Date().toISOString(),
       duration: Date.now() - startTime,
@@ -761,7 +761,7 @@ const callAgent = async (
     responsesSchema = 'userAgentResponse';
   }
   
-  if (config.provider === 'gemini') {
+  if (config.provider === ProviderType.Gemini) {
     // Build system prompt from schema
     let geminiSystemPrompt = '\n\n' + JSON_OUTPUT_FALLBACK;
     if (schema) {
@@ -811,7 +811,7 @@ const callAgent = async (
 interface ConversationRewriteParams {
   messages: ChatMessage[];            // Existing conversation
   config: DeepConfig;                 // DEEP mode config
-  engineMode: 'regular' | 'deep';     // Which engine to use
+  engineMode: EngineMode;     // Which engine to use
   converterPrompt?: string;           // For regular mode
   signal?: AbortSignal;
   maxRetries: number;
@@ -821,8 +821,8 @@ interface ConversationRewriteParams {
   maxTraces?: number;                 // Max number of assistant messages to process (undefined = all)
   // For regular mode external API
   regularModeConfig?: {
-    provider: 'gemini' | 'external';
-    externalProvider: string;
+    provider: ProviderType;
+    externalProvider: ExternalProvider;
     apiKey: string;
     model: string;
     customBaseUrl: string;
@@ -880,7 +880,7 @@ export const orchestrateConversationRewrite = async (
 
   try {
     let assistantIndex = 0;
-    const allAssistants = messages.filter(m => m.role === 'assistant').length;
+    const allAssistants = messages.filter(m => m.role === ChatRole.Assistant).length;
     const totalAssistants = maxTraces && maxTraces > 0 ? Math.min(maxTraces, allAssistants) : allAssistants;
 
     for (let i = 0; i < messages.length; i++) {
@@ -889,7 +889,7 @@ export const orchestrateConversationRewrite = async (
       const message = messages[i];
 
       // Keep user/system messages unchanged
-      if (message.role !== 'assistant') {
+      if (message.role !== ChatRole.Assistant) {
         rewrittenMessages.push({ ...message });
         continue;
       }
@@ -923,7 +923,7 @@ export const orchestrateConversationRewrite = async (
       }
 
       // Build context for rewriting - include the user question from previous message
-      const prevUserMsg = messages.slice(0, i).reverse().find(m => m.role === 'user');
+      const prevUserMsg = messages.slice(0, i).reverse().find(m => m.role === ChatRole.User);
       const userContext = prevUserMsg ? `[USER QUERY]:\n${prevUserMsg.content}\n\n` : '';
 
       let rewriteInput = "";
@@ -941,7 +941,7 @@ ${outsideThinkContent}
 
       let newReasoning: string;
 
-      if (engineMode === 'deep') {
+      if (engineMode === EngineMode.Deep) {
         // Use DEEP pipeline for rewriting
         const deepResult = await orchestrateDeepReasoning({
           input: rewriteInput,
@@ -973,7 +973,7 @@ ${outsideThinkContent}
         }
       } else {
         // Use regular converter with schema-based approach
-        if (regularModeConfig?.provider === 'gemini') {
+        if (regularModeConfig?.provider === ProviderType.Gemini) {
           const geminiPrompt = converterPrompt || PromptService.getSystemPrompt(PromptCategory.Converter, PromptRole.Writer, promptSet, structuredOutput);
           const result = await GeminiService.generateGenericJSON(
             rewriteInput,
@@ -1038,7 +1038,7 @@ ${outsideThinkContent}
       let assistantCount = 0;
       let cutoffIndex = rewrittenMessages.length;
       for (let i = 0; i < rewrittenMessages.length; i++) {
-        if (rewrittenMessages[i].role === 'assistant') {
+        if (rewrittenMessages[i].role === ChatRole.Assistant) {
           assistantCount++;
           if (assistantCount >= maxTraces) {
             cutoffIndex = i + 1; // Include this assistant message
@@ -1053,7 +1053,7 @@ ${outsideThinkContent}
     const messagesForLog = messagesTruncated ? finalMessages.slice(-MAX_MESSAGES_TO_STORE) : finalMessages;
 
     // Build the display query from first user message
-    const firstUser = messagesForLog.find(m => m.role === 'user');
+    const firstUser = messagesForLog.find(m => m.role === ChatRole.User);
     const displayQuery = firstUser?.content || "Conversation";
 
     // Check if the rewrite was aborted/halted
@@ -1067,13 +1067,13 @@ ${outsideThinkContent}
         full_seed: rewrittenMessages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
         query: displayQuery,
         reasoning: rewrittenMessages
-          .filter(m => m.role === 'assistant' && m.reasoning)
+          .filter(m => m.role === ChatRole.Assistant && m.reasoning)
           .map(m => m.reasoning)
           .join('\n---\n'),
         answer: "Halted",
         timestamp: new Date().toISOString(),
         duration: Date.now() - startTime,
-        modelUsed: engineMode === 'deep' ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
+        modelUsed: engineMode === EngineMode.Deep ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
         isError: true,
         status: LogItemStatus.ERROR,
         error: 'Halted by user',
@@ -1085,7 +1085,7 @@ ${outsideThinkContent}
 
     // Combine all reasoning traces for the main reasoning field
     const allReasoning = messagesForLog
-      .filter(m => m.role === 'assistant' && m.reasoning)
+      .filter(m => m.role === ChatRole.Assistant && m.reasoning)
       .map(m => m.reasoning)
       .join('\n---\n');
 
@@ -1100,7 +1100,7 @@ ${outsideThinkContent}
       timestamp: new Date().toISOString(),
       duration: Date.now() - startTime,
       tokenCount: messagesForLog.reduce((acc, m) => acc + Math.round((m.content?.length || 0) / 4), 0),
-      modelUsed: engineMode === 'deep' ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
+      modelUsed: engineMode === EngineMode.Deep ? `DEEP-REWRITE: ${config.phases.writer.model}` : `REWRITE: ${regularModeConfig?.model || 'converter'}`,
       isMultiTurn: true,
       messages: messagesForLog,
       messagesTruncated

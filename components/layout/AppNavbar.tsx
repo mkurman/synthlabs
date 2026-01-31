@@ -1,12 +1,12 @@
 import { Cpu, Beaker, ShieldCheck, Laptop, Cloud, Download, Settings } from 'lucide-react';
-import { AppView } from '../../interfaces/enums';
+import { AppView, Environment } from '../../interfaces/enums';
 
 interface AppNavbarProps {
   appView: AppView;
-  environment: string;
+  environment: Environment;
   totalLogCount: number;
   onViewChange: (view: AppView) => void;
-  onEnvironmentChange: (env: string) => void;
+  onEnvironmentChange: (env: Environment) => void;
   onExport: () => void;
   onSettingsOpen: () => void;
 }
@@ -23,7 +23,7 @@ export default function AppNavbar({
   return (
     <header 
       className={`sticky top-0 z-20 backdrop-blur border-b transition-colors duration-300 ${
-        environment === 'production' 
+        environment === Environment.Production 
           ? 'bg-indigo-950/80 border-indigo-800' 
           : 'bg-slate-950/80 border-slate-800'
       }`}
@@ -34,7 +34,7 @@ export default function AppNavbar({
           <div className="flex items-center gap-3">
             <div 
               className={`w-8 h-8 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(79,70,229,0.4)] ${
-                environment === 'production' ? 'bg-pink-600' : 'bg-indigo-600'
+                environment === Environment.Production ? 'bg-pink-600' : 'bg-indigo-600'
               }`}
             >
               <Cpu className="w-5 h-5 text-white" />
@@ -75,9 +75,9 @@ export default function AppNavbar({
           {/* Environment Toggle */}
           <div className="bg-slate-900 rounded-full p-1 border border-slate-700 flex items-center relative">
             <button
-              onClick={() => onEnvironmentChange('development')}
+              onClick={() => onEnvironmentChange(Environment.Development)}
               className={`relative z-10 px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all ${
-                environment === 'development' 
+                environment === Environment.Development 
                   ? 'bg-slate-700 text-white shadow-sm' 
                   : 'text-slate-500 hover:text-slate-300'
               }`}
@@ -85,9 +85,9 @@ export default function AppNavbar({
               <Laptop className="w-3 h-3" /> Dev
             </button>
             <button
-              onClick={() => onEnvironmentChange('production')}
+              onClick={() => onEnvironmentChange(Environment.Production)}
               className={`relative z-10 px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 transition-all ${
-                environment === 'production' 
+                environment === Environment.Production 
                   ? 'bg-pink-600 text-white shadow-sm' 
                   : 'text-slate-500 hover:text-slate-300'
               }`}

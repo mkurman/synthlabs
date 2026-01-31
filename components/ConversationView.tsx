@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings, Edit3, RotateCcw, Check, X, Loader2 } from 'lucide-react';
 import { ChatMessage } from '../types';
+import { ChatRole } from '../interfaces/enums';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import AutoResizeTextarea from './AutoResizeTextarea';
 
@@ -152,7 +153,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                 className={`inline-block w-full text-left rounded-xl px-4 py-3 text-sm leading-relaxed relative ${styles.bubble}`}
                             >
                                 {/* Edit/Rewrite Controls */}
-                                <div className={`absolute top-2 ${msg.role === 'user' ? 'left-2' : 'right-2'} opacity-0 group-hover:opacity-100 transition-opacity flex gap-1`}>
+                                <div className={`absolute top-2 ${msg.role === ChatRole.User ? 'left-2' : 'right-2'} opacity-0 group-hover:opacity-100 transition-opacity flex gap-1`}>
                                     {isEditing ? (
                                         <>
                                             <button onClick={onEditSave} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
@@ -172,7 +173,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                 <Edit3 className="w-3 h-3" />
                                             </button>
                                             {/* User messages: simple rewrite button */}
-                                            {msg.role === 'user' && onRewriteQuery && (
+                                            {msg.role === ChatRole.User && onRewriteQuery && (
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); onRewriteQuery(idx); }}
                                                     disabled={rewritingIndex === idx}
@@ -187,7 +188,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                 </button>
                                             )}
                                             {/* Assistant messages: dropdown with options */}
-                                            {msg.role === 'assistant' && onRewrite && (
+                                            {msg.role === ChatRole.Assistant && onRewrite && (
                                                 <div className="relative">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(showRewriteDropdown === idx ? null : idx); }}
@@ -237,7 +238,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                 </div>
 
                                 {/* Reasoning Toggle for Assistant Messages */}
-                                {msg.role === 'assistant' && (displayReasoning || (rewritingIndex === idx && streamingField === 'reasoning')) && !isEditing && (
+                                {msg.role === ChatRole.Assistant && (displayReasoning || (rewritingIndex === idx && streamingField === 'reasoning')) && !isEditing && (
                                     <div className="mt-2 text-left">
                                         <button
                                             onClick={() => toggleReasoning(idx)}
@@ -285,7 +286,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
 
                             {/* Role Label */}
                             <div
-                                className={`text-[9px] text-slate-600 uppercase font-bold mt-1 ${msg.role === 'user' ? 'text-right mr-1' : 'ml-1'}`}
+                                className={`text-[9px] text-slate-600 uppercase font-bold mt-1 ${msg.role === ChatRole.User ? 'text-right mr-1' : 'ml-1'}`}
                             >
                                 {styles.label}
                             </div>

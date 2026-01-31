@@ -6,13 +6,13 @@ import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import * as PromptSchemaAdapter from './promptSchemaAdapter';
-import { PromptCategory, PromptRole } from '../interfaces/enums';
+import { PromptCategory, PromptRole, ProviderType } from '../interfaces/enums';
 
 // Streaming callback type for real-time content display
 export type RewriterStreamCallback = (chunk: string, accumulated: string) => void;
 
 export interface RewriterConfig {
-    provider: 'gemini' | 'external';
+    provider: ProviderType;
     externalProvider: ExternalProvider;
     apiType?: ApiType; // 'chat' | 'responses' - defaults to 'chat' if not specified
     apiKey: string;
@@ -279,7 +279,7 @@ export async function callRewriterAI(
 ): Promise<string> {
     const schema = config.promptSchema;
 
-    if (config.provider === 'gemini') {
+    if (config.provider === ProviderType.Gemini) {
         // Build system prompt with schema
         let geminiSystemPrompt = '\n\n' + JSON_OUTPUT_FALLBACK;
         if (schema) {
@@ -350,7 +350,7 @@ export async function callRewriterAIStreaming(
 ): Promise<string> {
     const schema = config.promptSchema;
 
-    if (config.provider === 'gemini') {
+    if (config.provider === ProviderType.Gemini) {
         // Build system prompt with schema
         let geminiSystemPrompt = '\n\n' + JSON_OUTPUT_FALLBACK;
         if (schema) {
@@ -410,7 +410,7 @@ export async function callRewriterAIStreamingWithSystemPrompt(
     onChunk: RewriterStreamCallback,
     signal?: AbortSignal
 ): Promise<string> {
-    if (config.provider === 'gemini') {
+    if (config.provider === ProviderType.Gemini) {
         const result = await GeminiService.generateReasoningTrace(
             userPrompt,
             systemPrompt,
@@ -455,7 +455,7 @@ async function callRewriterAIRaw(
     config: RewriterConfig,
     signal?: AbortSignal
 ): Promise<any> {
-    if (config.provider === 'gemini') {
+    if (config.provider === ProviderType.Gemini) {
         const result = await GeminiService.generateReasoningTrace(
             userPrompt,
             systemPrompt,

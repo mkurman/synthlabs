@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2 } from 'lucide-react';
 import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG } from '../services/settingsService';
+import { ExternalProvider, ProviderType } from '../interfaces/enums';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING } from '../services/taskClassifierService';
@@ -8,6 +9,7 @@ import { PROVIDERS } from '../constants';
 import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaModel } from '../services/externalApiService';
 import ModelSelector from './ModelSelector';
 import { ModelListProvider } from '../types';
+import { OllamaStatus } from '../interfaces/enums';
 
 interface SettingsPanelProps {
     isOpen: boolean;
@@ -31,25 +33,25 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
     // Ollama integration state
     const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+    const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>(OllamaStatus.Checking);
     const [ollamaLoading, setOllamaLoading] = useState(false);
 
     // Fetch Ollama models when panel opens
     const refreshOllamaModels = async () => {
         setOllamaLoading(true);
-        setOllamaStatus('checking');
+        setOllamaStatus(OllamaStatus.Checking);
         try {
             const isOnline = await checkOllamaStatus();
             if (isOnline) {
-                setOllamaStatus('online');
+                setOllamaStatus(OllamaStatus.Online);
                 const models = await fetchOllamaModels();
                 setOllamaModels(models);
             } else {
-                setOllamaStatus('offline');
+                setOllamaStatus(OllamaStatus.Offline);
                 setOllamaModels([]);
             }
         } catch {
-            setOllamaStatus('offline');
+            setOllamaStatus(OllamaStatus.Offline);
             setOllamaModels([]);
         }
         setOllamaLoading(false);
@@ -156,8 +158,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     };
 
     // All providers including Gemini for unified dropdowns (Gemini first)
-    const allProviders = ['gemini', ...AVAILABLE_PROVIDERS];
-    const allProvidersForKeys = ['gemini', ...AVAILABLE_PROVIDERS.filter(p => p !== 'other'), 'other'];
+    const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];
+    const allProvidersForKeys = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS.filter(p => p !== ExternalProvider.Other), ExternalProvider.Other];
 
     if (!isOpen) return null;
 
@@ -262,12 +264,12 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 'chutes': import.meta.env.VITE_CHUTES_API_KEY,
                                                 'huggingface': import.meta.env.VITE_HF_TOKEN,
                                             };
-                                            const keyValue = provider === 'gemini'
+                                            const keyValue = provider === ProviderType.Gemini
                                                 ? settings.geminiApiKey
                                                 : settings.providerKeys[provider];
                                             const hasEnvVar = envVarMap[provider] && !keyValue;
-                                            const isCustom = provider === 'other';
-                                            const isOllama = provider === 'ollama';
+                                            const isCustom = provider === ExternalProvider.Other;
+                                            const isOllama = provider === ExternalProvider.Ollama;
 
                                             return (
                                                 <div key={provider} className={`flex flex-col gap-2 py-1.5 px-2 bg-slate-900/50 rounded border ${isOllama ? 'border-emerald-800/50' : 'border-slate-800'} hover:border-slate-700`}>
@@ -278,8 +280,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 <span className="text-emerald-400 text-[8px] ml-1">✓</span>
                                                             )}
                                                             {isOllama && (
-                                                                <span className={`text-[8px] ml-1 ${ollamaStatus === 'online' ? 'text-emerald-400' : ollamaStatus === 'offline' ? 'text-red-400' : 'text-yellow-400'}`}>
-                                                                    {ollamaStatus === 'online' ? '● Online' : ollamaStatus === 'offline' ? '● Offline' : '● ...'}
+                                                                <span className={`text-[8px] ml-1 ${ollamaStatus === OllamaStatus.Online ? 'text-emerald-400' : ollamaStatus === OllamaStatus.Offline ? 'text-red-400' : 'text-yellow-400'}`}>
+                                                                    {ollamaStatus === OllamaStatus.Online ? '● Online' : ollamaStatus === OllamaStatus.Offline ? '● Offline' : '● ...'}
                                                                 </span>
                                                             )}
                                                         </div>
@@ -289,7 +291,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     type={showKeys[provider] ? 'text' : 'password'}
                                                                     value={keyValue || ''}
                                                                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                                        if (provider === 'gemini') {
+                                                                        if (provider === ProviderType.Gemini) {
                                                                             updateSetting('geminiApiKey', e.target.value);
                                                                         } else {
                                                                             updateProviderKey(provider, e.target.value);
@@ -320,11 +322,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     value={settings.providerDefaultModels?.[provider] || ''}
                                                                     onChange={(e) => updateDefaultModel(provider, e.target.value)}
                                                                     className="w-36 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-emerald-500 outline-none"
-                                                                    disabled={ollamaStatus !== 'online' || ollamaModels.length === 0}
+                                                                    disabled={ollamaStatus !== OllamaStatus.Online || ollamaModels.length === 0}
                                                                 >
                                                                     <option value="">
-                                                                        {ollamaStatus === 'checking' ? 'Loading...' :
-                                                                            ollamaStatus === 'offline' ? 'Ollama offline' :
+                                                                        {ollamaStatus === OllamaStatus.Checking ? 'Loading...' :
+                                                                            ollamaStatus === OllamaStatus.Offline ? 'Ollama offline' :
                                                                                 ollamaModels.length === 0 ? 'No models' : 'Select model'}
                                                                     </option>
                                                                     {ollamaModels.map(model => (
@@ -347,10 +349,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 provider={provider as ModelListProvider}
                                                                 value={settings.providerDefaultModels?.[provider] || ''}
                                                                 onChange={(model) => updateDefaultModel(provider, model)}
-                                                                apiKey={provider === 'gemini'
+                                                                apiKey={provider === ProviderType.Gemini
                                                                     ? (settings.geminiApiKey || '')
                                                                     : (settings.providerKeys?.[provider] || '')}
-                                                                customBaseUrl={provider === 'other' ? settings.customEndpointUrl : undefined}
+                                                                customBaseUrl={provider === ExternalProvider.Other ? settings.customEndpointUrl : undefined}
                                                                 placeholder="Default Model"
                                                                 className="flex-1 min-w-[220px]"
                                                             />
@@ -368,7 +370,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         </div>
                                                     )}
                                                     {/* Ollama: Show loaded models list */}
-                                                    {isOllama && ollamaStatus === 'online' && ollamaModels.length > 0 && (
+                                                    {isOllama && ollamaStatus === OllamaStatus.Online && ollamaModels.length > 0 && (
                                                         <div className="flex flex-wrap gap-1 pl-28">
                                                             {ollamaModels.slice(0, 6).map(model => {
                                                                 // Ollama model names are typically in the form "family:size" (e.g., "llama2:7b").
@@ -395,7 +397,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             )}
                                                         </div>
                                                     )}
-                                                    {isOllama && ollamaStatus === 'offline' && (
+                                                    {isOllama && ollamaStatus === OllamaStatus.Offline && (
                                                         <div className="text-[9px] text-red-400/80 pl-28">
                                                             Start Ollama with: <code className="bg-slate-800 px-1 rounded">ollama serve</code>
                                                         </div>
@@ -437,7 +439,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 : settings.generalPurposeModel?.provider || 'gemini'}
                                                             onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                                                                 const selectedProvider = e.target.value;
-                                                                const isExternal = selectedProvider !== 'gemini';
+                                                                const isExternal = selectedProvider !== ProviderType.Gemini;
                                                                 updateSetting('generalPurposeModel', {
                                                                     ...settings.generalPurposeModel,
                                                                     ...EMPTY_STEP_CONFIG,
@@ -449,7 +451,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
@@ -538,7 +540,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
@@ -588,7 +590,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
-                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
+                                                                        <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                                     ))}
                                                                 </select>
                                                                 {/* API Type dropdown for external providers */}
@@ -655,7 +657,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
@@ -705,7 +707,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
-                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
+                                                                        <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                                     ))}
                                                                 </select>
                                                                 {/* API Type dropdown for external providers */}

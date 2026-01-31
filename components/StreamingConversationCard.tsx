@@ -13,16 +13,16 @@ interface StreamingConversationCardProps {
 }
 
 // Role styling
-const getRoleStyles = (role: string) => {
+const getRoleStyles = (role: ChatRole) => {
     switch (role) {
-        case 'user':
+        case ChatRole.User:
             return {
                 avatar: 'bg-indigo-500/20 text-indigo-400',
                 bubble: 'bg-indigo-600/30 text-indigo-100 border border-indigo-500/30',
                 icon: User,
                 label: 'User'
             };
-        case 'assistant':
+        case ChatRole.Assistant:
         default:
             return {
                 avatar: 'bg-emerald-500/20 text-emerald-400',
@@ -71,17 +71,17 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
         const IconComponent = styles.icon;
 
         return (
-            <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+            <div key={idx} className={`flex gap-3 ${msg.role === ChatRole.User ? 'flex-row-reverse' : ''}`}>
                 {/* Avatar */}
                 <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${styles.avatar}`}>
                     <IconComponent className="w-3.5 h-3.5" />
                 </div>
 
                 {/* Message */}
-                <div className={`flex-1 max-w-[85%] ${msg.role === 'user' ? 'text-right' : ''}`}>
+                <div className={`flex-1 max-w-[85%] ${msg.role === ChatRole.User ? 'text-right' : ''}`}>
                     <div className={`inline-block w-full text-left rounded-lg px-3 py-2 text-xs leading-relaxed ${styles.bubble} ${isStreaming ? 'border-emerald-500/30' : ''}`}>
                         {/* Reasoning toggle for assistant */}
-                        {msg.role === 'assistant' && msg.reasoning && (
+                        {msg.role === ChatRole.Assistant && msg.reasoning && (
                             <div className="mb-2">
                                 <button
                                     onClick={() => toggleReasoning(idx)}
@@ -100,7 +100,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                         )}
                         <p className="whitespace-pre-wrap">{msg.content}</p>
                     </div>
-                    <div className={`text-[8px] text-slate-600 uppercase font-bold mt-0.5 ${msg.role === 'user' ? 'text-right mr-1' : 'ml-1'}`}>
+                    <div className={`text-[8px] text-slate-600 uppercase font-bold mt-0.5 ${msg.role === ChatRole.User ? 'text-right mr-1' : 'ml-1'}`}>
                         {styles.label}
                     </div>
                 </div>

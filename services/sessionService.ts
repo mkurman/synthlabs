@@ -49,6 +49,12 @@ const DEFAULT_REWRITER_CONFIG = {
  * SessionService provides methods for managing application sessions.
  */
 export const SessionService = {
+    buildSessionConfig(config: SessionConfig): SessionConfig {
+        return {
+            ...config,
+            generationParams: config.generationParams || {}
+        };
+    },
     /**
      * Serialize current session state to SessionData format.
      * 

@@ -406,7 +406,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     promptSchema
   } = config;
 
-  let baseUrl = provider === 'other' ? customBaseUrl : PROVIDERS[provider]?.url;
+  let baseUrl = provider === ExternalProvider.Other ? customBaseUrl : PROVIDERS[provider]?.url;
   let responseFormat = structuredOutput ? 'json_object' : 'text';
 
   // Build system prompt from schema if provided
@@ -475,7 +475,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   if (provider === 'anthropic') {
     headers['x-api-key'] = safeApiKey;
     headers['anthropic-version'] = '2023-06-01';
-  } else if (provider === 'ollama' && !safeApiKey) {
+  } else if (provider === ExternalProvider.Ollama && !safeApiKey) {
     headers['Authorization'] = 'Bearer ollama-local';
   } else {
     headers['Authorization'] = `Bearer ${safeApiKey}`;
@@ -595,7 +595,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       // Ollama doesn't support response_format for arrays, only json_object or text
       // So we disable structuredOutput for Ollama when we need arrays
-      response_format: structuredOutput && provider !== 'ollama' ? { type: responseFormat } : undefined,
+      response_format: structuredOutput && provider !== ExternalProvider.Ollama ? { type: responseFormat } : undefined,
       stream: shouldStream,
       ...(tools && tools.length > 0 ? { tools } : {}),
       ...cleanGenParams
@@ -732,7 +732,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
 
         // For Ollama with structuredOutput, we still get text (not json_object) because
         // we disabled response_format for arrays. So we need to parse it.
-        if (structuredOutput && provider === 'ollama') {
+        if (structuredOutput && provider === ExternalProvider.Ollama) {
           const parsed = parseJsonContent(rawContent);
           return parsed;
         }
