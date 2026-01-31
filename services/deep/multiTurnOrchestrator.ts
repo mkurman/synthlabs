@@ -100,10 +100,10 @@ export const orchestrateMultiTurnConversation = async (
       );
       
       if (schemaDefinesAnswer && !generatedResponse.answer) {
-        throw new Error("[MULTI-TURN] Schema requires 'answer' field but model did not produce it.");
+        throw new Error(`[MULTI-TURN] Schema requires '${OutputFieldName.Answer}' field but model did not produce it.`);
       }
       if (schemaDefinesReasoning && !generatedResponse.reasoning) {
-        throw new Error("[MULTI-TURN] Schema requires 'reasoning' field but model did not produce it.");
+        throw new Error(`[MULTI-TURN] Schema requires '${OutputFieldName.Reasoning}' field but model did not produce it.`);
       }
       
       firstResponse = generatedResponse.answer || generatedResponse.reasoning || "No response generated.";
@@ -167,10 +167,10 @@ export const orchestrateMultiTurnConversation = async (
       );
 
       if (schemaDefinesAnswer && !responseResult.answer) {
-        throw new Error("[MULTI-TURN] Schema requires 'answer' field but model did not produce it for follow-up response.");
+        throw new Error(`[MULTI-TURN] Schema requires '${OutputFieldName.Answer}' field but model did not produce it for follow-up response.`);
       }
       if (schemaDefinesReasoning && !responseResult.reasoning) {
-        throw new Error("[MULTI-TURN] Schema requires 'reasoning' field but model did not produce it for follow-up response.");
+        throw new Error(`[MULTI-TURN] Schema requires '${OutputFieldName.Reasoning}' field but model did not produce it for follow-up response.`);
       }
 
       messages.push({

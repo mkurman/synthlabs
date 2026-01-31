@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
 
 import type { VerifierItem } from '../types';
+import { OutputFieldName, VerifierRewriteTarget } from '../interfaces/enums';
 
 interface UseVerifierInlineEditingOptions {
-    editingField: { itemId: string; field: string; messageIndex?: number; originalValue: string } | null;
+    editingField: { itemId: string; field: OutputFieldName.Query | OutputFieldName.Reasoning | OutputFieldName.Answer | VerifierRewriteTarget.MessageAnswer; messageIndex?: number; originalValue: string } | null;
     editValue: string;
-    setEditingField: (value: { itemId: string; field: string; messageIndex?: number; originalValue: string } | null) => void;
+    setEditingField: (value: { itemId: string; field: OutputFieldName.Query | OutputFieldName.Reasoning | OutputFieldName.Answer | VerifierRewriteTarget.MessageAnswer; messageIndex?: number; originalValue: string } | null) => void;
     setEditValue: (value: string) => void;
     setData: (items: VerifierItem[] | ((prev: VerifierItem[]) => VerifierItem[])) => void;
     autoSaveEnabled: boolean;
@@ -23,7 +24,11 @@ export function useVerifierInlineEditing({
     dataSource,
     handleDbUpdate
 }: UseVerifierInlineEditingOptions) {
-    const startEditing = useCallback((itemId: string, field: 'query' | 'reasoning' | 'answer', currentValue: string) => {
+    const startEditing = useCallback((
+        itemId: string,
+        field: OutputFieldName.Query | OutputFieldName.Reasoning | OutputFieldName.Answer,
+        currentValue: string
+    ) => {
         setEditingField({ itemId, field, originalValue: currentValue });
         setEditValue(currentValue);
     }, [setEditValue, setEditingField]);
@@ -41,7 +46,7 @@ export function useVerifierInlineEditing({
         setData((prev: VerifierItem[]) => prev.map(item => {
             if (item.id === editingField.itemId) {
                 let newItem = { ...item };
-                if (editingField.field === 'message' && editingField.messageIndex !== undefined && item.messages) {
+                if (editingField.field === VerifierRewriteTarget.MessageAnswer && editingField.messageIndex !== undefined && item.messages) {
                     const newMessages = [...item.messages];
                     if (newMessages[editingField.messageIndex]) {
                         const thinkMatch = editValue.match(/<think>([\s\S]*?)<\/think>/);
@@ -54,7 +59,11 @@ export function useVerifierInlineEditing({
                         };
                     }
                     newItem = { ...item, messages: newMessages };
-                } else if (['query', 'reasoning', 'answer'].includes(editingField.field)) {
+                } else if (
+                    editingField.field === OutputFieldName.Query ||
+                    editingField.field === OutputFieldName.Reasoning ||
+                    editingField.field === OutputFieldName.Answer
+                ) {
                     newItem = { ...item, [editingField.field]: editValue };
                 }
 

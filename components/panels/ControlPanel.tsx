@@ -3,7 +3,7 @@ import { ProgressStats } from '../../types';
 import { DataSource, Environment, AppMode } from '../../interfaces/enums';
 import { confirmService } from '../../services/confirmService';
 import { PrefetchState } from '../../services/hfPrefetchService';
-import { TaskType } from '../../services/taskClassifierService';
+import { TaskType } from '../../interfaces/enums';
 import MiniDbPanel from '../MiniDbPanel';
 
 interface ControlPanelProps {

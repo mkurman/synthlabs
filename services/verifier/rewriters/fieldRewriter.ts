@@ -1,5 +1,5 @@
 import { VerifierItem } from '../../../types';
-import { PromptCategory, PromptRole } from '../../../interfaces/enums';
+import { PromptCategory, PromptRole, OutputFieldName, VerifierRewriteTarget } from '../../../interfaces/enums';
 import { PromptService } from '../../promptService';
 import { RewriterConfig, RewriterStreamCallback, callRewriterAI, callRewriterAIStreaming, callRewriterAIStreamingWithSystemPrompt } from './aiCaller';
 import { buildItemContext } from './contextBuilder';
@@ -7,7 +7,7 @@ import { buildMessageContext } from './contextBuilder';
 import { buildMessageContextForTarget } from './targetedContextBuilder';
 
 
-export type RewritableField = 'query' | 'reasoning' | 'answer';
+export type RewritableField = OutputFieldName.Query | OutputFieldName.Reasoning | OutputFieldName.Answer;
 
 export interface RewriteFieldParams {
     item: VerifierItem;
@@ -31,9 +31,9 @@ export interface RewriteMessageParams {
 export async function rewriteField(params: RewriteFieldParams): Promise<string> {
     const { item, field, config, signal, promptSet } = params;
 
-    const promptRole = field === 'query'
+    const promptRole = field === OutputFieldName.Query
         ? PromptRole.QueryRewrite
-        : field === 'reasoning'
+        : field === OutputFieldName.Reasoning
             ? PromptRole.ReasoningRewrite
             : PromptRole.AnswerRewrite;
     const schema = config.promptSchema || PromptService.getPromptSchema(PromptCategory.Verifier, promptRole, promptSet);
@@ -57,9 +57,9 @@ export async function rewriteFieldStreaming(
 ): Promise<string> {
     const { item, field, config, signal, promptSet } = params;
 
-    const promptRole = field === 'query'
+    const promptRole = field === OutputFieldName.Query
         ? PromptRole.QueryRewrite
-        : field === 'reasoning'
+        : field === OutputFieldName.Reasoning
             ? PromptRole.ReasoningRewrite
             : PromptRole.AnswerRewrite;
     const schema = config.promptSchema || PromptService.getPromptSchema(PromptCategory.Verifier, promptRole, promptSet);
@@ -111,7 +111,7 @@ export async function rewriteMessageStreaming(
 Given a conversation and a target message, regenerate ONLY the ANSWER.
 Keep the existing reasoning trace exactly as provided.`;
 
-    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'answer');
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, VerifierRewriteTarget.Answer);
 
     const result = await callRewriterAIStreamingWithSystemPrompt(systemPrompt, userPrompt, config, onChunk, signal);
     return result.trim();
@@ -135,7 +135,7 @@ export async function rewriteMessageBothStreaming(
 Given a conversation and a target message, regenerate BOTH the reasoning trace and the answer.
 The reasoning should explain the thought process, and the answer should be the final response.`;
 
-    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'both');
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, VerifierRewriteTarget.Both);
 
     // Return raw string - caller will parse with extractJsonFields
     return await callRewriterAIStreamingWithSystemPrompt(systemPrompt, userPrompt, config, onChunk, signal);

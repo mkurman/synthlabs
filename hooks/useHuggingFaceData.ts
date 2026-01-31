@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { OutputFieldName } from '../interfaces/enums/OutputFieldName';
 import { 
     HuggingFaceConfig, 
     DetectedColumns, 
@@ -15,9 +16,9 @@ import { HFPrefetchManager, PrefetchState } from '../services/hfPrefetchService'
 
 // Column detection helper
 function detectColumns(columns: string[]): DetectedColumns {
-    const inputKeywords = ['input', 'prompt', 'question', 'query', 'instruction', 'text', 'content', 'message'];
-    const outputKeywords = ['output', 'response', 'answer', 'completion', 'result', 'target', 'label'];
-    const reasoningKeywords = ['reasoning', 'think', 'thought', 'explanation', 'rationale', 'logic', 'chain'];
+    const inputKeywords = ['input', 'prompt', 'question', OutputFieldName.Query, 'instruction', 'text', 'content', 'message'];
+    const outputKeywords = ['output', 'response', OutputFieldName.Answer, 'completion', 'result', 'target', 'label'];
+    const reasoningKeywords = [OutputFieldName.Reasoning, 'think', 'thought', 'explanation', 'rationale', 'logic', 'chain'];
 
     const detected: DetectedColumns = { input: [], output: [], all: columns, reasoning: [] };
 

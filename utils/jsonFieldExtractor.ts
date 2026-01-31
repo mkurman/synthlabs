@@ -1,3 +1,5 @@
+import { OutputFieldName } from '../interfaces/enums/OutputFieldName';
+
 /**
  * Utility for extracting JSON fields from partial/streaming JSON content.
  * Handles incomplete JSON where fields are being streamed in.
@@ -70,10 +72,11 @@ export function extractJsonFields(rawJson: string): ExtractedFields {
     }
 
     // Try to find "reasoning" field
+    const reasoningKey = OutputFieldName.Reasoning;
     const reasoningPatterns = [
-        { regex: /"\s*reasoning\s*"\s*:\s*"/i, quote: '"' },
-        { regex: /'\s*reasoning\s*'\s*:\s*'/i, quote: "'" },
-        { regex: /reasoning\s*:\s*"/i, quote: '"' },
+        { regex: new RegExp(`"\\s*${reasoningKey}\\s*"\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`'\\s*${reasoningKey}\\s*'\\s*:\\s*'`, 'i'), quote: "'" },
+        { regex: new RegExp(`${reasoningKey}\\s*:\\s*"`, 'i'), quote: '"' },
     ];
 
     for (const { regex, quote } of reasoningPatterns) {
@@ -98,17 +101,21 @@ export function extractJsonFields(rawJson: string): ExtractedFields {
     }
 
     // Try to find "answer" field (or alternative names like "response", "content", "text")
+    const answerKey = OutputFieldName.Answer;
+    const responseKey = OutputFieldName.Response;
+    const contentKey = OutputFieldName.Content;
+    const textKey = OutputFieldName.Text;
     const answerPatterns = [
-        { regex: /"\s*answer\s*"\s*:\s*"/i, quote: '"' },
-        { regex: /'\s*answer\s*'\s*:\s*'/i, quote: "'" },
-        { regex: /answer\s*:\s*"/i, quote: '"' },
-        { regex: /"\s*response\s*"\s*:\s*"/i, quote: '"' },
-        { regex: /'\s*response\s*'\s*:\s*'/i, quote: "'" },
-        { regex: /response\s*:\s*"/i, quote: '"' },
-        { regex: /"\s*content\s*"\s*:\s*"/i, quote: '"' },
-        { regex: /'\s*content\s*'\s*:\s*'/i, quote: "'" },
-        { regex: /"\s*text\s*"\s*:\s*"/i, quote: '"' },
-        { regex: /'\s*text\s*'\s*:\s*'/i, quote: "'" },
+        { regex: new RegExp(`"\\s*${answerKey}\\s*"\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`'\\s*${answerKey}\\s*'\\s*:\\s*'`, 'i'), quote: "'" },
+        { regex: new RegExp(`${answerKey}\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`"\\s*${responseKey}\\s*"\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`'\\s*${responseKey}\\s*'\\s*:\\s*'`, 'i'), quote: "'" },
+        { regex: new RegExp(`${responseKey}\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`"\\s*${contentKey}\\s*"\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`'\\s*${contentKey}\\s*'\\s*:\\s*'`, 'i'), quote: "'" },
+        { regex: new RegExp(`"\\s*${textKey}\\s*"\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`'\\s*${textKey}\\s*'\\s*:\\s*'`, 'i'), quote: "'" },
     ];
 
     for (const { regex, quote } of answerPatterns) {

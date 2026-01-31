@@ -1,5 +1,5 @@
 import { SynthLogItem } from '../../types';
-import { TaskType } from '../../services/taskClassifierService';
+import { TaskType } from '../enums/TaskType';
 import { PrefetchState } from '../../services/hfPrefetchService';
 import { DeepConfig } from '../../types';
 

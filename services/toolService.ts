@@ -1,4 +1,5 @@
 import { VerifierItem } from '../types';
+import { ToolFieldName } from '../interfaces/enums';
 import * as FirebaseService from './firebaseService';
 
 export interface ToolDefinition {
@@ -58,7 +59,7 @@ export class ToolExecutor {
                 properties: {
                     start: { type: 'number', description: 'Start index (0-based)' },
                     end: { type: 'number', description: 'End index (exclusive)' },
-                    field: { type: 'string', enum: ['query', 'reasoning', 'answer', 'all', 'messages'], description: 'Specific field to retrieve. Defaults to "all" if not specified.' }
+                    field: { type: 'string', enum: [ToolFieldName.Query, ToolFieldName.Reasoning, ToolFieldName.Answer, ToolFieldName.All, ToolFieldName.Messages], description: 'Specific field to retrieve. Defaults to "all" if not specified.' }
                 },
                 required: ['start']
             }
@@ -69,7 +70,7 @@ export class ToolExecutor {
 
             const items = data.slice(safeStart, safeEnd);
 
-            if (field && field !== 'all') {
+            if (field && field !== ToolFieldName.All) {
                 return items.map((item, idx) => ({
                     index: safeStart + idx,
                     [field]: item[field as keyof VerifierItem]
@@ -139,7 +140,7 @@ export class ToolExecutor {
                 type: 'object',
                 properties: {
                     index: { type: 'number' },
-                    field: { type: 'string', enum: ['query', 'reasoning', 'answer'] },
+                    field: { type: 'string', enum: [ToolFieldName.Query, ToolFieldName.Reasoning, ToolFieldName.Answer] },
                     value: { type: 'string', description: 'The new value for the field' }
                 },
                 required: ['index', 'field', 'value']

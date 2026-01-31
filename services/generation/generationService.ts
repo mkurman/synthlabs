@@ -9,7 +9,8 @@ import { logger } from '../../utils/logger';
 import { toast } from '../toastService';
 import { confirmService } from '../confirmService';
 import { createPrefetchManager, PrefetchState } from '../hfPrefetchService';
-import { TaskClassifierService, TaskType } from '../taskClassifierService';
+import { TaskClassifierService } from '../taskClassifierService';
+import { TaskType } from '../../interfaces/enums';
 import { PromptService } from '../promptService';
 import { DEFAULT_HF_PREFETCH_CONFIG } from '../../types';
 import { extractInputContent } from '../../utils/contentExtractor';
@@ -359,7 +360,7 @@ export class GenerationService {
             typeScores[vote.type] = (typeScores[vote.type] || 0) + vote.confidence;
         }
 
-        let bestType: TaskType = 'unknown';
+        let bestType: TaskType = TaskType.Unknown;
         let bestScore = 0;
         for (const [type, score] of Object.entries(typeScores)) {
             if (score > bestScore) {
@@ -412,7 +413,7 @@ export class GenerationService {
                 votes.push(classification);
             } catch (e) {
                 logger.warn('LLM classification failed for sample:', e);
-                votes.push({ type: 'unknown', confidence: 0 });
+                votes.push({ type: TaskType.Unknown, confidence: 0 });
             }
         }
 
@@ -421,7 +422,7 @@ export class GenerationService {
             typeScores[vote.type] = (typeScores[vote.type] || 0) + vote.confidence;
         }
 
-        let bestType: TaskType = 'unknown';
+        let bestType: TaskType = TaskType.Unknown;
         let bestScore = 0;
         for (const [type, score] of Object.entries(typeScores)) {
             if (score > bestScore) {
@@ -921,7 +922,7 @@ export class GenerationService {
                     if (config.provider === ProviderType.Gemini) {
                         let enhancedPrompt = activePrompt;
                         if (!enhancedPrompt.toLowerCase().includes("json")) {
-                            enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
+                            enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with '${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', and '${OutputFieldName.Answer}' fields.`;
                         }
 
                         if (config.appMode === AppMode.Generator) {
@@ -941,7 +942,7 @@ export class GenerationService {
 
                         let enhancedPrompt = activePrompt;
                         if (!enhancedPrompt.toLowerCase().includes("json")) {
-                            enhancedPrompt += "\n\nCRITICAL: You must output ONLY valid JSON with 'query', 'reasoning', and 'answer' fields.";
+                            enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with '${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', and '${OutputFieldName.Answer}' fields.`;
                         }
 
                         const regularStreamState = initStreamingState(1, promptInput, true);

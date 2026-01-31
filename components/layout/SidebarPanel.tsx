@@ -4,7 +4,7 @@ import { ApiType, AppMode, DataSource, DeepPhase, EngineMode, Environment, Exter
 import { OutputField } from '../../interfaces/types/PromptSchema';
 import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
 import { PrefetchState } from '../../services/hfPrefetchService';
-import { TaskType } from '../../services/taskClassifierService';
+import { TaskType } from '../../interfaces/enums';
 import SidebarSessionPanel from './SidebarSessionPanel';
 import SidebarEnginePanel from './SidebarEnginePanel';
 import SidebarDataSourcePanel from './SidebarDataSourcePanel';

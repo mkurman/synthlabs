@@ -1,6 +1,7 @@
 import { VerifierItem } from '../../../types';
+import { VerifierRewriteTarget } from '../../../interfaces/enums';
 
-export type TargetComponent = 'reasoning' | 'answer' | 'both';
+export type TargetComponent = VerifierRewriteTarget.Reasoning | VerifierRewriteTarget.Answer | VerifierRewriteTarget.Both;
 
 /**
  * Builds detailed context for targeted regeneration with specific component selection
@@ -42,7 +43,7 @@ ${msg.content}`;
     }).join('\n\n');
 
     let instructions = '';
-    if (targetComponent === 'reasoning') {
+    if (targetComponent === VerifierRewriteTarget.Reasoning) {
         instructions = `TASK: Regenerate ONLY the REASONING TRACE for the target message.
 - Keep the existing ANSWER exactly as it is (do not output it).
 - Generate new, improved reasoning that leads to this answer.
@@ -52,7 +53,7 @@ Expected Output Format:
 {
   "reasoning": "# 1. Query decomposition..."
 }`;
-    } else if (targetComponent === 'answer') {
+    } else if (targetComponent === VerifierRewriteTarget.Answer) {
         instructions = `TASK: Regenerate ONLY the ANSWER for the target message.
 - Keep the existing REASONING TRACE for reference (do not output it).
 - Generate a new, improved answer based on the reasoning.

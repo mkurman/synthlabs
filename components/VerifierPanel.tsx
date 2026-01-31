@@ -9,7 +9,7 @@ import {
     Sparkles
 } from 'lucide-react';
 import { VerifierItem, ExternalProvider, ProviderType } from '../types';
-import { ChatRole } from '../interfaces/enums';
+import { ChatRole, OutputFieldName, StreamingField, VerifierRewriteTarget } from '../interfaces/enums';
 import * as FirebaseService from '../services/firebaseService';
 import * as VerifierRewriterService from '../services/verifierRewriterService';
 import * as ExternalApiService from '../services/externalApiService';
@@ -102,9 +102,9 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
     const [exportColumns, setExportColumns] = useState<Record<string, boolean>>({});
 
     // Inline Editing State
-    const [editingField, setEditingField] = useState<{ itemId: string; field: string; messageIndex?: number; originalValue: string } | null>(null);
+    const [editingField, setEditingField] = useState<{ itemId: string; field: OutputFieldName.Query | OutputFieldName.Reasoning | OutputFieldName.Answer | VerifierRewriteTarget.MessageAnswer; messageIndex?: number; originalValue: string } | null>(null);
     const [editValue, setEditValue] = useState('');
-    const [rewritingField, setRewritingField] = useState<{ itemId: string; field: string; messageIndex?: number } | null>(null);
+    const [rewritingField, setRewritingField] = useState<{ itemId: string; field: VerifierRewriteTarget; messageIndex?: number } | null>(null);
     const [streamingContent, setStreamingContent] = useState<string>('');  // Real-time streaming content
 
     // Regenerate Dropdown State
@@ -284,7 +284,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
             return;
         }
 
-        setRewritingField({ itemId, field: 'message_query', messageIndex });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageQuery, messageIndex });
         setStreamingContent('');
 
         try {
@@ -370,7 +370,7 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: 'message', messageIndex });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageAnswer, messageIndex });
         setStreamingContent('');  // Clear previous streaming content
 
         try {
@@ -461,7 +461,7 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: 'message_reasoning', messageIndex });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageReasoning, messageIndex });
         setStreamingContent('');  // Clear previous streaming content
 
         try {
@@ -544,7 +544,7 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: 'message_both', messageIndex });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageBoth, messageIndex });
         setStreamingContent('');  // Clear previous streaming content
 
         try {
@@ -612,7 +612,10 @@ Expected Output Format:
         }
     };
 
-    const handleFieldRewrite = async (itemId: string, field: 'query' | 'reasoning' | 'answer') => {
+    const handleFieldRewrite = async (
+        itemId: string,
+        field: VerifierRewriteTarget.Query | VerifierRewriteTarget.Reasoning | VerifierRewriteTarget.Answer
+    ) => {
         const item = data.find(i => i.id === itemId);
         if (!item) return;
 
@@ -632,10 +635,16 @@ Expected Output Format:
 
         try {
             // Use streaming variant for real-time display
+            const rewritableField = field === VerifierRewriteTarget.Query
+                ? OutputFieldName.Query
+                : field === VerifierRewriteTarget.Reasoning
+                    ? OutputFieldName.Reasoning
+                    : OutputFieldName.Answer;
+
             const newValue = await VerifierRewriterService.rewriteFieldStreaming(
                 {
                     item: itemForRewrite,
-                    field,
+                    field: rewritableField,
                     config: rewriterConfig,
                     promptSet: SettingsService.getSettings().promptSet
                 },
@@ -644,11 +653,11 @@ Expected Output Format:
                     const extracted = extractJsonFields(accumulated);
 
                     // Display the extracted field content based on what we're rewriting
-                    if (field === 'reasoning') {
+                    if (field === VerifierRewriteTarget.Reasoning) {
                         setStreamingContent(extracted.reasoning || extracted.answer || accumulated);
-                    } else if (field === 'answer') {
+                    } else if (field === VerifierRewriteTarget.Answer) {
                         setStreamingContent(extracted.answer || extracted.reasoning || accumulated);
-                    } else if (field === 'query') {
+                    } else if (field === VerifierRewriteTarget.Query) {
                         setStreamingContent(extracted.answer || accumulated);
                     } else {
                         // Fallback: show raw content if can't extract field
@@ -660,11 +669,11 @@ Expected Output Format:
             // After streaming completes, save the final value
             const extracted = extractJsonFields(newValue);
             let finalValue = newValue;
-            if (field === 'reasoning') {
+            if (field === VerifierRewriteTarget.Reasoning) {
                 finalValue = extracted.reasoning || extracted.answer || newValue;
-            } else if (field === 'answer') {
+            } else if (field === VerifierRewriteTarget.Answer) {
                 finalValue = extracted.answer || extracted.reasoning || newValue;
-            } else if (field === 'query') {
+            } else if (field === VerifierRewriteTarget.Query) {
                 finalValue = extracted.answer || newValue;
             }
 
@@ -702,7 +711,7 @@ Expected Output Format:
             query: item.query || (item as any).QUERY || item.full_seed || ''
         };
 
-        setRewritingField({ itemId, field: 'both' });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.Both });
         setStreamingContent('');  // Clear previous streaming content
 
         try {
@@ -710,7 +719,7 @@ Expected Output Format:
             const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
                 {
                     item: itemForRewrite,
-                    field: 'reasoning',  // Start with reasoning field prompt
+                    field: OutputFieldName.Reasoning,  // Start with reasoning field prompt
                     config: rewriterConfig,
                     promptSet: SettingsService.getSettings().promptSet
                 },
@@ -831,7 +840,7 @@ Based on the criteria above, provide a 1-5 score.`;
         return filteredData.filter(i => selectedItemIds.has(i.id));
     };
 
-    const handleBulkRewrite = async (mode: 'query' | 'reasoning' | 'answer' | 'both') => {
+    const handleBulkRewrite = async (mode: VerifierRewriteTarget.Query | VerifierRewriteTarget.Reasoning | VerifierRewriteTarget.Answer | VerifierRewriteTarget.Both) => {
         const itemsToProcess = getSelectedItems();
         if (itemsToProcess.length === 0) {
             toast.info("No items selected.");
@@ -872,12 +881,12 @@ Based on the criteria above, provide a 1-5 score.`;
                 };
 
                 try {
-                    if (mode === 'both') {
+                    if (mode === VerifierRewriteTarget.Both) {
                         // Both: Use the same strategy as handleBothRewrite (request reasoning, expect both)
                         const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
                             {
                                 item: itemForRewrite,
-                                field: 'reasoning',
+                                field: OutputFieldName.Reasoning,
                                 config: rewriterConfig,
                                 promptSet: SettingsService.getSettings().promptSet
                             },
@@ -893,10 +902,16 @@ Based on the criteria above, provide a 1-5 score.`;
                         ));
                     } else {
                         // Single field: Reasoning or Answer
+                        const rewritableField = mode === VerifierRewriteTarget.Query
+                            ? OutputFieldName.Query
+                            : mode === VerifierRewriteTarget.Reasoning
+                                ? OutputFieldName.Reasoning
+                                : OutputFieldName.Answer;
+
                         const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
                             {
                                 item: itemForRewrite,
-                                field: mode,
+                                field: rewritableField,
                                 config: rewriterConfig,
                                 promptSet: SettingsService.getSettings().promptSet
                             },
@@ -905,11 +920,11 @@ Based on the criteria above, provide a 1-5 score.`;
 
                         const extracted = extractJsonFields(rawResult);
                         let finalValue = rawResult;
-                        if (mode === 'reasoning') {
+                        if (mode === VerifierRewriteTarget.Reasoning) {
                             finalValue = extracted.reasoning || extracted.answer || rawResult;
-                        } else if (mode === 'answer') {
+                        } else if (mode === VerifierRewriteTarget.Answer) {
                             finalValue = extracted.answer || extracted.reasoning || rawResult;
-                        } else if (mode === 'query') {
+                        } else if (mode === VerifierRewriteTarget.Query) {
                             // extractJsonFields maps 'response'/'query' keys to 'answer' property
                             finalValue = extracted.answer || rawResult;
                         }
@@ -1557,17 +1572,17 @@ Based on the criteria above, provide a 1-5 score.`;
                                 {!isRewritingAll && selectedItemIds.size > 0 && (
                                     <div className="hidden group-hover:block absolute top-full left-0 pt-1 w-48 z-50">
                                         <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2">
-                                            <button onClick={() => handleBulkRewrite('query')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                            <button onClick={() => handleBulkRewrite(VerifierRewriteTarget.Query)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
                                                 Query Only
                                             </button>
-                                            <button onClick={() => handleBulkRewrite('reasoning')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                            <button onClick={() => handleBulkRewrite(VerifierRewriteTarget.Reasoning)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
                                                 Reasoning Only
                                             </button>
-                                            <button onClick={() => handleBulkRewrite('answer')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                            <button onClick={() => handleBulkRewrite(VerifierRewriteTarget.Answer)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
                                                 Answer Only
                                             </button>
                                             <div className="h-px bg-slate-800 my-1"></div>
-                                            <button onClick={() => handleBulkRewrite('both')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-teal-400 hover:text-teal-300 font-bold transition-colors">
+                                            <button onClick={() => handleBulkRewrite(VerifierRewriteTarget.Both)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-teal-400 hover:text-teal-300 font-bold transition-colors">
                                                 Rewrite Both
                                             </button>
                                         </div>
@@ -1759,7 +1774,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     {item.isMultiTurn && <MessageCircle className="w-3 h-3 text-cyan-400" />}
                                                 </h4>
                                                 <div className="flex items-center gap-1">
-                                                    {editingField?.itemId === item.id && editingField.field === 'query' ? (
+                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Query ? (
                                                         <>
                                                             <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
                                                                 <Check className="w-3 h-3" />
@@ -1770,16 +1785,16 @@ Based on the criteria above, provide a 1-5 score.`;
                                                         </>
                                                     ) : (
                                                         <>
-                                                            <button onClick={() => startEditing(item.id, 'query', item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                            <button onClick={() => startEditing(item.id, OutputFieldName.Query, item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
                                                                 <Edit3 className="w-3 h-3" />
                                                             </button>
                                                             <button
-                                                                onClick={() => handleFieldRewrite(item.id, 'query')}
-                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === 'query'}
+                                                                onClick={() => handleFieldRewrite(item.id, VerifierRewriteTarget.Query)}
+                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Query}
                                                                 className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
                                                                 title="AI Rewrite"
                                                             >
-                                                                {rewritingField?.itemId === item.id && rewritingField.field === 'query' ? (
+                                                                {rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Query ? (
                                                                     <Loader2 className="w-3 h-3 animate-spin" />
                                                                 ) : (
                                                                     <RotateCcw className="w-3 h-3" />
@@ -1792,7 +1807,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     )}
                                                 </div>
                                             </div>
-                                            {editingField?.itemId === item.id && editingField.field === 'query' ? (
+                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Query ? (
                                                 <AutoResizeTextarea
                                                     value={editValue}
                                                     onChange={e => setEditValue(e.target.value)}
@@ -1827,7 +1842,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     <ConversationView
                                                         messages={item.messages}
                                                         onEditStart={(idx, content) => {
-                                                            setEditingField({ itemId: item.id, field: 'message', messageIndex: idx, originalValue: content });
+                                                            setEditingField({ itemId: item.id, field: VerifierRewriteTarget.MessageAnswer, messageIndex: idx, originalValue: content });
                                                             setEditValue(content);
                                                         }}
                                                         onEditSave={saveEditing}
@@ -1837,20 +1852,20 @@ Based on the criteria above, provide a 1-5 score.`;
                                                         onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
                                                         onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
                                                         onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
-                                                        editingIndex={editingField?.itemId === item.id && editingField.field === 'message' ? editingField.messageIndex : undefined}
+                                                        editingIndex={editingField?.itemId === item.id && editingField.field === VerifierRewriteTarget.MessageAnswer ? editingField.messageIndex : undefined}
                                                         editValue={editValue}
                                                         rewritingIndex={
                                                             rewritingField?.itemId === item.id &&
-                                                                (rewritingField.field === 'message' || rewritingField.field === 'message_reasoning' || rewritingField.field === 'message_both' || rewritingField.field === 'message_query')
+                                                                (rewritingField.field === VerifierRewriteTarget.MessageAnswer || rewritingField.field === VerifierRewriteTarget.MessageReasoning || rewritingField.field === VerifierRewriteTarget.MessageBoth || rewritingField.field === VerifierRewriteTarget.MessageQuery)
                                                                 ? rewritingField.messageIndex
                                                                 : undefined
                                                         }
                                                         streamingContent={rewritingField?.itemId === item.id ? streamingContent : undefined}
                                                         streamingField={
-                                                            rewritingField?.field === 'message_reasoning' ? 'reasoning' :
-                                                                rewritingField?.field === 'message' ? 'answer' :
-                                                                    rewritingField?.field === 'message_both' ? 'both' :
-                                                                        rewritingField?.field === 'message_query' ? 'query' : undefined
+                                                            rewritingField?.field === VerifierRewriteTarget.MessageReasoning ? StreamingField.Reasoning :
+                                                                rewritingField?.field === VerifierRewriteTarget.MessageAnswer ? StreamingField.Answer :
+                                                                    rewritingField?.field === VerifierRewriteTarget.MessageBoth ? StreamingField.Both :
+                                                                        rewritingField?.field === VerifierRewriteTarget.MessageQuery ? StreamingField.Query : undefined
                                                         }
                                                     />
                                                 </div>
@@ -1862,7 +1877,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     <div className="flex items-center justify-between mb-1">
                                                         <h4 className="text-[10px] uppercase font-bold text-slate-500">Reasoning Trace</h4>
                                                         <div className="flex items-center gap-1 relative">
-                                                            {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Reasoning ? (
                                                                 <>
                                                                     <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
                                                                         <Check className="w-3 h-3" />
@@ -1873,7 +1888,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                                 </>
                                                             ) : (
                                                                 <>
-                                                                    <button onClick={() => startEditing(item.id, 'reasoning', item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                    <button onClick={() => startEditing(item.id, OutputFieldName.Reasoning, item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
                                                                         <Edit3 className="w-3 h-3" />
                                                                     </button>
                                                                     <div className="relative">
@@ -1895,13 +1910,13 @@ Based on the criteria above, provide a 1-5 score.`;
                                                                                 onClick={(e) => e.stopPropagation()}
                                                                             >
                                                                                 <button
-                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'reasoning'); }}
+                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, VerifierRewriteTarget.Reasoning); }}
                                                                                     className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
                                                                                 >
                                                                                     <RotateCcw className="w-3 h-3" /> Reasoning Only
                                                                                 </button>
                                                                                 <button
-                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'answer'); }}
+                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, VerifierRewriteTarget.Answer); }}
                                                                                     className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
                                                                                 >
                                                                                     <RotateCcw className="w-3 h-3" /> Answer Only
@@ -1922,7 +1937,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             )}
                                                         </div>
                                                     </div>
-                                                    {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Reasoning ? (
                                                         <AutoResizeTextarea
                                                             value={editValue}
                                                             onChange={e => setEditValue(e.target.value)}
@@ -1930,7 +1945,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             autoFocus
                                                             className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[100px] font-mono text-xs"
                                                         />
-                                                    ) : (rewritingField?.itemId === item.id && rewritingField.field === 'reasoning' && streamingContent ? (
+                                                    ) : (rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Reasoning && streamingContent ? (
                                                         <div className="max-h-32 overflow-y-auto text-[10px] text-teal-300 font-mono animate-pulse">
                                                             {streamingContent}
                                                             <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
@@ -1947,7 +1962,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     <div className="flex items-center justify-between mb-1">
                                                         <h4 className="text-[10px] uppercase font-bold text-slate-500">Answer Preview</h4>
                                                         <div className="flex items-center gap-1">
-                                                            {editingField?.itemId === item.id && editingField.field === 'answer' ? (
+                                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Answer ? (
                                                                 <>
                                                                     <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
                                                                         <Check className="w-3 h-3" />
@@ -1957,13 +1972,13 @@ Based on the criteria above, provide a 1-5 score.`;
                                                                     </button>
                                                                 </>
                                                             ) : (
-                                                                <button onClick={() => startEditing(item.id, 'answer', item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                <button onClick={() => startEditing(item.id, OutputFieldName.Answer, item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
                                                                     <Edit3 className="w-3 h-3" />
                                                                 </button>
                                                             )}
                                                         </div>
                                                     </div>
-                                                    {editingField?.itemId === item.id && editingField.field === 'answer' ? (
+                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Answer ? (
                                                         <AutoResizeTextarea
                                                             value={editValue}
                                                             onChange={e => setEditValue(e.target.value)}
@@ -1971,7 +1986,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             autoFocus
                                                             className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[80px]"
                                                         />
-                                                    ) : rewritingField?.itemId === item.id && rewritingField.field === 'answer' && streamingContent ? (
+                                                    ) : rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Answer && streamingContent ? (
                                                         <div className="max-h-32 overflow-y-auto">
                                                             <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
                                                                 {streamingContent}
