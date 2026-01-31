@@ -9,6 +9,7 @@ import {
     Sparkles
 } from 'lucide-react';
 import { VerifierItem, ExternalProvider, ProviderType } from '../types';
+import { ChatRole } from '../interfaces/enums';
 import * as FirebaseService from '../services/firebaseService';
 import * as HuggingFaceService from '../services/huggingFaceService';
 import * as VerifierRewriterService from '../services/verifierRewriterService';
@@ -29,7 +30,7 @@ import GenerationParamsInput from './GenerationParamsInput';
 interface VerifierPanelProps {
     currentSessionUid: string;
     modelConfig: {
-        provider: 'gemini' | 'external';
+        provider: ProviderType;
         externalProvider: ExternalProvider;
         externalModel: string;
         apiKey: string;
@@ -102,10 +103,10 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
     const [isRewriterPanelOpen, setIsRewriterPanelOpen] = useState(false);
     const [rewriterConfig, setRewriterConfig] = useState<VerifierRewriterService.RewriterConfig>(() => {
         const settings = SettingsService.getSettings();
-        const externalProvider = settings.defaultProvider || 'openrouter';
+        const externalProvider = settings.defaultProvider || ExternalProvider.OpenRouter;
         return {
-            provider: 'external',
-            externalProvider: externalProvider as any,
+            provider: ProviderType.External,
+            externalProvider: externalProvider as ExternalProvider,
             apiKey: '',
             model: SettingsService.getDefaultModel(externalProvider) || '',
             customBaseUrl: '',
@@ -135,7 +136,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
         const settings = SettingsService.getSettings();
         const gpModel = settings.generalPurposeModel;
         return {
-            provider: (gpModel?.provider === 'external' ? 'external' : 'gemini') as any,
+            provider: (gpModel?.provider === 'external' || gpModel?.provider === 'other') ? ProviderType.External : ProviderType.Gemini,
             externalProvider: (gpModel?.externalProvider || 'openrouter') as any,
             apiKey: '',
             model: gpModel?.model || 'gemini-1.5-pro',
@@ -262,14 +263,14 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
         // 1. Query/Input Mapping
         let query = raw.query || raw.instruction || raw.question || raw.prompt || raw.input || "";
         if (!query && Array.isArray(raw.messages)) {
-            const lastUser = raw.messages.findLast((m: any) => m.role === 'user');
+            const lastUser = raw.messages.findLast((m: any) => m.role === ChatRole.User);
             if (lastUser) query = lastUser.content;
         }
 
         // 2. Answer/Output Mapping
         let answer = raw.answer || raw.output || raw.response || raw.completion || "";
         if (Array.isArray(raw.messages)) {
-            const lastAssistant = raw.messages.findLast((m: any) => m.role === 'assistant');
+            const lastAssistant = raw.messages.findLast((m: any) => m.role === ChatRole.Assistant);
             if (lastAssistant) answer = lastAssistant.content;
         }
 
@@ -794,7 +795,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
         }
 
         const targetMessage = item.messages[messageIndex];
-        if (targetMessage.role !== 'user') {
+        if (targetMessage.role !== ChatRole.User) {
             console.log('Not a user message, skipping');
             return;
         }

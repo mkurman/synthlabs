@@ -6,7 +6,7 @@ interface AppHeaderProps {
     environment: Environment;
     totalLogCount: number;
     onViewChange: (view: AppView) => void;
-    onEnvironmentChange: (env: string) => void;
+    onEnvironmentChange: (env: Environment) => void;
     onExport: () => void;
     onSettingsOpen: () => void;
 }

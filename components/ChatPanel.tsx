@@ -11,7 +11,7 @@ import { PROVIDERS } from '../constants';
 import { ToolExecutor } from '../services/toolService';
 import { VerifierItem } from '../types';
 import { confirmService } from '../services/confirmService';
-import { ChatRole } from '../interfaces/enums';
+import { ChatRole, ExternalProvider, ProviderType } from '../interfaces/enums';
 
 
 
@@ -19,14 +19,16 @@ interface ChatPanelProps {
     data: VerifierItem[];
     setData: (data: VerifierItem[]) => void;
     modelConfig: {
-        provider: 'gemini' | 'external';
-        externalProvider: any; // Simplified for now to avoid import cycles or use explicit type
+        provider: ProviderType;
+        externalProvider: ExternalProvider;
         externalModel: string;
         apiKey: string;
         externalApiKey: string;
     };
     toolExecutor?: ToolExecutor;
 }
+
+type ChatProvider = ExternalProvider | ProviderType.Gemini;
 
 const copyToClipboard = async (text: string, setCopied: (v: boolean) => void) => {
     try {
@@ -133,22 +135,23 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     const [totalCost, setTotalCost] = useState(0);
 
     // Model Selection State
-    const [activeModel, setActiveModel] = useState({
-        provider: modelConfig.provider === 'external' ? modelConfig.externalProvider : 'gemini',
-        model: modelConfig.provider === 'external' ? modelConfig.externalModel : 'gemini-2.0-flash-20240905',
-        apiKey: modelConfig.provider === 'external' ? modelConfig.externalApiKey : modelConfig.apiKey,
+    const [activeModel, setActiveModel] = useState<{ provider: ChatProvider; model: string; apiKey: string; customBaseUrl: string }>({
+        provider: modelConfig.provider === ProviderType.External ? modelConfig.externalProvider : ProviderType.Gemini,
+        model: modelConfig.provider === ProviderType.External ? modelConfig.externalModel : 'gemini-2.0-flash-20240905',
+        apiKey: modelConfig.provider === ProviderType.External ? modelConfig.externalApiKey : modelConfig.apiKey,
         customBaseUrl: ''
     });
 
     const [showModelSelector, setShowModelSelector] = useState(false);
 
-    const allProviders = ['gemini', ...AVAILABLE_PROVIDERS];
+    const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];
 
     const handleProviderChange = (newProvider: string) => {
-        const defaultModel = SettingsService.getDefaultModel(newProvider);
+        const providerValue = newProvider as ChatProvider;
+        const defaultModel = SettingsService.getDefaultModel(providerValue);
         setActiveModel(prev => ({
             ...prev,
-            provider: newProvider,
+            provider: providerValue,
             model: defaultModel || '', // Auto-select default model if available
             apiKey: '' // Reset API key override on provider switch
         }));
@@ -547,10 +550,10 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
     // UI Helpers
     const renderMessage = (msg: ChatMessage, idx: number) => {
-        const isUser = msg.role === 'user';
-        const isTool = msg.role === 'tool';
-        const isModel = msg.role === 'model';
-        const isAssistant = msg.role === 'assistant';
+        const isUser = msg.role === ChatRole.User;
+        const isTool = msg.role === ChatRole.Tool;
+        const isModel = msg.role === ChatRole.Model;
+        const isAssistant = msg.role === ChatRole.Assistant;
         const isAssistantMessage = isModel || isAssistant;
 
         if (isTool) return null;
@@ -568,7 +571,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                         <div className="flex flex-col gap-1 mb-2 w-full max-w-xl">
                             {msg.toolCalls.map((tc: any, i: number) => {
                                 const toolResultMsg = messages.slice(idx + 1).find(
-                                    m => m.role === 'tool' && m.toolCallId === tc.id
+                                    m => m.role === ChatRole.Tool && m.toolCallId === tc.id
                                 );
                                 const result = toolResultMsg ? toolResultMsg.content : undefined;
 
@@ -608,7 +611,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                         <button
                                             onClick={() => {
                                                 const userMsgIndex = idx - 1;
-                                                if (userMsgIndex >= 0 && messages[userMsgIndex]?.role === 'user') {
+                                                if (userMsgIndex >= 0 && messages[userMsgIndex]?.role === ChatRole.User) {
                                                     const newMessages = messages.slice(0, idx);
                                                     setMessages(newMessages);
                                                     setInput('');
@@ -618,12 +621,12 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                     if (chatServiceRef.current) {
                                                         chatServiceRef.current.clearHistory();
                                                         newMessages.forEach(m => {
-                                                            if (m.role === 'user') {
+                                                            if (m.role === ChatRole.User) {
                                                                 chatServiceRef.current!.addUserMessage(m.content);
-                                                            } else if (m.role === 'tool') {
+                                                            } else if (m.role === ChatRole.Tool) {
                                                                 (chatServiceRef.current as any).history.push(m);
                                                             } else {
-                                                                (chatServiceRef.current as any).history.push({ ...m, role: 'model' });
+                                                                (chatServiceRef.current as any).history.push({ ...m, role: ChatRole.Model });
                                                             }
                                                         });
                                                         processTurn().then(() => {
@@ -738,7 +741,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                 ) : (
                     messages.map((msg, idx) => {
                         // We skip rendering tool outputs directly as they are embedded in tool call view
-                        if (msg.role === 'tool') return null;
+                        if (msg.role === ChatRole.Tool) return null;
 
                         return (
                             <div key={idx} className="w-full">
@@ -851,7 +854,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                 />
                                             </div>
 
-                                            {activeModel.provider !== 'gemini' && activeModel.provider !== 'ollama' && (
+                                            {activeModel.provider !== ProviderType.Gemini && activeModel.provider !== ExternalProvider.Ollama && (
                                                 <div className="space-y-1">
                                                     <label className="text-[10px] text-slate-400">API Key (Optional override)</label>
                                                     <input
@@ -864,7 +867,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                 </div>
                                             )}
 
-                                            {activeModel.provider === 'other' && (
+                                            {activeModel.provider === ExternalProvider.Other && (
                                                 <div className="space-y-1">
                                                     <label className="text-[10px] text-slate-400">Base URL (Optional override)</label>
                                                     <input

@@ -1,4 +1,4 @@
-import { SynthLogItem, StreamChunkCallback, ChatMessage, StreamingConversationState } from '../types';
+import { SynthLogItem, StreamChunkCallback, ChatMessage, StreamingConversationState, GenerationParams } from '../types';
 import { LogStorageService } from './logStorageService';
 import { SettingsService } from './settingsService';
 import * as FirebaseService from './firebaseService';
@@ -16,6 +16,21 @@ import { extractInputContent } from '../utils/contentExtractor';
 import { DataSource, EngineMode, AppMode, Environment, ProviderType, ExternalProvider, ApiType, ChatRole, ResponderPhase, LogItemStatus, PromptCategory, PromptRole } from '../interfaces/enums';
 import { ExtractContentFormat } from '../interfaces/services/DataTransformConfig';
 import type { CompleteGenerationConfig as GenerationConfig, RuntimePromptConfig, WorkItem } from '../interfaces';
+
+export interface GenerationConfigBuilderInput extends Omit<GenerationConfig, 'generationParams'> {
+    generationParams: GenerationParams;
+}
+
+export const buildGenerationConfig = (input: GenerationConfigBuilderInput): GenerationConfig => {
+    const normalizedParams = Object.keys(input.generationParams || {}).length > 0
+        ? input.generationParams
+        : undefined;
+
+    return {
+        ...input,
+        generationParams: normalizedParams
+    };
+};
 
 export class GenerationService {
     private config: GenerationConfig;
@@ -152,7 +167,7 @@ export class GenerationService {
         if (config.engineMode === EngineMode.Deep) {
             const writer = config.deepConfig.phases.writer;
             const writerApiKey = writer.apiKey?.trim() || (writer.externalProvider ? SettingsService.getApiKey(writer.externalProvider) : '');
-            if (writer.provider !== 'gemini' && !writerApiKey && writer.externalProvider !== 'ollama') {
+            if (writer.provider !== ProviderType.Gemini && !writerApiKey && writer.externalProvider !== ExternalProvider.Ollama) {
                 config.setError(`Writer Agent requires an API Key for ${writer.externalProvider}. Click the Settings icon in the header to configure, or enter a key inline in the Writer phase.`);
                 return false;
             }
@@ -1183,7 +1198,7 @@ export class GenerationService {
             const result = await generateSingleItem(logItem.full_seed, 0, { retryId: id });
             if (result) {
                 // Save to Firebase in production
-                if (environment === 'production' && !result.isError) {
+                if (environment === Environment.Production && !result.isError) {
                     try {
                         await FirebaseService.saveLogToFirebase(result);
                         updateDbStats();
@@ -1279,7 +1294,7 @@ export class GenerationService {
                     .then(async (result) => {
                         activeWorkers--;
                         if (result) {
-                            if (environment === 'production' && !result.isError) {
+                            if (environment === Environment.Production && !result.isError) {
                                 try {
                                     await FirebaseService.saveLogToFirebase(result);
                                     result.savedToDb = true;

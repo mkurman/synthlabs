@@ -6,6 +6,7 @@
 
 import { EXTERNAL_PROVIDERS, PROVIDERS } from '../constants';
 import { GenerationParams } from '../types';
+import { ExternalProvider } from '../interfaces/enums';
 
 const DB_NAME = 'SynthLabsSettingsDB';
 const DB_VERSION = 3; // Aligned with modelService for models store
@@ -475,7 +476,7 @@ export const SettingsService = {
 
     // Get provider URL (from constants, or custom for 'other')
     getProviderUrl: (provider: string): string => {
-        if (provider === 'other') {
+        if (provider === ExternalProvider.Other) {
             return SettingsService.getCustomBaseUrl();
         }
         return PROVIDERS[provider]?.url || '';

@@ -62,10 +62,10 @@ export default function ProviderConfigPanel({
                     onChange={(e) => onProviderSelect(e.target.value)}
                     className="w-full bg-transparent text-xs font-bold text-white outline-none px-2 py-1 cursor-pointer"
                 >
-                    <option value="gemini" className="bg-slate-950 text-indigo-400 font-bold">Native Gemini</option>
+                    <option value={ProviderTypeEnum.Gemini} className="bg-slate-950 text-indigo-400 font-bold">Native Gemini</option>
                     {externalProviders.map(ep => (
                         <option key={ep} value={ep} className="bg-slate-950 text-slate-200">
-                            {ep === 'other' ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}
+                            {ep === ExternalProviderEnum.Other ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}
                         </option>
                     ))}
                 </select>

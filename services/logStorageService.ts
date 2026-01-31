@@ -1,4 +1,5 @@
 import { SynthLogItem } from '../types';
+import { LogFilter, LogItemStatus } from '../interfaces/enums';
 
 const DB_NAME = 'SynthLabsDB';
 const DB_VERSION = 1;
@@ -192,7 +193,7 @@ export const LogStorageService = {
         sessionUid: string,
         page: number,
         pageSize: number,
-        filter: 'live' | 'invalid' = 'live'
+        filter: LogFilter = LogFilter.Live
     ): Promise<{ logs: SynthLogItem[]; totalCount: number; filteredCount: number }> => {
         try {
             const [db, totalCount] = await Promise.all([getDB(), LogStorageService.getTotalCount(sessionUid)]);
@@ -200,8 +201,8 @@ export const LogStorageService = {
             const store = tx.objectStore(LOGS_STORE);
             const index = store.index('sessionTimestamp');
 
-            const isInvalid = (log: SynthLogItem) => log.status === 'TIMEOUT' || log.status === 'ERROR' || log.isError;
-            const shouldInclude = (log: SynthLogItem) => filter === 'invalid' ? isInvalid(log) : !isInvalid(log);
+            const isInvalid = (log: SynthLogItem) => log.status === LogItemStatus.TIMEOUT || log.status === LogItemStatus.ERROR || log.isError;
+            const shouldInclude = (log: SynthLogItem) => filter === LogFilter.Invalid ? isInvalid(log) : !isInvalid(log);
 
             const start = (page - 1) * pageSize;
             const logs: SynthLogItem[] = [];

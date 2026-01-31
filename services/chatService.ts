@@ -1,4 +1,4 @@
-import { ExternalProvider, ChatMessage, ApiType } from '../types';
+import { ExternalProvider, ChatMessage, ApiType, ProviderType } from '../types';
 import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 import { ToolExecutor } from './toolService';
@@ -185,7 +185,7 @@ ${JSON.stringify(definitions, null, 2)}
 
     // Call the AI model (using GeminiService as the backend for now, flexible to others)
     public async streamResponse(
-        modelConfig: { provider: string, model: string, apiKey?: string, customBaseUrl?: string, apiType?: ApiType },
+        modelConfig: { provider: ExternalProvider | ProviderType.Gemini, model: string, apiKey?: string, customBaseUrl?: string, apiType?: ApiType },
         includeTools: boolean,
         onChunk: (chunk: string, accumulated: string, usage?: any) => void,
         abortSignal?: AbortSignal
@@ -216,13 +216,13 @@ ${JSON.stringify(definitions, null, 2)}
         conversationText += `\nAssistant:`;
 
         const config = {
-            provider: modelConfig.provider || 'openrouter',
+            provider: modelConfig.provider || ExternalProvider.OpenRouter,
             model: modelConfig.model,
             apiKey: modelConfig.apiKey || SettingsService.getApiKey(modelConfig.provider),
             apiType: modelConfig.apiType || ApiType.Chat // Pass API type (defaults to 'chat')
         };
 
-        if (config.provider === 'gemini') {
+        if (config.provider === ProviderType.Gemini) {
             // Legacy/Gemini path: use manual XML tools for now (or refactor GeminiService later)
             // If includeTools is true, we need to append the manual prompt
             const manualTools = includeTools ? this.buildManualToolPrompt() : '';

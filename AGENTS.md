@@ -1,178 +1,211 @@
-# AGENTS.md - Guide for AI Coding Agents
+# AGENTS.md - Guide for Agentic Coding Assistants
 
-This file provides essential information for agentic coding assistants working in this repository.
+This repo is a Vite + React + TypeScript app with optional Electron/Tauri/Bun builds.
+Use this file as the operational guide for automated agents.
 
-## Development Commands
+## Install & Run
 
 ```bash
-npm install              # Install dependencies
-npm run dev              # Start dev server (http://localhost:3000)
-npm run build            # Build for production
-npm run preview          # Preview production build
+npm install
+npm run dev            # Vite dev server
+npm run build          # Production build
+npm run preview        # Preview build
 ```
 
-**Note**: No test framework or linter is currently configured. Before committing changes, ensure:
-- TypeScript compilation succeeds: `npx tsc --noEmit`
-- Manual testing in dev server passes
+### Bun (optional runtime)
 
-## Tech Stack
+```bash
+bun install
+bun run bun:dev
+bun run bun:build
+bun run bun:preview
+```
 
-- **Frontend**: React 19, TypeScript 5.8
-- **Build**: Vite
-- **Icons**: lucide-react
-- **Backend**: Firebase/Firestore (optional)
-- **AI Integration**: Google GenAI, OpenAI, Anthropic, custom endpoints
+### Desktop Builds
+
+```bash
+npm run electron:dev
+npm run electron:build
+npm run electron:build:win
+npm run electron:build:mac
+
+npm run tauri:dev
+npm run tauri:build
+```
+
+## Lint / Typecheck / Tests
+
+- Linting: not configured.
+- Unit/integration tests: not configured.
+- Typecheck: `npx tsc --noEmit` (uses `tsconfig.json` with strict mode).
+
+Single-test command: none (no test runner configured).
+
+## Tech Stack Snapshot
+
+- React 19, TypeScript 5.8, Vite 6
+- Optional Electron + Tauri
+- Firebase/Firestore integrations
+- AI providers: Google GenAI, OpenAI, Anthropic, custom endpoints
 
 ## Code Style Guidelines
 
 ### TypeScript
 
-- **Strict mode enabled**: All code must be type-safe
-- **Avoid `any`** unless absolutely necessary
-- Define interfaces for all data structures in `types.ts`
-- Use type inference where possible, but add explicit types for function parameters and return values
-- **Interface naming**: Do NOT prefix with 'I' (use `SynthLogItem`, not `ISynthLogItem`)
-- **Prefer `interface` over `type`** for object shapes
-- Use `Record<string, Type>` for object maps
+- Strict mode is enabled; keep code type-safe.
+- Avoid `any` unless there is no alternative.
+- Prefer `interface` for object shapes; avoid `I` prefixes.
+- Use `Record<string, T>` for maps and indexed objects.
+- Keep shared interfaces in `src/types.ts`.
+- Add explicit types for public function params/returns.
 
 ### React
 
-- Use **functional components exclusively**
-- Use React hooks (useState, useEffect, useCallback, useMemo, useRef)
-- Keep components focused and single-purpose
-- Props must be explicitly typed with interfaces
-- Use `useCallback` for event handlers passed to children
-- Use `useMemo` for expensive computations
+- Functional components only.
+- Use hooks (`useState`, `useEffect`, `useCallback`, `useMemo`, `useRef`).
+- Keep components focused and single-purpose.
+- Memoize handlers passed to children with `useCallback`.
+- Memoize expensive derived data with `useMemo`.
 
 ### Imports
 
-- Group imports: React hooks first, then third-party, then local imports
-```typescript
-import React, { useState, useEffect } from 'react';
+- Group imports: React first, third-party next, local last.
+- Use namespace imports for services: `import * as X from '../services/x'`.
+- Prefer importing shared types from `src/types.ts`.
+
+```ts
+import React, { useEffect, useState } from 'react';
 import { Icon } from 'lucide-react';
-import { MyType } from '../types';
-import * as MyService from '../services/myService';
+import { SynthLogItem } from '../types';
+import * as sessionService from '../services/sessionService';
 ```
-- Use `import * as X` for services to namespace exports
-- Import from `../types.ts` for all shared interfaces
 
-### Services & API Calls
+### Naming
 
-- Place business logic in `services/` directory
-- All AI provider calls **must include retry logic with exponential backoff**
-- Use `try/catch` blocks for all async operations
-- Log errors using `logger.error()` from `utils/logger`
-- Pattern for retry logic:
-```typescript
+- Components: PascalCase (`VerifierPanel.tsx`).
+- Types/Interfaces: PascalCase (`SynthLogItem`).
+- Services: camelCase exports inside `services/`.
+- Constants: UPPER_SNAKE_CASE.
+- Variables/functions: camelCase.
+- State setters: `set` + name (`setIsLoading`).
+
+### Error Handling & Logging
+
+- Always guard async calls with `try/catch`.
+- Log errors via `logger.error()` from `utils/logger`.
+- Use `logger.warn()`/`logger.log()` only in verbose paths.
+- UI should show user-friendly error messages.
+- Track errors in `isError` + `error` fields where applicable.
+
+### API Calls / Retries
+
+- Business logic lives in `src/services/`.
+- AI provider calls must include retry with exponential backoff.
+
+```ts
 for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-        return await apiCall();
-    } catch (error: any) {
-        const isRateLimit = error?.status === 429;
-        if (isRateLimit && attempt < maxRetries) {
-            const backoff = retryDelay * Math.pow(2, attempt);
-            await sleep(backoff);
-            continue;
-        }
-        throw error;
+  try {
+    return await apiCall();
+  } catch (error: any) {
+    const isRateLimit = error?.status === 429;
+    if (isRateLimit && attempt < maxRetries) {
+      const backoff = retryDelay * Math.pow(2, attempt);
+      await sleep(backoff);
+      continue;
     }
+    throw error;
+  }
 }
 ```
 
-### Error Handling
+### Formatting
 
-- Always include proper error handling for API calls
-- Use `logger.error()` for errors (always logged)
-- Use `logger.warn()` for warnings (only in verbose mode)
-- Use `logger.log()` for info (only in verbose mode)
-- Display user-friendly error messages in the UI
-- Track errors in `isError` and `error` fields of data items
+- Follow existing project patterns; no automated formatter configured.
+- Keep JSX readable and prefer small helpers over deeply nested ternaries.
+- Avoid large inlined objects in JSX; extract constants when reused.
 
-### JSON Output Format
+### App Structure
 
-- AI responses should be valid JSON objects
-- Common format: `{ "query": "...", "reasoning": "...", "answer": "..." }`
-- Use `cleanAndParseJSON()` to handle markdown-wrapped JSON from LLMs
-- Handles: code blocks (```json), stripped backticks, fallback to first `{}` match
-
-### Naming Conventions
-
-- **Components**: PascalCase (e.g., `VerifierPanel.tsx`)
-- **Services**: camelCase with namespace export (e.g., `export const myFunction` in `services/myService.ts`)
-- **Types/Interfaces**: PascalCase without 'I' prefix (e.g., `SynthLogItem`)
-- **Constants**: UPPER_SNAKE_CASE (e.g., `EXTERNAL_PROVIDERS`)
-- **Variables/Functions**: camelCase (e.g., `const handleSave = ...`)
-- **State setters**: `set` + variable name (e.g., `setData`, `setIsLoading`)
+- Keep `src/App.tsx` thin.
+- Compose: `AppHeader`, `AppMainContent`, `AppOverlays`.
+- Use `useAppViewProps` (or a similar hook) to bundle typed props.
+- Prefer new UI blocks in `src/components/panels/`.
+- Prefer layout wrappers in `src/components/layout/`.
 
 ### File Organization
 
 ```
 src/
-├── components/       # React UI components
-│   ├── layout/        # App-level layout composition
-│   ├── panels/        # Sidebar and form panels
-├── services/         # Business logic and API integrations
-├── utils/           # Utility functions (logger, helpers)
-├── types.ts          # Shared TypeScript interfaces
-├── constants.ts      # Application constants and configs
-├── App.tsx          # Main application component
-└── index.tsx        # Entry point
+├── components/       # UI components
+│   ├── layout/       # App-level layout
+│   ├── panels/       # Sidebar and form panels
+├── services/         # Business logic + API integrations
+├── utils/            # Helpers + logger
+├── types.ts          # Shared interfaces
+├── constants.ts      # Constants and configs
+├── App.tsx           # Main app
+└── index.tsx         # Entry
 ```
 
-### App Structure & Refactor Pattern
+## Reasoning Format (SYNTH)
 
-- Keep `App.tsx` thin: compose `AppHeader`, `AppMainContent`, `AppOverlays` and pass props via `useAppViewProps`.
-- Prefer extracting UI blocks into `components/panels/` and layout wrappers into `components/layout/`.
-- For large prop bundles, add a hook in `hooks/` (e.g. `useAppViewProps`) to build typed prop objects.
-- Use enums from `interfaces/enums.ts` consistently; avoid string literals (e.g. use `LogFilter.Live`, not `'live'`).
-- Split sidebar in layers: session/control (layout), engine/config (layout), data source (layout), then lower-level panels.
+When handling reasoning traces, preserve the stenographic symbols:
 
-### Reasoning Protocol (SYNTH Format)
+- `→` Derives/Implies
+- `↺` Loop/Correction
+- `∴` Conclusion
+- `●` Ground Truth
+- `◐` Inference
+- `○` Speculation
+- `!` Insight
+- `※` Constraint/Trap
+- `?` Ambiguity
+- `⚠` Risk/Warning
+- `<H≈X.X>` Entropy marker
 
-The app uses stenographic reasoning symbols:
-- `→` (Derives/Implies)
-- `↺` (Loop/Correction)
-- `∴` (Conclusion)
-- `●` (Ground Truth)
-- `◐` (Inference)
-- `○` (Speculation)
-- `!` (Insight)
-- `※` (Constraint/Trap)
-- `?` (Ambiguity)
-- `⚠` (Risk/Warning)
-- `<H≈X.X>` (Entropy Marker)
+## JSON Output Expectations
 
-When working with reasoning traces, maintain this symbolic format.
+- AI responses should be valid JSON objects.
+- Common shape: `{ "query": "...", "reasoning": "...", "answer": "..." }`.
+- Use `cleanAndParseJSON()` for markdown-wrapped JSON.
 
-### Environment Variables
+## Env Vars
 
-Required keys (prefix with `VITE_` for Vite):
+Use `.env.local` and never commit secrets.
+Required keys (Vite prefixes):
+
 - `VITE_GEMINI_API_KEY`
 - `VITE_OPENAI_API_KEY`
 - `VITE_ANTHROPIC_API_KEY`
 
-Store in `.env.local` (never commit to repository).
+## Security & Safety
 
-### Security
+- Never hardcode API keys or secrets.
+- Validate and sanitize user inputs.
+- Rate-limit provider calls to protect quotas.
+- Use Firebase security rules in production.
 
-- Never hardcode API keys or sensitive data
-- Validate all user inputs
-- Sanitize data before rendering in UI
-- Use Firebase security rules to protect production data
-- Rate limit API calls to avoid quota exhaustion
+## Comments & Docs
 
-### Comments
+- Comment complex or non-obvious logic.
+- Use JSDoc for exported functions where useful.
+- Keep inline comments concise.
 
-- **Add comments** for complex logic or non-obvious implementations
-- Use JSDoc-style comments for exported functions
-- Keep inline comments concise and relevant
-- Document all exported interfaces
+## Prompt Sets
 
-### Prompt Sets
+Custom prompts live in `prompts/<set_name>/`:
 
-Custom prompt sets go in `prompts/<set_name>/` with structure:
-- `generator/system.txt`, `generator/meta.txt`, etc.
-- `converter/system.txt`, `converter/writer.txt`, etc.
-- `verifier/query_rewrite.txt`, etc.
+```
+prompts/
+  <set_name>/
+    generator/system.txt
+    generator/meta.txt
+    converter/writer.txt
+    verifier/query_rewrite.txt
+```
 
-System auto-discovers new prompt sets from this directory.
+The app auto-discovers prompt sets; missing roles fall back to `default`.
+
+## Repo Policy Notes
+
+- No Cursor or Copilot instruction files are present in this repo.

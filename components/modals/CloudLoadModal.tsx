@@ -1,5 +1,6 @@
 import React from 'react';
 import { Cloud, X, RefreshCcw, Archive, Calendar, Trash2 } from 'lucide-react';
+import { AppMode, EngineMode } from '../../interfaces/enums';
 import { SavedSession } from '../../services/firebaseService';
 
 interface CloudLoadModalProps {
@@ -59,9 +60,9 @@ export default function CloudLoadModal({
                       <Calendar className="w-3 h-3" /> {new Date(session.createdAt).toLocaleString()}
                     </span>
                     <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">
-                      {session.config?.appMode === 'generator' ? 'GEN' : 'CONV'}
+                      {session.config?.appMode === AppMode.Generator ? 'GEN' : 'CONV'}
                     </span>
-                    {session.config?.engineMode === 'deep' && (
+                    {session.config?.engineMode === EngineMode.Deep && (
                       <span className="text-[10px] bg-indigo-900/30 text-indigo-400 px-1.5 py-0.5 rounded">
                         DEEP
                       </span>

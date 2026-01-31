@@ -1,10 +1,10 @@
 import React from 'react';
 import { Layers, RefreshCcw } from 'lucide-react';
-import { DataSource } from '../../interfaces/enums';
+import { AppMode, DataSource } from '../../interfaces/enums';
 import { HuggingFaceConfig } from '../../types';
 
 interface ConversationRewritePanelProps {
-    appMode: 'generator' | 'converter';
+    appMode: AppMode;
     dataSourceMode: DataSource;
     conversationRewriteMode: boolean;
     onConversationRewriteModeChange: (enabled: boolean) => void;
@@ -22,7 +22,7 @@ export default function ConversationRewritePanel({
     hfConfig,
     onHfConfigChange
 }: ConversationRewritePanelProps) {
-    if ((appMode !== 'converter' && appMode !== 'generator')
+    if ((appMode !== AppMode.Converter && appMode !== AppMode.Generator)
         || (dataSourceMode !== DataSource.HuggingFace && dataSourceMode !== DataSource.Manual)) {
         return null;
     }

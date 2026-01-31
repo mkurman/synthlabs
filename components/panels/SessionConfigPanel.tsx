@@ -1,9 +1,10 @@
 import React, { useRef } from 'react';
 import { Archive, Bookmark, Upload, Save, CloudDownload, CloudUpload } from 'lucide-react';
+import { Environment } from '../../interfaces/enums';
 
 interface SessionConfigPanelProps {
   sessionName: string | null;
-  environment: string;
+  environment: Environment;
   onLoadSession: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onSaveSession: () => void;
   onCloudLoadOpen: () => void;
@@ -55,7 +56,7 @@ export default function SessionConfigPanel({
         </button>
       </div>
 
-      {environment === 'production' && (
+      {environment === Environment.Production && (
         <div className="flex gap-2 pt-2 border-t border-slate-800 animate-in fade-in slide-in-from-top-1">
           <button 
             onClick={onCloudLoadOpen} 

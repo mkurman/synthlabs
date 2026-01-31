@@ -313,15 +313,15 @@ const fetchModelsFromProvider = async (
     customBaseUrl?: string
 ): Promise<ProviderModel[]> => {
     // Check for hardcoded models first (except gemini, which should fetch live)
-    if (provider !== 'gemini' && HARDCODED_MODELS[provider]) {
+    if (provider !== ProviderType.Gemini && HARDCODED_MODELS[provider]) {
         return HARDCODED_MODELS[provider]!;
     }
 
     // Skip 'other' provider unless a base URL is provided
-    if (provider === 'other' && !customBaseUrl) {
+    if (provider === ExternalProvider.Other && !customBaseUrl) {
         return [];
     }
-    if (provider === 'gemini') {
+    if (provider === ProviderType.Gemini) {
         if (!apiKey) {
             throw new Error('Gemini API key required');
         }
@@ -552,7 +552,7 @@ export const hasModelsEndpoint = (provider: ModelListProvider): boolean => {
  */
 export const requiresApiKeyForModels = (provider: ModelListProvider): boolean => {
     // Ollama doesn't require an API key
-    if (provider === 'ollama') {
+    if (provider === ExternalProvider.Ollama) {
         return false;
     }
     return hasModelsEndpoint(provider);
@@ -606,7 +606,7 @@ export const refreshAllModels = async (
     const results: Record<string, GetModelsResult> = {};
 
     for (const [provider, apiKey] of Object.entries(providerKeys)) {
-        if (apiKey || provider === 'ollama') {
+        if (apiKey || provider === ExternalProvider.Ollama) {
             results[provider] = await getModels(provider as ExternalProvider, apiKey, true);
         }
     }
@@ -628,13 +628,13 @@ export const prefetchModels = async (
     // Collect providers that need fetching
     for (const provider of Object.keys(PROVIDERS) as ExternalProvider[]) {
         // Skip 'other' provider - requires manual entry
-        if (provider === 'other') continue;
+        if (provider === ExternalProvider.Other) continue;
 
         // Get API key from provided keys or via callback function
         const apiKey = providerKeys[provider] || (getApiKeyFn ? getApiKeyFn(provider) : '');
 
         // Only fetch if we have an API key or it's Ollama
-        if (apiKey || provider === 'ollama') {
+        if (apiKey || provider === ExternalProvider.Ollama) {
             providersToFetch.push({ provider, apiKey });
         }
     }
