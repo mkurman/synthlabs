@@ -3,6 +3,7 @@ import { SettingsService } from './settingsService';
 import { JSON_OUTPUT_FALLBACK } from '../constants';
 import { PromptSchema, OutputField, ParsedSchemaOutput } from '../types';
 import { PromptCategory, PromptRole } from '../interfaces/enums';
+import { validateSchemaFields } from './schemaValidationService';
 import YAML from 'js-yaml';
 
 // Use import.meta.glob to load all prompt yaml files
@@ -45,15 +46,22 @@ function parsePromptYaml(content: string, path: string): PromptSchema {
                 throw new Error(`Output field ${index} missing 'name' in ${path}`);
             }
             return {
-                name: field.name,
+                name: field.name as OutputField['name'],
                 description: field.description || '',
                 optional: field.optional ?? false
             };
         });
 
+        // Validate schema fields against allowed field names
+        const fieldNames = output.map(f => f.name);
+        const validationResult = validateSchemaFields(path, fieldNames);
+        
+        // Filter output to only include valid fields
+        const validOutput = output.filter(f => validationResult.validFields.includes(f.name));
+
         return {
             prompt: parsed.prompt,
-            output
+            output: validOutput
         };
     } catch (error) {
         console.error(`[PromptService] Failed to parse YAML at ${path}:`, error);

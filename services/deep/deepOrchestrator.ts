@@ -1,5 +1,5 @@
 import { DeepConfig, SynthLogItem, GenerationParams, ProviderType } from '../../types';
-import { DeepPhase } from '../../interfaces/enums';
+import { DeepPhase, OutputFieldName } from '../../interfaces/enums';
 import { logger } from '../../utils/logger';
 import { executePhase, getModelName, truncatePreview, toPreviewString, PHASE_TO_SCHEMA } from './phaseExecutor';
 import { JSON_OUTPUT_FALLBACK } from '../../constants';
@@ -163,7 +163,7 @@ CRITICAL: " + ${JSON_OUTPUT_FALLBACK} + " Format: { "answer": "Your final refine
 
     const writerSchema = config.phases.writer.promptSchema || PHASE_TO_SCHEMA[DeepPhase.Writer]?.();
     const schemaOutputFields = writerSchema?.output?.map(f => f.name) || [];
-    const schemaDefinesAnswer = schemaOutputFields.includes('answer');
+    const schemaDefinesAnswer = schemaOutputFields.includes(OutputFieldName.Answer);
     
     let finalAnswer: string;
     if (schemaDefinesAnswer) {

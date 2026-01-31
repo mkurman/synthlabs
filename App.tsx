@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 
 import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider, ApiType,
@@ -43,6 +43,7 @@ import { useVerboseLogging } from './hooks/useVerboseLogging';
 import { useSparklineHistory } from './hooks/useSparklineHistory';
 import { useRowContent } from './hooks/useRowContent';
 import { useSyncedRef } from './hooks/useSyncedRef';
+import { useFieldSelection } from './hooks/useFieldSelection';
 import AppOverlays from './components/layout/AppOverlays';
 import AppMainContent from './components/layout/AppMainContent';
 import AppHeader from './components/layout/AppHeader';
@@ -248,6 +249,50 @@ export default function App() {
     // --- State: Runtime ---
     const [systemPrompt, setSystemPrompt] = useState(PromptService.getPrompt(PromptCategory.Generator, PromptRole.System));
     const [converterPrompt, setConverterPrompt] = useState(PromptService.getPrompt(PromptCategory.Converter, PromptRole.System));
+
+    // --- State: Field Selection ---
+    // Get schema for current prompt to determine available fields
+    const currentPromptSchema = PromptService.getPromptSchema(
+        appMode === AppMode.Generator ? PromptCategory.Generator : PromptCategory.Converter,
+        PromptRole.System,
+        sessionPromptSet || undefined
+    );
+
+    const fieldSelection = useFieldSelection({
+        promptSetId: sessionPromptSet || 'default',
+        category: appMode === AppMode.Generator ? PromptCategory.Generator : PromptCategory.Converter,
+        role: PromptRole.System,
+        outputFields: currentPromptSchema.output || [],
+        resetOnPromptChange: true
+    });
+
+    // Update generationParams when field selection changes
+    const handleGenerationParamsChange = (params: GenerationParams) => {
+        setGenerationParams(prev => ({
+            ...prev,
+            ...params,
+            selectedFields: fieldSelection.selectedFields
+        }));
+    };
+
+    // Sync field selection changes to generationParams
+    useEffect(() => {
+        // Always update generationParams when fieldSelection changes
+        // This handles both initial setup and when user checks/unchecks fields
+        const currentSelected = generationParams.selectedFields || [];
+        const newSelected = fieldSelection.selectedFields;
+        
+        // Only update if arrays are different
+        const hasChanged = currentSelected.length !== newSelected.length ||
+            !currentSelected.every((field, idx) => field === newSelected[idx]);
+        
+        if (hasChanged) {
+            setGenerationParams(prev => ({
+                ...prev,
+                selectedFields: newSelected
+            }));
+        }
+    }, [fieldSelection.selectedFields]);
 
     // Log Management Hook
     const logManagement = useLogManagement({ sessionUid, environment });
@@ -696,12 +741,21 @@ export default function App() {
             : (externalApiKey || SettingsService.getApiKey(externalProvider)),
         modelSelectorPlaceholder: provider === ProviderTypeEnum.Gemini ? 'gemini-2.0-flash-exp' : 'Select or enter model',
         defaultCustomBaseUrl: SettingsService.getCustomBaseUrl(),
-        generationParams,
-        onGenerationParamsChange: setGenerationParams,
+        generationParams: {
+            ...generationParams,
+            selectedFields: fieldSelection.selectedFields
+        },
+        onGenerationParamsChange: handleGenerationParamsChange,
         systemPrompt,
         converterPrompt,
         onSystemPromptChange: setSystemPrompt,
         onConverterPromptChange: setConverterPrompt,
+        outputFields: fieldSelection.availableFields,
+        selectedFields: fieldSelection.selectedFields,
+        onFieldToggle: fieldSelection.toggleField,
+        onResetFieldSelection: fieldSelection.resetToDefault,
+        onSelectAllFields: fieldSelection.selectAll,
+        onDeselectAllFields: fieldSelection.deselectAll,
         onLoadRubric: handleLoadRubric,
         onSaveRubric: handleSaveRubric,
         onOptimizePrompt: handleOptimizePrompt,

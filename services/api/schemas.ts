@@ -1,9 +1,17 @@
 import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase, ApiType } from '../../types';
+import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
+import { ResponsesSchemaName } from '../../interfaces/enums/ResponsesSchemaName';
+export { ResponsesSchemaName };
 import { JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../../constants';
 
 // JSON Schema definitions for Responses API structured outputs
-export const RESPONSES_API_SCHEMAS = {
-  reasoningTrace: {
+export const RESPONSES_API_SCHEMAS: Record<ResponsesSchemaName, {
+  name: string;
+  schema: Record<string, any>;
+  description: string;
+  strict: boolean;
+}> = {
+  [ResponsesSchemaName.ReasoningTrace]: {
     name: 'reasoning_trace',
     schema: {
       type: 'object',
@@ -12,13 +20,13 @@ export const RESPONSES_API_SCHEMAS = {
         reasoning: { type: 'string', description: 'The step-by-step reasoning process' },
         answer: { type: 'string', description: 'The final answer to the query' }
       },
-      required: ['reasoning', 'answer'],
+      required: [OutputFieldName.Reasoning, OutputFieldName.Answer],
       additionalProperties: false
     },
     description: 'Schema for reasoning trace output',
     strict: true
   },
-  reasoningTraceWithFollowUp: {
+  [ResponsesSchemaName.ReasoningTraceWithFollowUp]: {
     name: 'reasoning_trace_with_followup',
     schema: {
       type: 'object',
@@ -28,26 +36,26 @@ export const RESPONSES_API_SCHEMAS = {
         answer: { type: 'string', description: 'The final answer to the query' },
         follow_up_question: { type: 'string', description: 'A follow-up question for multi-turn conversation' }
       },
-      required: ['reasoning', 'answer', 'follow_up_question'],
+      required: [OutputFieldName.Reasoning, OutputFieldName.Answer, OutputFieldName.FollowUpQuestion],
       additionalProperties: false
     },
     description: 'Schema for reasoning trace with follow-up output',
     strict: true
   },
-  rewriteResponse: {
+  [ResponsesSchemaName.RewriteResponse]: {
     name: 'rewrite_response',
     schema: {
       type: 'object',
       properties: {
         response: { type: 'string', description: 'The rewritten content' }
       },
-      required: ['response'],
+      required: [OutputFieldName.Response],
       additionalProperties: false
     },
     description: 'Schema for rewrite response output',
     strict: true
   },
-  messageRewrite: {
+  [ResponsesSchemaName.MessageRewrite]: {
     name: 'message_rewrite',
     schema: {
       type: 'object',
@@ -55,13 +63,13 @@ export const RESPONSES_API_SCHEMAS = {
         reasoning: { type: 'string', description: 'The reasoning/thinking process' },
         answer: { type: 'string', description: 'The final answer content' }
       },
-      required: ['reasoning', 'answer'],
+      required: [OutputFieldName.Reasoning, OutputFieldName.Answer],
       additionalProperties: false
     },
     description: 'Schema for message rewrite output',
     strict: true
   },
-  userAgentResponse: {
+  [ResponsesSchemaName.UserAgentResponse]: {
     name: 'user_agent_response',
     schema: {
       type: 'object',
@@ -69,13 +77,13 @@ export const RESPONSES_API_SCHEMAS = {
         follow_up_question: { type: 'string', description: 'A natural follow-up question based on the conversation' },
         question: { type: 'string', description: 'Alternative field for follow-up question' }
       },
-      required: ['follow_up_question'],
+      required: [OutputFieldName.FollowUpQuestion],
       additionalProperties: false
     },
     description: 'Schema for user agent response output',
     strict: true
   },
-  genericObject: {
+  [ResponsesSchemaName.GenericObject]: {
     name: 'generic_object',
     schema: {
       type: 'object',
@@ -86,7 +94,6 @@ export const RESPONSES_API_SCHEMAS = {
   }
 } as const;
 
-export type ResponsesSchemaName = keyof typeof RESPONSES_API_SCHEMAS;
 
 export interface ExternalApiConfig {
   provider: ExternalProvider;
@@ -109,21 +116,33 @@ export interface ExternalApiConfig {
   streamPhase?: StreamPhase;
   tools?: any[];
   maxTokens?: number;
+  /** Array of field names to include in the output schema (for field selection feature) */
+  selectedFields?: OutputFieldName[];
 }
 
 export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export function generateJsonSchemaForPrompt(
-  outputFields?: { name: string; description: string; optional?: boolean }[]
+  outputFields?: { name: OutputFieldName; description: string; optional?: boolean }[],
+  selectedFields?: OutputFieldName[]
 ): string {
   if (!outputFields || outputFields.length === 0) {
+    return '\n\n' + JSON_OUTPUT_FALLBACK;
+  }
+
+  // Filter fields if selection is provided
+  const fieldsToUse = selectedFields && selectedFields.length > 0
+    ? outputFields.filter(f => selectedFields.includes(f.name))
+    : outputFields;
+
+  if (fieldsToUse.length === 0) {
     return '\n\n' + JSON_OUTPUT_FALLBACK;
   }
 
   const properties: Record<string, any> = {};
   const required: string[] = [];
 
-  for (const field of outputFields) {
+  for (const field of fieldsToUse) {
     properties[field.name] = {
       type: 'string',
       description: field.description

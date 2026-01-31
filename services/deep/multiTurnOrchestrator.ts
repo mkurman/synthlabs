@@ -1,5 +1,5 @@
 import { SynthLogItem, GenerationParams, ChatMessage, UserAgentConfig, LogItemStatus, ProviderType, ApiType, ChatRole, ExternalProvider } from '../../types';
-import { DeepPhase } from '../../interfaces/enums';
+import { DeepPhase, OutputFieldName } from '../../interfaces/enums';
 import { logger } from '../../utils/logger';
 import { PHASE_TO_SCHEMA } from './phaseExecutor';
 import { callAgent } from './agentCaller';
@@ -64,8 +64,8 @@ export const orchestrateMultiTurnConversation = async (
 
   const responderSchema = responderConfig.promptSchema || PHASE_TO_SCHEMA[DeepPhase.Responder]?.();
   const schemaOutputFields = responderSchema?.output?.map((f: any) => f.name) || [];
-  const schemaDefinesAnswer = schemaOutputFields.includes('answer');
-  const schemaDefinesReasoning = schemaOutputFields.includes('reasoning');
+  const schemaDefinesAnswer = schemaOutputFields.includes(OutputFieldName.Answer);
+  const schemaDefinesReasoning = schemaOutputFields.includes(OutputFieldName.Reasoning);
 
   try {
     messages.push({ role: ChatRole.User, content: displayQuery });

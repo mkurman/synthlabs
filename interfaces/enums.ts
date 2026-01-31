@@ -76,3 +76,15 @@ export { ApiSubTab } from './enums/ApiSubTab';
 // Theme and classification enums
 export { ThemeMode } from './enums/ThemeMode';
 export { ClassificationMethod } from './enums/ClassificationMethod';
+
+// Streaming phase enum
+export { StreamingPhase } from './enums/StreamingPhase';
+
+// Output field names enum
+export { OutputFieldName, ALLOWED_OUTPUT_FIELD_NAMES, isValidOutputFieldName } from './enums/OutputFieldName';
+
+// Synth log field names enum
+export { SynthLogFieldName } from './enums/SynthLogFieldName';
+
+// Responses schema enum
+export { ResponsesSchemaName } from './enums/ResponsesSchemaName';

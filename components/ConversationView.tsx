@@ -22,16 +22,7 @@ interface ConversationViewProps {
     streamingField?: 'reasoning' | 'answer' | 'both' | 'query';  // Which field is being streamed
 }
 
-// Helper to parse <think> tags from content
-const parseThinkTags = (content: string): { reasoning: string | null; answer: string } => {
-    const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
-    if (thinkMatch) {
-        const reasoning = thinkMatch[1].trim();
-        const answer = content.replace(/<think>[\s\S]*?<\/think>/, '').trim();
-        return { reasoning, answer };
-    }
-    return { reasoning: null, answer: content };
-};
+
 
 // Role styling configuration
 const getRoleStyles = (role: string) => {
@@ -123,11 +114,9 @@ const ConversationView: React.FC<ConversationViewProps> = ({
     return (
         <div className="space-y-3">
             {messages.map((msg, idx) => {
-                // Parse <think> tags from content for display
-                const { reasoning: embeddedReasoning, answer: cleanContent } = parseThinkTags(msg.content || '');
-                // Use embedded reasoning if separate reasoning field is empty
-                const displayReasoning = msg.reasoning || embeddedReasoning;
-                const displayContent = cleanContent;
+                // Use reasoning_content field (compatible with chat datasets)
+                const displayReasoning = msg.reasoning_content;
+                const displayContent = msg.content;
 
                 const styles = getRoleStyles(msg.role);
                 const IconComponent = styles.icon;

@@ -209,3 +209,200 @@ The app auto-discovers prompt sets; missing roles fall back to `default`.
 ## Repo Policy Notes
 
 - No Cursor or Copilot instruction files are present in this repo.
+
+## Refactoring Guidelines
+
+### When to Refactor
+
+Refactor when files exceed these thresholds:
+- **Services**: >500 lines → split into focused modules
+- **Components**: >300 lines → extract hooks and sub-components
+- **Hooks**: >200 lines → split by concern
+
+### Service Splitting Pattern
+
+When splitting a large service (e.g., `generationService.ts` with 1400+ lines):
+
+1. **Create subdirectory**: `services/generation/`
+2. **Extract by concern**:
+   - Main orchestration logic → `generationService.ts`
+   - Retry operations → `retryOperations.ts`
+   - Related utilities → separate files
+3. **Maintain backward compatibility**: Original file re-exports from subdirectory
+
+Example structure after splitting:
+```
+services/
+├── generation/
+│   ├── generationService.ts    # Main orchestration
+│   └── retryOperations.ts      # Retry logic
+└── generationService.ts        # Re-export stub (backward compat)
+```
+
+### Enum Usage
+
+**Always use enums** instead of string literals for:
+- Theme modes: `ThemeMode.Dark` / `ThemeMode.Light`
+- Classification methods: `ClassificationMethod.None` / `Heuristic` / `LLM`
+- Deep phases: `DeepPhase.Generator`, `Responder`, `UserAgent`, etc.
+- External providers: `ExternalProvider.Gemini`, `OpenAI`, etc.
+
+**Pattern**:
+```ts
+// ❌ Avoid
+if (mode === 'dark') { ... }
+
+// ✅ Use
+import { ThemeMode } from '../interfaces/enums/ThemeMode';
+if (mode === ThemeMode.Dark) { ... }
+```
+
+### Type Safety Rules
+
+- **Never use `any`** in new code
+- **Prefer `unknown`** with type guards when type is uncertain
+- **Use strict TypeScript**: All new files must pass `npx tsc --noEmit`
+- **Explicit return types** for exported functions
+
+### Backward Compatibility
+
+When refactoring:
+1. Keep original file as re-export stub
+2. Update imports gradually
+3. Verify TypeScript passes after each change
+4. Test functionality before committing
+
+Example re-export stub:
+```ts
+// services/generationService.ts
+export * from './generation/generationService';
+export { default } from './generation/generationService';
+```
+
+### File Organization After Refactoring
+
+```
+src/
+├── services/
+│   ├── generation/          # Split from generationService.ts
+│   ├── deep/                # Split from deepReasoningService.ts
+│   │   └── rewrite/         # Split from conversationRewrite.ts
+│   ├── api/                 # Split from externalApiService.ts
+│   └── verifier/
+│       └── rewriters/       # Split from verifierRewriterService.ts
+├── interfaces/
+│   └── enums/               # Individual enum files
+│       ├── ThemeMode.ts
+│       ├── ClassificationMethod.ts
+│       ├── DeepPhase.ts
+│       └── ...
+```
+
+### Constants Consolidation
+
+Move hardcoded data to `constants.ts`:
+- Model definitions (`HARDCODED_MODELS`)
+- Default configurations (`DEFAULT_FALLBACK_MODELS`)
+- API endpoints
+- Feature flags
+
+Import in services instead of defining locally:
+```ts
+// ❌ Avoid defining in service
+const HARDCODED_MODELS = [...];
+
+// ✅ Import from constants
+import { HARDCODED_MODELS } from '../constants';
+```
+
+### No String Literals - Use Enums/Interfaces
+
+**Never use string literals** for types, modes, states, or configuration values. Always create proper enums or interfaces.
+
+**Required Enums:**
+- UI states/tabs/modes → Create enum in `interfaces/enums/`
+- API providers → `ExternalProvider` enum
+- Configuration options → Dedicated enum per feature
+- Status values → Enum instead of `'pending' | 'active' | 'completed'`
+
+**Pattern:**
+```ts
+// ❌ NEVER use string literals
+if (status === 'pending') { ... }
+type Tab = 'general' | 'api' | 'advanced';
+
+// ✅ ALWAYS use enums
+import { ItemStatus } from '../interfaces/enums/ItemStatus';
+if (status === ItemStatus.Pending) { ... }
+
+// Create new enum file: interfaces/enums/SettingsTab.ts
+export enum SettingsTab {
+  General = 'general',
+  Api = 'api',
+  Advanced = 'advanced'
+}
+```
+
+**When to create interfaces:**
+- Function parameters with 3+ properties
+- Return types from services
+- Props for components
+- State shapes in hooks
+
+### Single Responsibility Principle
+
+**Every function must do ONE thing.** If a function:
+- Has more than 30 lines
+- Uses "and" in its name (e.g., `fetchAndProcess`)
+- Has nested conditionals deeper than 2 levels
+- Takes more than 4 parameters
+
+→ **Split it immediately.**
+
+**Pattern:**
+```ts
+// ❌ Violates SRP - does 3 things
+async function processUserData(userId: string) {
+  const user = await fetchUser(userId);
+  const validated = validateUser(user);
+  const enriched = await enrichWithPermissions(validated);
+  return enriched;
+}
+
+// ✅ Each function has single responsibility
+async function fetchUser(userId: string): Promise<User> { ... }
+function validateUser(user: User): ValidatedUser { ... }
+async function enrichWithPermissions(user: ValidatedUser): Promise<EnrichedUser> { ... }
+
+// Orchestrator calls them in sequence
+async function processUserData(userId: string): Promise<EnrichedUser> {
+  const user = await fetchUser(userId);
+  const validated = validateUser(user);
+  return await enrichWithPermissions(validated);
+}
+```
+
+### Split Complex Files Immediately
+
+**When a file becomes complex, split it right away.** Don't wait.
+
+**Complexity indicators:**
+- File exceeds line thresholds (see "When to Refactor")
+- More than 5 imports from the same module
+- Functions that share no common imports
+- Mixed concerns (UI + business logic + API calls)
+
+**Splitting process:**
+1. Identify distinct responsibilities
+2. Create subdirectory if needed
+3. Extract pure functions first
+4. Move to new files by concern
+5. Update imports
+6. Verify TypeScript passes
+7. Test functionality
+
+**Example:** A 400-line service with validation, API calls, and data transformation → Split into:
+- `validators.ts` - Input validation
+- `apiClient.ts` - API calls
+- `transformers.ts` - Data transformation
+- Original file becomes thin orchestrator

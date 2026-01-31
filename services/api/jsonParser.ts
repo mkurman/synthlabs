@@ -1,8 +1,23 @@
 import { logger } from '../../utils/logger';
 import { jsonrepair } from 'json-repair-js';
 
-export function parseJsonContent(content: string): any {
+import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
+
+export interface ParseJsonOptions {
+  /** Array of field names that must be present in the response */
+  requiredFields?: OutputFieldName[];
+}
+
+export class MissingFieldsError extends Error {
+  constructor(public missingFields: string[], public parsedData: any) {
+    super(`Missing required fields: ${missingFields.join(', ')}`);
+    this.name = 'MissingFieldsError';
+  }
+}
+
+export function parseJsonContent(content: string, options?: ParseJsonOptions): any {
   let cleanContent = content.trim();
+  let parsed: any;
 
   // 1. Try to extract JSON from markdown code blocks
   const codeBlockMatch = cleanContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
@@ -24,22 +39,22 @@ export function parseJsonContent(content: string): any {
 
   // 3. Try direct parse
   try {
-    const parsed = JSON.parse(cleanContent);
+    parsed = JSON.parse(cleanContent);
     // Handle double-encoded JSON
     if (typeof parsed === 'string') {
       try {
         const doubleParsed = JSON.parse(parsed);
         if (typeof doubleParsed === 'object' && doubleParsed !== null) {
-          return doubleParsed;
+          parsed = doubleParsed;
+        } else {
+          cleanContent = parsed;
+          throw new Error("Parsed as string, forcing extraction");
         }
-        cleanContent = parsed;
-        throw new Error("Parsed as string, forcing extraction");
       } catch (e) {
         cleanContent = parsed;
         throw new Error("Parsed as string, forcing extraction");
       }
     }
-    return parsed;
   } catch (e) {
     // 4. Try to find the first valid { ... } object or [ ... ] array
     const jsonObjectMatch = cleanContent.match(/\{[\s\S]*\}/);
@@ -47,62 +62,78 @@ export function parseJsonContent(content: string): any {
 
     if (jsonArrayMatch) {
       try {
-        return JSON.parse(jsonArrayMatch[0]);
+        parsed = JSON.parse(jsonArrayMatch[0]);
       } catch (e2) {
         // Fall through
       }
     }
 
-    if (jsonObjectMatch) {
+    if (!parsed && jsonObjectMatch) {
       try {
-        return JSON.parse(jsonObjectMatch[0]);
+        parsed = JSON.parse(jsonObjectMatch[0]);
       } catch (e2) {
         // Fall through
       }
     }
 
     // 5. Try JSONL format
-    const lines = cleanContent.split('\n').filter(line => line.trim());
-    if (lines.length > 1) {
-      const jsonlResults: any[] = [];
-      let allParsed = true;
-      for (const line of lines) {
-        try {
-          jsonlResults.push(JSON.parse(line.trim()));
-        } catch {
-          allParsed = false;
-          break;
+    if (!parsed) {
+      const lines = cleanContent.split('\n').filter(line => line.trim());
+      if (lines.length > 1) {
+        const jsonlResults: any[] = [];
+        let allParsed = true;
+        for (const line of lines) {
+          try {
+            jsonlResults.push(JSON.parse(line.trim()));
+          } catch {
+            allParsed = false;
+            break;
+          }
         }
-      }
-      if (allParsed && jsonlResults.length > 0) {
-        return jsonlResults.length === 1 ? jsonlResults[0] : jsonlResults;
+        if (allParsed && jsonlResults.length > 0) {
+          parsed = jsonlResults.length === 1 ? jsonlResults[0] : jsonlResults;
+        }
       }
     }
 
     // 6. Try to repair the JSON
-    try {
-      const repaired = jsonrepair(cleanContent);
-      logger.log("JSON repaired successfully");
-      return JSON.parse(repaired);
-    } catch (repairError) {
-      const matchToRepair = jsonArrayMatch || jsonObjectMatch;
-      if (matchToRepair) {
-        try {
-          const repairedMatch = jsonrepair(matchToRepair[0]);
-          logger.log("JSON object/array repaired successfully");
-          return JSON.parse(repairedMatch);
-        } catch {
-          // Fall through
+    if (!parsed) {
+      try {
+        const repaired = jsonrepair(cleanContent);
+        logger.log("JSON repaired successfully");
+        parsed = JSON.parse(repaired);
+      } catch (repairError) {
+        const matchToRepair = jsonArrayMatch || jsonObjectMatch;
+        if (matchToRepair) {
+          try {
+            const repairedMatch = jsonrepair(matchToRepair[0]);
+            logger.log("JSON object/array repaired successfully");
+            parsed = JSON.parse(repairedMatch);
+          } catch {
+            // Fall through
+          }
         }
       }
     }
 
     // Fallback: wrap raw text
-    console.warn("JSON Parse Failed, using raw text as fallback", e);
-    return {
-      answer: content.trim(),
-      reasoning: "",
-      follow_up_question: content.trim()
-    };
+    if (!parsed) {
+      console.warn("JSON Parse Failed, using raw text as fallback", e);
+      parsed = {
+        answer: content.trim(),
+        reasoning: "",
+        follow_up_question: content.trim()
+      };
+    }
   }
+
+  // Validate required fields if specified
+  if (options?.requiredFields && options.requiredFields.length > 0) {
+    const missingFields = options.requiredFields.filter(field => !(field in parsed));
+    if (missingFields.length > 0) {
+      throw new MissingFieldsError(missingFields, parsed);
+    }
+  }
+
+  return parsed;
 }

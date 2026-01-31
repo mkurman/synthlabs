@@ -2,9 +2,9 @@ import { ExternalProvider, ApiType, ChatRole } from '../../types';
 import { PROVIDERS, JSON_OUTPUT_FALLBACK } from '../../constants';
 import { logger } from '../../utils/logger';
 import { SettingsService } from '../settingsService';
-import { ExternalApiConfig, RESPONSES_API_SCHEMAS, sleep, generateJsonSchemaForPrompt } from './schemas';
+import { ExternalApiConfig, RESPONSES_API_SCHEMAS, sleep, generateJsonSchemaForPrompt, ResponsesSchemaName } from './schemas';
 import { processStreamResponse } from './streaming';
-import { parseJsonContent } from './jsonParser';
+import { parseJsonContent, MissingFieldsError } from './jsonParser';
 
 export type { ExternalApiConfig } from './schemas';
 
@@ -12,7 +12,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   const {
     provider, apiKey, model, apiType = ApiType.Chat, customBaseUrl, userPrompt, signal,
     maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
-    responsesSchema = 'reasoningTrace', stream = false, onStreamChunk, streamPhase, tools,
+    responsesSchema = ResponsesSchemaName.ReasoningTrace, stream = false, onStreamChunk, streamPhase, tools,
     promptSchema
   } = config;
 
@@ -22,18 +22,39 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   // Build system prompt from schema if provided
   let enhancedSystemPrompt: string;
 
+  // Get selected fields from config (for field selection feature)
+  const selectedFields = config.selectedFields;
+  
+  logger.log('[callExternalApi] Field selection debug:', {
+    selectedFields,
+    hasPromptSchema: !!promptSchema,
+    promptSchemaOutputLength: promptSchema?.output?.length,
+    promptSchemaOutput: promptSchema?.output?.map(f => ({ name: f.name, optional: f.optional }))
+  });
+
   if (config.systemPrompt) {
     if (structuredOutput) {
-      enhancedSystemPrompt = config.systemPrompt + generateJsonSchemaForPrompt();
+      // Use promptSchema.output if available, otherwise we can't generate proper schema
+      if (promptSchema?.output && promptSchema.output.length > 0) {
+        enhancedSystemPrompt = config.systemPrompt + generateJsonSchemaForPrompt(promptSchema.output, selectedFields);
+      } else {
+        // Fallback: include system prompt but warn that schema is missing
+        enhancedSystemPrompt = config.systemPrompt + '\n\n' + JSON_OUTPUT_FALLBACK;
+        logger.warn('[callExternalApi] System prompt provided but no promptSchema.output available for schema generation');
+      }
     } else {
       enhancedSystemPrompt = config.systemPrompt + '\n\n' + JSON_OUTPUT_FALLBACK;
     }
   } else if (promptSchema) {
     if (structuredOutput) {
-      enhancedSystemPrompt = promptSchema.prompt + generateJsonSchemaForPrompt(promptSchema.output);
+      enhancedSystemPrompt = promptSchema.prompt + generateJsonSchemaForPrompt(promptSchema.output, selectedFields);
     } else {
       const example: Record<string, string> = {};
-      for (const field of promptSchema.output || []) {
+      // Filter fields if selection is provided
+      const fieldsToShow = selectedFields && selectedFields.length > 0
+        ? (promptSchema.output || []).filter(f => selectedFields.includes(f.name))
+        : (promptSchema.output || []);
+      for (const field of fieldsToShow) {
         const suffix = field.optional ? ' (optional)' : '';
         example[field.name] = field.description.substring(0, 50) + (field.description.length > 50 ? '...' : '') + suffix;
       }
@@ -230,14 +251,14 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         if (!structuredOutput) {
           return rawContent;
         }
-        return parseJsonContent(rawContent);
+        return parseJsonContent(rawContent, { requiredFields: selectedFields });
       }
 
       const data = await response.json();
 
       if (provider === ExternalProvider.Anthropic) {
         const content = data.content?.[0]?.text || "";
-        return parseJsonContent(content);
+        return parseJsonContent(content, { requiredFields: selectedFields });
       } else if (isResponsesApi) {
         const output = data.output || [];
         const messageOutput = output.find((o: any) => o.type === 'message') || output[0];
@@ -267,7 +288,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           return rawContent;
         }
 
-        const parsed = parseJsonContent(rawContent);
+        const parsed = parseJsonContent(rawContent, { requiredFields: selectedFields });
         return parsed;
       } else {
         const choice = data.choices?.[0];
@@ -291,7 +312,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         }
 
         if (structuredOutput && provider === ExternalProvider.Ollama) {
-          const parsed = parseJsonContent(rawContent);
+          const parsed = parseJsonContent(rawContent, { requiredFields: selectedFields });
           return parsed;
         }
 
@@ -299,12 +320,18 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           return rawContent;
         }
 
-        const parsed = parseJsonContent(rawContent);
+        const parsed = parseJsonContent(rawContent, { requiredFields: selectedFields });
         return parsed;
       }
 
     } catch (err: any) {
       if (err.name === 'AbortError') throw err;
+      
+      // If MissingFieldsError, don't retry - the model returned incomplete data
+      if (err instanceof MissingFieldsError) {
+        logger.error(`Missing required fields in response: ${err.missingFields.join(', ')}`);
+        throw err;
+      }
 
       lastError = err;
 
