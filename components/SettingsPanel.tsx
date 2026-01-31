@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2 } from 'lucide-react';
-import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG } from '../services/settingsService';
-import { ApiType, ExternalProvider, ProviderType, EngineMode } from '../interfaces/enums';
+import { SettingsService, AVAILABLE_PROVIDERS, EMPTY_STEP_CONFIG } from '../services/settingsService';
+import { ApiType, ExternalProvider, ProviderType, EngineMode, SettingsPanelTab, ApiSubTab } from '../interfaces/enums';
 import GenerationParamsInput from './GenerationParamsInput';
-import { PromptService, PromptSetMetadata } from '../services/promptService';
+import { PromptService } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING } from '../services/taskClassifierService';
 import { PROVIDERS } from '../constants';
-import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaModel } from '../services/externalApiService';
+import { formatOllamaModelSize } from '../services/externalApiService';
 import ModelSelector from './ModelSelector';
 import { ModelListProvider } from '../types';
 import { OllamaStatus } from '../interfaces/enums';
+import { useSettingsState } from '../hooks/useSettingsState';
+import { useSettingsOllama } from '../hooks/useSettingsOllama';
 
 interface SettingsPanelProps {
     isOpen: boolean;
@@ -20,142 +22,52 @@ interface SettingsPanelProps {
 
 
 export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: SettingsPanelProps) {
-    const [settings, setSettings] = useState<AppSettings>({ providerKeys: {} });
-    const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-    const [saved, setSaved] = useState(false);
-    const [isFullscreen, setIsFullscreen] = useState(false);
-    const [confirmClear, setConfirmClear] = useState(false);
-    const [activeTab, setActiveTab] = useState<'providers' | 'generation' | 'huggingface' | 'firebase' | 'storage' | 'prompts'>('providers');
-    const [apiSubTab, setApiSubTab] = useState<'keys' | 'defaults'>('keys');
-    const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ generalPurpose: true, generator: true, converter: false });
-    const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
-    const [promptMetadata, setPromptMetadata] = useState<Record<string, PromptSetMetadata>>({});
+    const {
+        settings,
+        showKeys,
+        saved,
+        isFullscreen,
+        setIsFullscreen,
+        confirmClear,
+        setConfirmClear,
+        activeTab,
+        setActiveTab,
+        apiSubTab,
+        setApiSubTab,
+        expandedSections,
+        availablePromptSets,
+        setAvailablePromptSets,
+        promptMetadata,
+        setPromptMetadata,
+        toggleShowKey,
+        updateSetting,
+        updateProviderKey,
+        updateDefaultModel,
+        updateWorkflowDefault,
+        toggleSection,
+        handleSave,
+        handleClearAll,
+        loadSettings
+    } = useSettingsState(onSettingsChanged);
 
-    // Ollama integration state
-    const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-    const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>(OllamaStatus.Checking);
-    const [ollamaLoading, setOllamaLoading] = useState(false);
+    const {
+        ollamaModels,
+        ollamaStatus,
+        ollamaLoading,
+        refreshOllamaModels
+    } = useSettingsOllama();
 
-    // Fetch Ollama models when panel opens
-    const refreshOllamaModels = async () => {
-        setOllamaLoading(true);
-        setOllamaStatus(OllamaStatus.Checking);
-        try {
-            const isOnline = await checkOllamaStatus();
-            if (isOnline) {
-                setOllamaStatus(OllamaStatus.Online);
-                const models = await fetchOllamaModels();
-                setOllamaModels(models);
-            } else {
-                setOllamaStatus(OllamaStatus.Offline);
-                setOllamaModels([]);
-            }
-        } catch {
-            setOllamaStatus(OllamaStatus.Offline);
-            setOllamaModels([]);
-        }
-        setOllamaLoading(false);
-    };
-
+    // Load settings and prompt sets when panel opens
     useEffect(() => {
         if (isOpen) {
-            setSettings(SettingsService.getSettings());
-            setSaved(false);
-            setConfirmClear(false);
+            loadSettings();
             setAvailablePromptSets(PromptService.getAvailableSets());
             setPromptMetadata(PromptService.getAllMetadata());
-            // Auto-fetch Ollama models when panel opens
             refreshOllamaModels();
         } else {
             setIsFullscreen(false);
         }
-    }, [isOpen]);
-
-    const handleSave = async () => {
-        await SettingsService.saveSettingsAsync(settings);
-        setSaved(true);
-        onSettingsChanged?.();
-        setTimeout(() => setSaved(false), 2000);
-    };
-
-    const handleClearAll = async () => {
-        if (!confirmClear) {
-            setConfirmClear(true);
-            return;
-        }
-        await SettingsService.clearAllData();
-        setSettings({ providerKeys: {} });
-        setConfirmClear(false);
-        onSettingsChanged?.();
-        // Small delay to ensure clearAllData completes before reload
-        await new Promise(resolve => setTimeout(resolve, 100));
-        window.location.reload();
-    };
-
-    const toggleShowKey = (key: string) => {
-        setShowKeys(prev => ({ ...prev, [key]: !prev[key] }));
-    };
-
-    const updateProviderKey = (provider: string, value: string) => {
-        setSettings(prev => ({
-            ...prev,
-            providerKeys: { ...prev.providerKeys, [provider]: value }
-        }));
-    };
-
-    const updateDefaultModel = (provider: string, value: string) => {
-        setSettings(prev => ({
-            ...prev,
-            providerDefaultModels: { ...(prev.providerDefaultModels || {}), [provider]: value }
-        }));
-    };
-
-    const updateWorkflowDefault = (
-        workflow: 'generator' | 'converter',
-        mode: EngineMode,
-        step: keyof DeepModeDefaults | null,
-        field: keyof StepModelConfig,
-        value: any
-    ) => {
-        setSettings(prev => {
-            const current = prev.workflowDefaults || DEFAULT_WORKFLOW_DEFAULTS;
-            if (mode === EngineMode.Regular) {
-                return {
-                    ...prev,
-                    workflowDefaults: {
-                        ...current,
-                        [workflow]: {
-                            ...current[workflow],
-                            regular: { ...current[workflow].regular, [field]: value }
-                        }
-                    }
-                };
-            } else if (step) {
-                return {
-                    ...prev,
-                    workflowDefaults: {
-                        ...current,
-                        [workflow]: {
-                            ...current[workflow],
-                            deep: {
-                                ...current[workflow].deep,
-                                [step]: { ...current[workflow].deep[step], [field]: value }
-                            }
-                        }
-                    }
-                };
-            }
-            return prev;
-        });
-    };
-
-    const toggleSection = (section: string) => {
-        setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
-    };
-
-    const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-        setSettings(prev => ({ ...prev, [key]: value }));
-    };
+    }, [isOpen, loadSettings, setAvailablePromptSets, setPromptMetadata, refreshOllamaModels, setIsFullscreen]);
 
     // All providers including Gemini for unified dropdowns (Gemini first)
     const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];
@@ -189,16 +101,16 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                 {/* Tabs */}
                 <div className="flex border-b border-slate-800">
                     {[
-                        { id: 'providers', label: 'API Keys', icon: Key },
-                        { id: 'generation', label: 'Generation', icon: Sliders },
-                        { id: 'prompts', label: 'Prompts', icon: FileText },
-                        { id: 'huggingface', label: 'HuggingFace', icon: Cloud },
-                        { id: 'firebase', label: 'Firebase', icon: Database },
-                        { id: 'storage', label: 'Storage', icon: Cpu },
+                        { id: SettingsPanelTab.Providers, label: 'API Keys', icon: Key },
+                        { id: SettingsPanelTab.Generation, label: 'Generation', icon: Sliders },
+                        { id: SettingsPanelTab.Prompts, label: 'Prompts', icon: FileText },
+                        { id: SettingsPanelTab.HuggingFace, label: 'HuggingFace', icon: Cloud },
+                        { id: SettingsPanelTab.Firebase, label: 'Firebase', icon: Database },
+                        { id: SettingsPanelTab.Storage, label: 'Storage', icon: Cpu },
                     ].map(tab => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                            onClick={() => setActiveTab(tab.id)}
                             className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${activeTab === tab.id
                                 ? 'text-indigo-400 border-b-2 border-indigo-400 bg-slate-800/50'
                                 : 'text-slate-500 hover:text-slate-300'
@@ -212,13 +124,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {activeTab === 'providers' && (
+                    {activeTab === SettingsPanelTab.Providers && (
                         <div className="space-y-4">
                             {/* Sub-tabs: API Keys | Default Models */}
                             <div className="flex gap-2 p-1 bg-slate-800/50 rounded-lg">
                                 <button
-                                    onClick={() => setApiSubTab('keys')}
-                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === 'keys'
+                                    onClick={() => setApiSubTab(ApiSubTab.Keys)}
+                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Keys
                                         ? 'bg-indigo-600 text-white'
                                         : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                                         }`}
@@ -227,8 +139,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     API Keys
                                 </button>
                                 <button
-                                    onClick={() => setApiSubTab('defaults')}
-                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === 'defaults'
+                                    onClick={() => setApiSubTab(ApiSubTab.Defaults)}
+                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Defaults
                                         ? 'bg-indigo-600 text-white'
                                         : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                                         }`}
@@ -239,7 +151,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             </div>
 
                             {/* API Keys Sub-tab */}
-                            {apiSubTab === 'keys' && (
+                            {apiSubTab === ApiSubTab.Keys && (
                                 <div className="space-y-2">
                                     <p className="text-xs text-slate-500">
                                         Configure API keys. Leave empty to use .env values.
@@ -410,7 +322,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             )}
 
                             {/* Default Models Sub-tab */}
-                            {apiSubTab === 'defaults' && (
+                            {apiSubTab === ApiSubTab.Defaults && (
                                 <div className="space-y-4">
                                     <p className="text-xs text-slate-500">
                                         Configure default provider and model for each workflow step.
@@ -444,7 +356,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     ...settings.generalPurposeModel,
                                                                     ...EMPTY_STEP_CONFIG,
                                                                     provider: isExternal ? ProviderType.External : ProviderType.Gemini,
-                                                                    externalProvider: isExternal ? selectedProvider : '',
+                                                                    externalProvider: isExternal ? selectedProvider as ExternalProvider : ExternalProvider.Other,
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 });
                                                             }}
@@ -463,7 +375,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     ...EMPTY_STEP_CONFIG,
                                                                     apiType: e.target.value as ApiType,
                                                                     provider: settings.generalPurposeModel?.provider || ProviderType.External,
-                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || '',
+                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 })}
                                                                 className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
@@ -483,7 +395,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 ...EMPTY_STEP_CONFIG,
                                                                 model,
                                                                 provider: settings.generalPurposeModel?.provider || ProviderType.Gemini,
-                                                                externalProvider: settings.generalPurposeModel?.externalProvider || ''
+                                                                externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other
                                                             })}
                                                                 apiKey={settings.generalPurposeModel?.provider === ProviderType.External
                                                                     ? (settings.providerKeys?.[settings.generalPurposeModel?.externalProvider || ''] || '')
@@ -505,7 +417,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     ...EMPTY_STEP_CONFIG,
                                                                     generationParams: newParams,
                                                                     provider: settings.generalPurposeModel?.provider || ProviderType.Gemini,
-                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || '',
+                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 });
                                                             }}
@@ -754,7 +666,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'generation' && (
+                    {activeTab === SettingsPanelTab.Generation && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
@@ -959,7 +871,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'huggingface' && (
+                    {activeTab === SettingsPanelTab.HuggingFace && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
@@ -1018,7 +930,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'firebase' && (
+                    {activeTab === SettingsPanelTab.Firebase && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
@@ -1139,7 +1051,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'storage' && (
+                    {activeTab === SettingsPanelTab.Storage && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
@@ -1183,7 +1095,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'prompts' && (
+                    {activeTab === SettingsPanelTab.Prompts && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">

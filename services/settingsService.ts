@@ -20,7 +20,7 @@ export const AVAILABLE_PROVIDERS = EXTERNAL_PROVIDERS;
 // Model configuration for a single workflow step
 export interface StepModelConfig {
     provider: ProviderType;
-    externalProvider: string;
+    externalProvider: ExternalProvider;
     apiType?: ApiType; // defaults to chat if not specified
     model: string;
     generationParams?: GenerationParams;
@@ -51,7 +51,7 @@ export interface WorkflowDefaults {
 // Default empty step config
 export const EMPTY_STEP_CONFIG: StepModelConfig = {
     provider: ProviderType.Gemini,
-    externalProvider: '',
+    externalProvider: ExternalProvider.Other,
     apiType: ApiType.Chat, // Default to chat completions API
     model: ''
 };
