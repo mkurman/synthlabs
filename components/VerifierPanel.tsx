@@ -26,6 +26,8 @@ import { toast } from '../services/toastService';
 import { confirmService } from '../services/confirmService';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import GenerationParamsInput from './GenerationParamsInput';
+import { resolveSessionFilter } from '../services/verifierSessionFilterService';
+import { parseVerifierItemsFromText } from '../services/verifierFileParseService';
 
 interface VerifierPanelProps {
     currentSessionUid: string;
@@ -136,7 +138,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
         const settings = SettingsService.getSettings();
         const gpModel = settings.generalPurposeModel;
         return {
-            provider: (gpModel?.provider === 'external' || gpModel?.provider === 'other') ? ProviderType.External : ProviderType.Gemini,
+            provider: gpModel?.provider === ProviderType.External ? ProviderType.External : ProviderType.Gemini,
             externalProvider: (gpModel?.externalProvider || 'openrouter') as any,
             apiKey: '',
             model: gpModel?.model || 'gemini-1.5-pro',
@@ -259,63 +261,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
 
     // --- Logic: Import ---
 
-    const normalizeImportItem = (raw: any): VerifierItem => {
-        // 1. Query/Input Mapping
-        let query = raw.query || raw.instruction || raw.question || raw.prompt || raw.input || "";
-        if (!query && Array.isArray(raw.messages)) {
-            const lastUser = raw.messages.findLast((m: any) => m.role === ChatRole.User);
-            if (lastUser) query = lastUser.content;
-        }
-
-        // 2. Answer/Output Mapping
-        let answer = raw.answer || raw.output || raw.response || raw.completion || "";
-        if (Array.isArray(raw.messages)) {
-            const lastAssistant = raw.messages.findLast((m: any) => m.role === ChatRole.Assistant);
-            if (lastAssistant) answer = lastAssistant.content;
-        }
-
-        // 3. Reasoning Mapping (Added reasoning_trace)
-        const reasoning = raw.reasoning || raw.reasoning_trace || raw.thought || raw.thoughts || raw.scratchpad || raw.rationale || raw.trace || "";
-
-        // 4. Ensure strings
-        const ensureString = (val: any) => {
-            if (val === null || val === undefined) return "";
-            if (typeof val === 'string') return val;
-            return JSON.stringify(val);
-        };
-
-        // 5. Model Detection
-        // Checking raw.generator as requested
-        let modelUsed = raw.modelUsed || raw.model || raw.generator || 'Imported';
-
-        if (modelUsed === 'Imported' && raw.deepMetadata && raw.deepMetadata.writer) {
-            modelUsed = `DEEP: ${raw.deepMetadata.writer}`;
-        }
-
-        if (typeof modelUsed !== 'string') {
-            modelUsed = String(modelUsed);
-        }
-
-        return {
-            ...raw, // Keep original data fields
-            id: raw.id || crypto.randomUUID(),
-            query: ensureString(query),
-            answer: ensureString(answer),
-            reasoning: ensureString(reasoning),
-            // Preserve multi-turn conversation data
-            messages: Array.isArray(raw.messages) ? raw.messages : undefined,
-            isMultiTurn: Array.isArray(raw.messages) && raw.messages.length > 0,
-            // Defaults for VerifierItem
-            seed_preview: raw.seed_preview || ensureString(query).substring(0, 100),
-            full_seed: raw.full_seed || ensureString(query),
-            timestamp: raw.timestamp || new Date().toISOString(),
-            modelUsed: modelUsed,
-            score: raw.score || 0,
-            isDuplicate: false,
-            isDiscarded: false,
-            hasUnsavedChanges: false
-        };
-    };
+    // normalizeImportItem moved to verifierImportService
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files;
@@ -329,33 +275,14 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     if (typeof event.target?.result === 'string') {
-                        let items: VerifierItem[] = [];
                         try {
-                            const content = event.target.result.trim();
-                            if (content.startsWith('[') && content.endsWith(']')) {
-                                // JSON Array
-                                const parsed = JSON.parse(content);
-                                if (Array.isArray(parsed)) {
-                                    items = parsed.map(normalizeImportItem);
-                                }
-                            } else {
-                                // JSONL (Line-delimited JSON)
-                                const lines = content.split('\n');
-                                items = lines
-                                    .filter(line => line.trim().length > 0)
-                                    .map(line => {
-                                        try {
-                                            return normalizeImportItem(JSON.parse(line));
-                                        } catch (e) {
-                                            return null;
-                                        }
-                                    })
-                                    .filter((i): i is VerifierItem => i !== null);
-                            }
+                            const items = parseVerifierItemsFromText(event.target.result);
+                            resolve(items);
+                            return;
                         } catch (err) {
                             console.error("Failed to parse file", file.name, err);
                         }
-                        resolve(items);
+                        resolve([]);
                     } else {
                         resolve([]);
                     }
@@ -389,22 +316,18 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
         try {
             // Determine parameters
             const limitToUse = isLimitEnabled ? importLimit : undefined;
-            let sessionUidToUse: string | undefined = undefined;
-
-            if (selectedSessionFilter === 'current') {
-                sessionUidToUse = currentSessionUid;
-            } else if (selectedSessionFilter === 'custom') {
-                sessionUidToUse = customSessionId.trim();
-                if (!sessionUidToUse) {
-                    toast.info("Please enter a Session ID.");
-                    setIsImporting(false);
-                    return;
-                }
-            } else if (selectedSessionFilter !== 'all') {
-                sessionUidToUse = selectedSessionFilter;
+            const { sessionUid, requiresCustom } = resolveSessionFilter(
+                selectedSessionFilter,
+                currentSessionUid,
+                customSessionId
+            );
+            if (requiresCustom && !sessionUid) {
+                toast.info("Please enter a Session ID.");
+                setIsImporting(false);
+                return;
             }
 
-            const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUidToUse);
+            const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUid);
             if (items.length === 0) {
                 toast.info("No items found matching criteria.");
             } else {
@@ -434,14 +357,11 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
             const lastItem = data[data.length - 1];
             const lastDoc = lastItem?._doc;
 
-            let sessionUidToUse: string | undefined = undefined;
-            if (selectedSessionFilter === 'current') {
-                sessionUidToUse = currentSessionUid;
-            } else if (selectedSessionFilter === 'custom') {
-                sessionUidToUse = customSessionId.trim();
-            } else if (selectedSessionFilter !== 'all') {
-                sessionUidToUse = selectedSessionFilter;
-            }
+            const { sessionUid } = resolveSessionFilter(
+                selectedSessionFilter,
+                currentSessionUid,
+                customSessionId
+            );
 
             // Calculate needed items
             // If explicit start/end via tool, we might need logic, but for UI button we usually just fetch 'pageSize' more
@@ -454,7 +374,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
 
             const newItems = await FirebaseService.fetchLogsAfter({
                 limitCount: limitToFetch,
-                sessionUid: sessionUidToUse,
+                sessionUid,
                 lastDoc: lastDoc
             });
 

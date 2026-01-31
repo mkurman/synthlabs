@@ -405,7 +405,7 @@ export class GenerationService {
         try {
             const classifierPrompt = TaskClassifierService.getClassifierPrompt(sampleQuery);
 
-            const classifierProvider = settings.autoRouteLlmProvider || 'gemini';
+            const classifierProvider = settings.autoRouteLlmProvider || ProviderType.Gemini;
             const classifierExternalProvider = settings.autoRouteLlmExternalProvider || config.externalProvider;
             const classifierModel = settings.autoRouteLlmModel || config.externalModel;
             const classifierApiKey = settings.autoRouteLlmApiKey || SettingsService.getApiKey(classifierExternalProvider);
@@ -413,7 +413,7 @@ export class GenerationService {
 
             let response: string;
 
-            if (classifierProvider === 'gemini') {
+            if (classifierProvider === ProviderType.Gemini) {
                 const classifyResult = await GeminiService.generateReasoningTrace(
                     classifierPrompt,
                     'You are a task classifier. Reply with ONLY the category name.',
@@ -797,8 +797,8 @@ export class GenerationService {
                                 const current = config.streamingConversationsRef.current.get(generationId);
                                 if (!current) return;
 
-                                const userMsgs = chatMessages.filter(m => m.role === 'user');
-                                const assistantMsgs = chatMessages.filter(m => m.role === 'assistant');
+                                const userMsgs = chatMessages.filter(m => m.role === ChatRole.User);
+                                const assistantMsgs = chatMessages.filter(m => m.role === ChatRole.Assistant);
 
                                 const completedUser = userMsgs[index];
                                 const completedAssistant = assistantMsgs[index];
@@ -1132,7 +1132,7 @@ export class GenerationService {
         }
 
         const currentEnv = config.environmentRef.current;
-        if (currentEnv === 'production' && !result.isError && FirebaseService.isFirebaseConfigured()) {
+        if (currentEnv === Environment.Production && !result.isError && FirebaseService.isFirebaseConfigured()) {
             try {
                 await FirebaseService.saveLogToFirebase(result);
                 result.savedToDb = true;

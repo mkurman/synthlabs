@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GenerationParams } from "../types";
+import { ProviderType } from '../interfaces/enums';
 import { logger } from '../utils/logger';
 import { callExternalApi, ExternalApiConfig } from './externalApiService';
 
@@ -158,8 +159,9 @@ export const generateGeminiTopic = async (category: string, model?: string): Pro
   }
 };
 
+
 export interface OptimizePromptConfig {
-  provider: 'gemini' | 'external';
+  provider: ProviderType;
   externalProvider?: string;
   model?: string;
   customBaseUrl?: string;
@@ -185,7 +187,7 @@ export const optimizeSystemPrompt = async (
   
   Output ONLY refined prompt as a text.`;
 
-  if (config?.provider === 'external') {
+  if (config?.provider === ProviderType.External) {
     if (!config.externalProvider || !config.model || !config.apiKey) {
       throw new Error(`External provider config incomplete. Provider: ${config.externalProvider}, Model: ${config.model}, Has API Key: ${!!config.apiKey}`);
     }

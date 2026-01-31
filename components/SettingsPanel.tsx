@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2 } from 'lucide-react';
 import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG } from '../services/settingsService';
-import { ExternalProvider, ProviderType } from '../interfaces/enums';
+import { ApiType, ExternalProvider, ProviderType, EngineMode } from '../interfaces/enums';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService, PromptSetMetadata } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING } from '../services/taskClassifierService';
@@ -112,14 +112,14 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
     const updateWorkflowDefault = (
         workflow: 'generator' | 'converter',
-        mode: 'regular' | 'deep',
+        mode: EngineMode,
         step: keyof DeepModeDefaults | null,
         field: keyof StepModelConfig,
         value: any
     ) => {
         setSettings(prev => {
             const current = prev.workflowDefaults || DEFAULT_WORKFLOW_DEFAULTS;
-            if (mode === 'regular') {
+            if (mode === EngineMode.Regular) {
                 return {
                     ...prev,
                     workflowDefaults: {
@@ -434,16 +434,16 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Default Model</label>
                                                     <div className="flex gap-2 flex-wrap">
                                                         <select
-                                                            value={settings.generalPurposeModel?.provider === 'external'
-                                                                ? settings.generalPurposeModel?.externalProvider || 'gemini'
-                                                                : settings.generalPurposeModel?.provider || 'gemini'}
+                                                            value={settings.generalPurposeModel?.provider === ProviderType.External
+                                                                ? settings.generalPurposeModel?.externalProvider || ProviderType.Gemini
+                                                                : settings.generalPurposeModel?.provider || ProviderType.Gemini}
                                                             onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                                                                 const selectedProvider = e.target.value;
                                                                 const isExternal = selectedProvider !== ProviderType.Gemini;
                                                                 updateSetting('generalPurposeModel', {
                                                                     ...settings.generalPurposeModel,
                                                                     ...EMPTY_STEP_CONFIG,
-                                                                    provider: isExternal ? 'external' : 'gemini',
+                                                                    provider: isExternal ? ProviderType.External : ProviderType.Gemini,
                                                                     externalProvider: isExternal ? selectedProvider : '',
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 });
@@ -455,14 +455,14 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
-                                                        {settings.generalPurposeModel?.provider === 'external' && (
+                                                        {settings.generalPurposeModel?.provider === ProviderType.External && (
                                                             <select
-                                                                value={settings.generalPurposeModel?.apiType || 'chat'}
+                                                                value={settings.generalPurposeModel?.apiType || ApiType.Chat}
                                                                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateSetting('generalPurposeModel', {
                                                                     ...settings.generalPurposeModel,
                                                                     ...EMPTY_STEP_CONFIG,
-                                                                    apiType: e.target.value as 'chat' | 'responses',
-                                                                    provider: settings.generalPurposeModel?.provider || 'external',
+                                                                    apiType: e.target.value as ApiType,
+                                                                    provider: settings.generalPurposeModel?.provider || ProviderType.External,
                                                                     externalProvider: settings.generalPurposeModel?.externalProvider || '',
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 })}
@@ -474,21 +474,21 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             </select>
                                                         )}
                                                         <ModelSelector
-                                                                provider={(settings.generalPurposeModel?.provider === 'external'
+                                                                provider={(settings.generalPurposeModel?.provider === ProviderType.External
                                                                     ? settings.generalPurposeModel?.externalProvider
-                                                                    : 'gemini') as ModelListProvider}
+                                                                    : ProviderType.Gemini) as ModelListProvider}
                                                             value={settings.generalPurposeModel?.model || ''}
                                                             onChange={(model) => updateSetting('generalPurposeModel', {
                                                                 ...settings.generalPurposeModel,
                                                                 ...EMPTY_STEP_CONFIG,
                                                                 model,
-                                                                provider: settings.generalPurposeModel?.provider || 'gemini',
+                                                                provider: settings.generalPurposeModel?.provider || ProviderType.Gemini,
                                                                 externalProvider: settings.generalPurposeModel?.externalProvider || ''
                                                             })}
-                                                                apiKey={settings.generalPurposeModel?.provider === 'external'
+                                                                apiKey={settings.generalPurposeModel?.provider === ProviderType.External
                                                                     ? (settings.providerKeys?.[settings.generalPurposeModel?.externalProvider || ''] || '')
                                                                     : (settings.geminiApiKey || '')}
-                                                                customBaseUrl={settings.generalPurposeModel?.externalProvider === 'other'
+                                                                customBaseUrl={settings.generalPurposeModel?.externalProvider === ExternalProvider.Other
                                                                     ? settings.customEndpointUrl
                                                                     : undefined}
                                                             placeholder="Model ID"
@@ -504,7 +504,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     ...settings.generalPurposeModel,
                                                                     ...EMPTY_STEP_CONFIG,
                                                                     generationParams: newParams,
-                                                                    provider: settings.generalPurposeModel?.provider || 'gemini',
+                                                                    provider: settings.generalPurposeModel?.provider || ProviderType.Gemini,
                                                                     externalProvider: settings.generalPurposeModel?.externalProvider || '',
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 });
@@ -535,8 +535,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Regular Mode</label>
                                                     <div className="flex gap-2 flex-wrap">
                                                         <select
-                                                            value={settings.workflowDefaults?.generator.regular.provider || 'gemini'}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', 'regular', null, 'provider', e.target.value)}
+                                                            value={settings.workflowDefaults?.generator.regular.provider || ProviderType.Gemini}
+                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'provider', e.target.value)}
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
@@ -544,10 +544,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
-                                                        {settings.workflowDefaults?.generator.regular.provider === 'external' && (
+                                                        {settings.workflowDefaults?.generator.regular.provider === ProviderType.External && (
                                                             <select
-                                                                value={settings.workflowDefaults?.generator.regular.apiType || 'chat'}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', 'regular', null, 'apiType', e.target.value)}
+                                                                value={settings.workflowDefaults?.generator.regular.apiType || ApiType.Chat}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'apiType', e.target.value)}
                                                                 className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                                 title="API Type: chat=completions, responses=responses API"
                                                             >
@@ -556,15 +556,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             </select>
                                                         )}
                                                         <ModelSelector
-                                                            provider={(settings.workflowDefaults?.generator.regular.provider === 'external'
+                                                            provider={(settings.workflowDefaults?.generator.regular.provider === ProviderType.External
                                                                 ? settings.workflowDefaults?.generator.regular.externalProvider
-                                                                : 'gemini') as ModelListProvider}
+                                                                : ProviderType.Gemini) as ModelListProvider}
                                                             value={settings.workflowDefaults?.generator.regular.model || ''}
-                                                            onChange={(model) => updateWorkflowDefault('generator', 'regular', null, 'model', model)}
-                                                            apiKey={settings.workflowDefaults?.generator.regular.provider === 'external'
+                                                            onChange={(model) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'model', model)}
+                                                            apiKey={settings.workflowDefaults?.generator.regular.provider === ProviderType.External
                                                                 ? (settings.providerKeys?.[settings.workflowDefaults?.generator.regular.externalProvider || ''] || '')
                                                                 : (settings.geminiApiKey || '')}
-                                                            customBaseUrl={settings.workflowDefaults?.generator.regular.externalProvider === 'other'
+                                                            customBaseUrl={settings.workflowDefaults?.generator.regular.externalProvider === ExternalProvider.Other
                                                                 ? settings.customEndpointUrl
                                                                 : undefined}
                                                             placeholder="Model ID"
@@ -573,7 +573,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     </div>
                                                     <GenerationParamsInput
                                                         params={settings.workflowDefaults?.generator.regular.generationParams}
-                                                        onChange={(newParams) => updateWorkflowDefault('generator', 'regular', null, 'generationParams', newParams)}
+                                                        onChange={(newParams) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'generationParams', newParams)}
                                                     />
                                                 </div>
 
@@ -585,8 +585,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             <div className="flex items-center gap-2 flex-wrap">
                                                                 <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
                                                                 <select
-                                                                    value={settings.workflowDefaults?.generator.deep[step]?.provider || 'gemini'}
-                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', 'deep', step, 'provider', e.target.value)}
+                                                                    value={settings.workflowDefaults?.generator.deep[step]?.provider || ProviderType.Gemini}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'provider', e.target.value)}
                                                                     className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
@@ -594,10 +594,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     ))}
                                                                 </select>
                                                                 {/* API Type dropdown for external providers */}
-                                                                {settings.workflowDefaults?.generator.deep[step]?.provider === 'external' && (
+                                                                {settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External && (
                                                                     <select
-                                                                        value={settings.workflowDefaults?.generator.deep[step]?.apiType || 'chat'}
-                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', 'deep', step, 'apiType', e.target.value)}
+                                                                        value={settings.workflowDefaults?.generator.deep[step]?.apiType || ApiType.Chat}
+                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'apiType', e.target.value)}
                                                                         className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                         title="API Type: chat=completions, responses=responses API"
                                                                     >
@@ -606,15 +606,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     </select>
                                                                 )}
                                                                 <ModelSelector
-                                                                    provider={(settings.workflowDefaults?.generator.deep[step]?.provider === 'external'
+                                                                    provider={(settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External
                                                                         ? settings.workflowDefaults?.generator.deep[step]?.externalProvider
-                                                                        : 'gemini') as ModelListProvider}
+                                                                        : ProviderType.Gemini) as ModelListProvider}
                                                                     value={settings.workflowDefaults?.generator.deep[step]?.model || ''}
-                                                                    onChange={(model) => updateWorkflowDefault('generator', 'deep', step, 'model', model)}
-                                                                    apiKey={settings.workflowDefaults?.generator.deep[step]?.provider === 'external'
+                                                                    onChange={(model) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'model', model)}
+                                                                    apiKey={settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External
                                                                         ? (settings.providerKeys?.[settings.workflowDefaults?.generator.deep[step]?.externalProvider || ''] || '')
                                                                         : (settings.geminiApiKey || '')}
-                                                                    customBaseUrl={settings.workflowDefaults?.generator.deep[step]?.externalProvider === 'other'
+                                                                    customBaseUrl={settings.workflowDefaults?.generator.deep[step]?.externalProvider === ExternalProvider.Other
                                                                         ? settings.customEndpointUrl
                                                                         : undefined}
                                                                     placeholder="Model"
@@ -623,7 +623,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             </div>
                                                             <GenerationParamsInput
                                                                 params={settings.workflowDefaults?.generator.deep[step]?.generationParams}
-                                                                onChange={(newParams) => updateWorkflowDefault('generator', 'deep', step, 'generationParams', newParams)}
+                                                                onChange={(newParams) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'generationParams', newParams)}
                                                                 label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
                                                             />
                                                         </div>
@@ -652,8 +652,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Regular Mode</label>
                                                     <div className="flex gap-2 flex-wrap">
                                                         <select
-                                                            value={settings.workflowDefaults?.converter.regular.provider || 'gemini'}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', 'regular', null, 'provider', e.target.value)}
+                                                            value={settings.workflowDefaults?.converter.regular.provider || ProviderType.Gemini}
+                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'provider', e.target.value)}
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
@@ -661,10 +661,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             ))}
                                                         </select>
                                                         {/* API Type dropdown for external providers */}
-                                                        {settings.workflowDefaults?.converter.regular.provider === 'external' && (
+                                                        {settings.workflowDefaults?.converter.regular.provider === ProviderType.External && (
                                                             <select
-                                                                value={settings.workflowDefaults?.converter.regular.apiType || 'chat'}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', 'regular', null, 'apiType', e.target.value)}
+                                                                value={settings.workflowDefaults?.converter.regular.apiType || ApiType.Chat}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'apiType', e.target.value)}
                                                                 className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                                 title="API Type: chat=completions, responses=responses API"
                                                             >
@@ -673,15 +673,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             </select>
                                                         )}
                                                         <ModelSelector
-                                                            provider={(settings.workflowDefaults?.converter.regular.provider === 'external'
+                                                            provider={(settings.workflowDefaults?.converter.regular.provider === ProviderType.External
                                                                 ? settings.workflowDefaults?.converter.regular.externalProvider
-                                                                : 'gemini') as ModelListProvider}
+                                                                : ProviderType.Gemini) as ModelListProvider}
                                                             value={settings.workflowDefaults?.converter.regular.model || ''}
-                                                            onChange={(model) => updateWorkflowDefault('converter', 'regular', null, 'model', model)}
-                                                            apiKey={settings.workflowDefaults?.converter.regular.provider === 'external'
+                                                            onChange={(model) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'model', model)}
+                                                            apiKey={settings.workflowDefaults?.converter.regular.provider === ProviderType.External
                                                                 ? (settings.providerKeys?.[settings.workflowDefaults?.converter.regular.externalProvider || ''] || '')
                                                                 : (settings.geminiApiKey || '')}
-                                                            customBaseUrl={settings.workflowDefaults?.converter.regular.externalProvider === 'other'
+                                                            customBaseUrl={settings.workflowDefaults?.converter.regular.externalProvider === ExternalProvider.Other
                                                                 ? settings.customEndpointUrl
                                                                 : undefined}
                                                             placeholder="Model ID"
@@ -690,7 +690,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     </div>
                                                     <GenerationParamsInput
                                                         params={settings.workflowDefaults?.converter.regular.generationParams}
-                                                        onChange={(newParams) => updateWorkflowDefault('converter', 'regular', null, 'generationParams', newParams)}
+                                                        onChange={(newParams) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'generationParams', newParams)}
                                                     />
                                                 </div>
 
@@ -702,8 +702,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             <div className="flex items-center gap-2 flex-wrap">
                                                                 <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
                                                                 <select
-                                                                    value={settings.workflowDefaults?.converter.deep[step]?.provider || 'gemini'}
-                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', 'deep', step, 'provider', e.target.value)}
+                                                                    value={settings.workflowDefaults?.converter.deep[step]?.provider || ProviderType.Gemini}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'provider', e.target.value)}
                                                                     className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
@@ -711,10 +711,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     ))}
                                                                 </select>
                                                                 {/* API Type dropdown for external providers */}
-                                                                {settings.workflowDefaults?.converter.deep[step]?.provider === 'external' && (
+                                                                {settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External && (
                                                                     <select
-                                                                        value={settings.workflowDefaults?.converter.deep[step]?.apiType || 'chat'}
-                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', 'deep', step, 'apiType', e.target.value)}
+                                                                        value={settings.workflowDefaults?.converter.deep[step]?.apiType || ApiType.Chat}
+                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'apiType', e.target.value)}
                                                                         className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                         title="API Type: chat=completions, responses=responses API"
                                                                     >
@@ -723,15 +723,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     </select>
                                                                 )}
                                                                 <ModelSelector
-                                                                    provider={(settings.workflowDefaults?.converter.deep[step]?.provider === 'external'
+                                                                    provider={(settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External
                                                                         ? settings.workflowDefaults?.converter.deep[step]?.externalProvider
-                                                                        : 'gemini') as ModelListProvider}
+                                                                        : ProviderType.Gemini) as ModelListProvider}
                                                                     value={settings.workflowDefaults?.converter.deep[step]?.model || ''}
-                                                                    onChange={(model) => updateWorkflowDefault('converter', 'deep', step, 'model', model)}
-                                                                    apiKey={settings.workflowDefaults?.converter.deep[step]?.provider === 'external'
+                                                                    onChange={(model) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'model', model)}
+                                                                    apiKey={settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External
                                                                         ? (settings.providerKeys?.[settings.workflowDefaults?.converter.deep[step]?.externalProvider || ''] || '')
                                                                         : (settings.geminiApiKey || '')}
-                                                                    customBaseUrl={settings.workflowDefaults?.converter.deep[step]?.externalProvider === 'other'
+                                                                    customBaseUrl={settings.workflowDefaults?.converter.deep[step]?.externalProvider === ExternalProvider.Other
                                                                         ? settings.customEndpointUrl
                                                                         : undefined}
                                                                     placeholder="Model"
@@ -740,7 +740,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             </div>
                                                             <GenerationParamsInput
                                                                 params={settings.workflowDefaults?.converter.deep[step]?.generationParams}
-                                                                onChange={(newParams) => updateWorkflowDefault('converter', 'deep', step, 'generationParams', newParams)}
+                                                                onChange={(newParams) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'generationParams', newParams)}
                                                                 label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
                                                             />
                                                         </div>
@@ -1353,15 +1353,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         <div className="space-y-1">
                                                             <label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label>
                                                             <select
-                                                                value={settings.autoRouteLlmProvider || 'gemini'}
-                                                                onChange={e => updateSetting('autoRouteLlmProvider', e.target.value as 'gemini' | 'external')}
+                                                                value={settings.autoRouteLlmProvider || ProviderType.Gemini}
+                                                                onChange={e => updateSetting('autoRouteLlmProvider', e.target.value as ProviderType)}
                                                                 className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-purple-500 outline-none"
                                                             >
-                                                                <option value="gemini">Gemini</option>
-                                                                <option value="external">External</option>
+                                                                <option value={ProviderType.Gemini}>Gemini</option>
+                                                                <option value={ProviderType.External}>External</option>
                                                             </select>
                                                         </div>
-                                                        {settings.autoRouteLlmProvider === 'external' && (
+                                                        {settings.autoRouteLlmProvider === ProviderType.External && (
                                                             <div className="space-y-1">
                                                                 <label className="text-[10px] text-slate-500 font-bold uppercase">Service</label>
                                                                 <select
@@ -1377,7 +1377,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     </div>
 
                                                     {/* External provider options */}
-                                                    {settings.autoRouteLlmProvider === 'external' && (
+                                                {settings.autoRouteLlmProvider === ProviderType.External && (
                                                         <>
                                                             <div className="space-y-1">
                                                                 <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
@@ -1399,7 +1399,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     placeholder="e.g., gpt-4o-mini, claude-3-haiku"
                                                                 />
                                                             </div>
-                                                            {settings.autoRouteLlmExternalProvider === 'other' && (
+                                                    {settings.autoRouteLlmExternalProvider === ExternalProvider.Other && (
                                                                 <div className="space-y-1">
                                                                     <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
                                                                     <input
@@ -1415,7 +1415,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     )}
 
                                                     {/* Gemini model option */}
-                                                    {settings.autoRouteLlmProvider !== 'external' && (
+                                                {settings.autoRouteLlmProvider !== ProviderType.External && (
                                                         <div className="space-y-1">
                                                             <label className="text-[10px] text-slate-500 font-bold uppercase">Model (optional)</label>
                                                             <input

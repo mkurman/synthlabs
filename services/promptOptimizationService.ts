@@ -1,4 +1,4 @@
-import { AppMode } from '../interfaces/enums';
+import { AppMode, ProviderType, ExternalProvider } from '../interfaces/enums';
 import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 
@@ -34,8 +34,8 @@ export async function optimizePrompt({
         let config: GeminiService.OptimizePromptConfig | undefined;
 
         if (generalPurposeModel && generalPurposeModel.model) {
-            const isExternal = generalPurposeModel.provider === 'external';
-            const isOther = generalPurposeModel.provider === 'other';
+            const isExternal = generalPurposeModel.provider === ProviderType.External;
+            const isOther = generalPurposeModel.externalProvider === ExternalProvider.Other;
             let apiKey = '';
 
             console.log('[Optimize] provider:', generalPurposeModel.provider, 'isExternal:', isExternal, 'isOther:', isOther, 'externalProvider:', generalPurposeModel.externalProvider);
@@ -43,7 +43,7 @@ export async function optimizePrompt({
             let externalProvider = generalPurposeModel.externalProvider;
 
             if (isOther) {
-                externalProvider = 'other';
+                externalProvider = ExternalProvider.Other;
             }
 
             if (isExternal || isOther) {
@@ -59,7 +59,7 @@ export async function optimizePrompt({
 
             if ((isExternal || isOther) && externalProvider && generalPurposeModel.model && apiKey) {
                 config = {
-                    provider: 'external',
+                    provider: ProviderType.External,
                     externalProvider: externalProvider,
                     model: generalPurposeModel.model,
                     customBaseUrl: customBaseUrl,
@@ -68,19 +68,19 @@ export async function optimizePrompt({
                 console.log('[Optimize] Config built for external provider:', config);
             } else if (!isExternal && !isOther && apiKey) {
                 config = {
-                    provider: 'gemini',
+                    provider: ProviderType.Gemini,
                     model: generalPurposeModel.model
                 };
                 console.log('[Optimize] Config built for Gemini:', config);
             }
         }
 
-        if (!config) {
-            console.error('[Optimize] No config built! generalPurposeModel:', generalPurposeModel);
-            throw new Error(generalPurposeModel?.provider === 'external' || generalPurposeModel?.provider === 'other'
+            if (!config) {
+                console.error('[Optimize] No config built! generalPurposeModel:', generalPurposeModel);
+            throw new Error(generalPurposeModel?.provider === ProviderType.External
                 ? 'General purpose model is incomplete. Please set: Provider, Model, and API Key in Settings → API Keys.'
                 : 'No model configured. Please set a model in Settings → Default Models → General purpose model.');
-        }
+            }
 
         config.structuredOutput = false;
 

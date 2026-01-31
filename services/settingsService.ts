@@ -6,7 +6,7 @@
 
 import { EXTERNAL_PROVIDERS, PROVIDERS } from '../constants';
 import { GenerationParams } from '../types';
-import { ExternalProvider } from '../interfaces/enums';
+import { ApiType, ExternalProvider, ProviderType } from '../interfaces/enums';
 
 const DB_NAME = 'SynthLabsSettingsDB';
 const DB_VERSION = 3; // Aligned with modelService for models store
@@ -19,9 +19,9 @@ export const AVAILABLE_PROVIDERS = EXTERNAL_PROVIDERS;
 
 // Model configuration for a single workflow step
 export interface StepModelConfig {
-    provider: 'gemini' | 'external' | 'other';
+    provider: ProviderType;
     externalProvider: string;
-    apiType?: 'chat' | 'responses'; // 'chat' | 'responses' - defaults to 'chat' if not specified
+    apiType?: ApiType; // defaults to chat if not specified
     model: string;
     generationParams?: GenerationParams;
 }
@@ -50,9 +50,9 @@ export interface WorkflowDefaults {
 
 // Default empty step config
 export const EMPTY_STEP_CONFIG: StepModelConfig = {
-    provider: 'gemini',
+    provider: ProviderType.Gemini,
     externalProvider: '',
-    apiType: 'chat', // Default to chat completions API
+    apiType: ApiType.Chat, // Default to chat completions API
     model: ''
 };
 
@@ -121,7 +121,7 @@ export interface AppSettings {
     autoRouteMethod?: 'heuristic' | 'llm';
     autoRouteConfidenceThreshold?: number;  // 0-1, triggers routing when confidence exceeds this
     // LLM Classifier model configuration (similar to DeepPhaseConfig)
-    autoRouteLlmProvider?: 'gemini' | 'external';
+    autoRouteLlmProvider?: ProviderType;
     autoRouteLlmExternalProvider?: string;  // ExternalProvider type
     autoRouteLlmApiKey?: string;
     autoRouteLlmModel?: string;             // Model to use for LLM classification (empty = use current)
@@ -147,7 +147,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     // For LLM mode: confidence is returned directly by the classifier (0-1)
     // Lower values = more aggressive routing, higher values = more conservative
     autoRouteConfidenceThreshold: 0.3,
-    autoRouteLlmProvider: 'gemini',
+    autoRouteLlmProvider: ProviderType.Gemini,
     autoRouteLlmExternalProvider: '',
     autoRouteLlmApiKey: '',
     autoRouteLlmModel: '',

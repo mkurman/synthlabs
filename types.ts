@@ -149,7 +149,7 @@ export interface StreamingConversationState {
 }
 
 export interface StepModelConfig {
-  provider: 'gemini' | 'external' | 'other';
+  provider: import('./interfaces/enums').ProviderType;
   externalProvider: string;
   apiType?: import('./interfaces/enums').ApiType;
   model: string;
