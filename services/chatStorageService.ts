@@ -4,6 +4,7 @@
  */
 
 import { ChatMessage } from './chatService';
+import { ChatRole } from '../interfaces/enums';
 
 const DB_NAME = 'SynthLabsChatDB';
 const DB_VERSION = 4; // Increase to 4: Backfill timestamps
@@ -91,7 +92,7 @@ const generateId = () => Math.random().toString(36).substring(2, 15) + Math.rand
 export const ChatStorageService = {
     // Generate a title based on the first user message
     generateTitle: (messages: ChatMessage[]): string => {
-        const firstUserMsg = messages.find(m => m.role === 'user');
+        const firstUserMsg = messages.find(m => m.role === ChatRole.User);
         if (firstUserMsg && firstUserMsg.content) {
             return firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '');
         }
@@ -247,4 +248,3 @@ export const ChatStorageService = {
         }
     }
 };
-

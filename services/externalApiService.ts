@@ -1,5 +1,5 @@
 
-import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase, ApiType } from '../types';
+import { ExternalProvider, GenerationParams, StreamChunkCallback, StreamPhase, ApiType, ChatRole } from '../types';
 import { PROVIDERS, JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../constants';
 import { logger } from '../utils/logger';
 import { SettingsService } from './settingsService';
@@ -195,7 +195,7 @@ async function processStreamResponse(
   let usageData: any = null;
 
   // Determine if using Responses API
-  const isResponsesApi = apiType === 'responses';
+  const isResponsesApi = apiType === ApiType.Responses;
 
   let chunkCount = 0;
   try {
@@ -244,7 +244,7 @@ async function processStreamResponse(
               console.log('externalApiService: Captured usage data:', usageData);
             }
 
-            if (provider === 'anthropic') {
+            if (provider === ExternalProvider.Anthropic) {
               // Anthropic format: delta.text or content_block_delta
               // Note: Anthropic uses a different stream event structure for tools (content_block_start etc).
               // For simplicity, we assume this logic primarily targets OpenRouter/OpenAI-compatible endpoints where tools are passed directly via delta.tools_calls.
@@ -439,7 +439,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   }
 
   // Determine if using Responses API
-  const isResponsesApi = apiType === 'responses';
+  const isResponsesApi = apiType === ApiType.Responses;
 
   // Ensure custom endpoint ends with correct path
   if (baseUrl) {
@@ -472,7 +472,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     'Content-Type': 'application/json'
   };
 
-  if (provider === 'anthropic') {
+  if (provider === ExternalProvider.Anthropic) {
     headers['x-api-key'] = safeApiKey;
     headers['anthropic-version'] = '2023-06-01';
   } else if (provider === ExternalProvider.Ollama && !safeApiKey) {
@@ -499,7 +499,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   // Use Boolean() to ensure it's true/false, not the function itself
   const shouldStream = Boolean(stream && onStreamChunk);
 
-  if (provider === 'anthropic') {
+  if (provider === ExternalProvider.Anthropic) {
     url = `${baseUrl}/messages`;
     payload = {
       model,
@@ -518,7 +518,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     // For other providers, assume they follow same pattern
     if (baseUrl.includes('/responses')) {
       url = baseUrl;
-    } else if (provider === 'openai') {
+    } else if (provider === ExternalProvider.OpenAI) {
       url = 'https://api.openai.com/v1/responses';
     } else {
       // For other providers, try to construct proper endpoint
@@ -532,14 +532,14 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     if (config.messages && config.messages.length > 0) {
       // Convert messages format to Responses API input format
       // Filter out system messages (they go in 'instructions')
-      const nonSystemMessages = config.messages.filter((m: any) => m.role !== 'system');
+      const nonSystemMessages = config.messages.filter((m: any) => m.role !== ChatRole.System);
       input = nonSystemMessages.map((m: any) => {
-        if (m.role === 'user') {
+        if (m.role === ChatRole.User) {
           return {
             role: 'user',
             content: m.content
           };
-        } else if (m.role === 'assistant' || m.role === 'model') {
+        } else if (m.role === ChatRole.Assistant || m.role === ChatRole.Model) {
           return {
             role: 'assistant',
             content: m.content
@@ -667,7 +667,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       // NON-STREAMING PATH: parse JSON response
       const data = await response.json();
 
-      if (provider === 'anthropic') {
+      if (provider === ExternalProvider.Anthropic) {
         const content = data.content?.[0]?.text || "";
         return parseJsonContent(content);
       } else if (isResponsesApi) {

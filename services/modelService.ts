@@ -415,7 +415,7 @@ const fetchModelsFromProvider = async (
 // Filter and sort models for better UX
 const filterAndSortModels = (models: ProviderModel[], provider: ModelListProvider): ProviderModel[] => {
     // For OpenRouter, filter to show only popular/recommended models
-    if (provider === 'openrouter') {
+    if (provider === ExternalProvider.OpenRouter) {
         const preferredPrefixes = [
             'anthropic/',
             'openai/',

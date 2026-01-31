@@ -1,27 +1,22 @@
-import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 
 import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider, ApiType,
     ProgressStats, HuggingFaceConfig, DetectedColumns, DEFAULT_HF_PREFETCH_CONFIG,
-    CATEGORIES, EngineMode, DeepConfig, DeepPhaseConfig, GenerationParams, UserAgentConfig,
+    EngineMode, DeepConfig, GenerationParams, UserAgentConfig,
     StreamingConversationState
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
-import { logger, setVerbose } from './utils/logger';
 import { PromptService } from './services/promptService';
-import * as GeminiService from './services/geminiService';
 import * as FirebaseService from './services/firebaseService';
-import { optimizePrompt } from './services/promptOptimizationService';
 import { LogStorageService } from './services/logStorageService';
 import { SettingsService } from './services/settingsService';
-import { prefetchModels } from './services/modelService';
 import { TaskType } from './services/taskClassifierService';
 import { HFPrefetchManager, PrefetchState } from './services/hfPrefetchService';
-import { buildGenerationConfig as buildGenerationConfigService, createGenerationService, GenerationService } from './services/generationService';
+import { buildGenerationConfig as buildGenerationConfigService, GenerationService } from './services/generationService';
 import { DataTransformService } from './services/dataTransformService';
 import { SessionService } from './services/sessionService';
 import { FileService } from './services/fileService';
-import { updateDeepPhase as updateDeepPhaseService, copyDeepConfigToAll as copyDeepConfigToAllService, applyPhaseToUserAgent } from './services/deepConfigService';
 import { useLogManagement } from './hooks/useLogManagement';
 import { DataSource, Environment, ProviderType as ProviderTypeEnum, ExternalProvider as ExternalProviderEnum, ApiType as ApiTypeEnum, AppView, ViewMode, DeepPhase, ResponderPhase, PromptCategory, PromptRole } from './interfaces/enums';
 import type { CompleteGenerationConfig } from './interfaces';
@@ -32,6 +27,22 @@ import { useOllama } from './hooks/useOllama';
 import { useProviderSelection } from './hooks/useProviderSelection';
 import { useSessionManagement } from './hooks/useSessionManagement';
 import { useGenerationControl } from './hooks/useGenerationControl';
+import { useFileHandlers } from './hooks/useFileHandlers';
+import { useTopicGenerator } from './hooks/useTopicGenerator';
+import { useGenerationActions } from './hooks/useGenerationActions';
+import { useLogActions } from './hooks/useLogActions';
+import { useDeepConfigActions } from './hooks/useDeepConfigActions';
+import { useStreamingHandlers } from './hooks/useStreamingHandlers';
+import { useDbStats } from './hooks/useDbStats';
+import { usePromptLifecycle } from './hooks/usePromptLifecycle';
+import { useFirebaseConfigInit } from './hooks/useFirebaseConfigInit';
+import { useSettingsInit } from './hooks/useSettingsInit';
+import { usePromptOptimization } from './hooks/usePromptOptimization';
+import { usePauseRef } from './hooks/usePauseRef';
+import { useVerboseLogging } from './hooks/useVerboseLogging';
+import { useSparklineHistory } from './hooks/useSparklineHistory';
+import { useRowContent } from './hooks/useRowContent';
+import { useSyncedRef } from './hooks/useSyncedRef';
 import AppOverlays from './components/layout/AppOverlays';
 import AppMainContent from './components/layout/AppMainContent';
 import AppHeader from './components/layout/AppHeader';
@@ -47,18 +58,10 @@ export default function App() {
 
     // --- State: Session & DB ---
     const [sessionUid, setSessionUid] = useState<string>(crypto.randomUUID());
-    const sessionUidRef = useRef(sessionUid);
-
-    useEffect(() => {
-        sessionUidRef.current = sessionUid;
-    }, [sessionUid]);
+    const sessionUidRef = useSyncedRef(sessionUid);
 
     const [sessionName, setSessionName] = useState<string | null>(null);
-    const sessionNameRef = useRef(sessionName);
-
-    useEffect(() => {
-        sessionNameRef.current = sessionName;
-    }, [sessionName]);
+    const sessionNameRef = useSyncedRef(sessionName);
 
     const [dbStats, setDbStats] = useState<{ total: number, session: number }>({ total: 0, session: 0 });
     const [sparklineHistory, setSparklineHistory] = useState<number[]>([]);
@@ -284,215 +287,92 @@ export default function App() {
         setCustomBaseUrl
     });
 
-    const handleOptimizePrompt = useCallback(() => {
-        void optimizePrompt({
-            appMode,
-            systemPrompt,
-            converterPrompt,
-            setSystemPrompt,
-            setConverterPrompt,
-            setError,
-            setIsOptimizing
-        });
-    }, [appMode, converterPrompt, setConverterPrompt, setError, setIsOptimizing, setSystemPrompt, systemPrompt]);
+    const { handleOptimizePrompt } = usePromptOptimization({
+        appMode,
+        systemPrompt,
+        converterPrompt,
+        setSystemPrompt,
+        setConverterPrompt,
+        setError,
+        setIsOptimizing
+    });
 
-    // --- Effects ---
-    useEffect(() => {
-        // Attempt to load Firebase Config from local storage on mount
-        const savedConfig = localStorage.getItem('synth_firebase_config');
-        if (savedConfig) {
-            try {
-                const parsed = JSON.parse(savedConfig);
-                FirebaseService.initializeFirebase(parsed).then(success => {
-                    if (success) {
-                        logger.log("Restored Firebase config from storage");
-                        updateDbStats(); // Initial fetch
-                    }
-                });
-            } catch (e) {
-                console.error("Failed to parse saved firebase config");
-            }
-        }
-    }, []);
+    usePauseRef({ isPaused, isPausedRef });
 
-    useEffect(() => {
-        isPausedRef.current = isPaused;
-    }, [isPaused]);
+    const { refreshPrompts } = usePromptLifecycle({
+        sessionPromptSet,
+        setAvailablePromptSets,
+        setSystemPrompt,
+        setConverterPrompt,
+        setDeepConfig,
+        setUserAgentConfig
+    });
 
-    // Load available prompt sets on mount
-    useEffect(() => {
-        const sets = PromptService.getAvailableSets();
-        setAvailablePromptSets(sets);
-    }, []);
+    const {
+        bumpStreamingConversations,
+        scheduleStreamingUpdate,
+        haltStreamingItem
+    } = useStreamingHandlers({
+        setStreamingConversationsVersion,
+        streamUpdateThrottleRef,
+        haltedStreamingIdsRef,
+        streamingAbortControllersRef,
+        streamingConversationsRef
+    });
 
-    // Reload all prompts when session prompt set changes
-    useEffect(() => {
-        // Determine which prompt set to use (session override or user's default)
-        const activeSet = sessionPromptSet || SettingsService.getSettings().promptSet || 'default';
+    useVerboseLogging({ environment, environmentRef });
 
-        // Update regular mode prompts (SYSTEM RUBRIC)
-        setSystemPrompt(PromptService.getPrompt(PromptCategory.Generator, PromptRole.System, activeSet));
-        setConverterPrompt(PromptService.getPrompt(PromptCategory.Converter, PromptRole.System, activeSet));
+    const { updateDbStats } = useDbStats({
+        environment,
+        sessionUid,
+        setDbStats
+    });
 
-        // Update deepConfig phases with prompts from the active set
-        setDeepConfig((prev: DeepConfig) => ({
-            ...prev,
-            phases: {
-                meta: { ...prev.phases.meta, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Meta, activeSet) },
-                retrieval: { ...prev.phases.retrieval, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Retrieval, activeSet) },
-                derivation: { ...prev.phases.derivation, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Derivation, activeSet) },
-                writer: { ...prev.phases.writer, systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Writer, activeSet) },
-                rewriter: { ...prev.phases.rewriter, systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Rewriter, activeSet) }
-            }
-        }));
+    useFirebaseConfigInit({ updateDbStats });
 
-        // Update userAgentConfig
-        setUserAgentConfig((prev: UserAgentConfig) => ({
-            ...prev,
-            systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.UserAgent, activeSet)
-        }));
-    }, [sessionPromptSet]);
+    useSparklineHistory({
+        isRunning,
+        progress,
+        setSparklineHistory
+    });
 
-    const bumpStreamingConversations = useCallback(() => {
-        setStreamingConversationsVersion(prev => prev + 1);
-    }, []);
-
-    const scheduleStreamingUpdate = useCallback(() => {
-        const now = Date.now();
-        if (now - streamUpdateThrottleRef.current > 50) {
-            streamUpdateThrottleRef.current = now;
-            bumpStreamingConversations();
-        }
-    }, [bumpStreamingConversations]);
-
-    const haltStreamingItem = useCallback((id: string) => {
-        haltedStreamingIdsRef.current.add(id);
-        const controller = streamingAbortControllersRef.current.get(id);
-        if (controller) {
-            controller.abort();
-        }
-        streamingAbortControllersRef.current.delete(id);
-        streamingConversationsRef.current.delete(id);
-        bumpStreamingConversations();
-    }, [bumpStreamingConversations]);
-
-    // Toggle verbose logging based on environment mode
-    // Toggle verbose logging based on environment mode
-    useEffect(() => {
-        environmentRef.current = environment;
-        // In production mode, disable verbose logging
-        setVerbose(environment === Environment.Development);
-    }, [environment]);
-
-    // Update DB Stats Periodically or when logs change
-    const updateDbStats = useCallback(async () => {
-        if (environment === Environment.Production && FirebaseService.isFirebaseConfigured()) {
-            const stats = await FirebaseService.getDbStats(sessionUid);
-            setDbStats(stats);
-        }
-    }, [environment, sessionUid]);
-
-    useEffect(() => {
-        // Poll stats every 10 seconds in prod
-        if (environment === Environment.Production) {
-            const interval = setInterval(updateDbStats, 10000);
-            return () => clearInterval(interval);
-        }
-    }, [environment, updateDbStats]);
-
-    // Update sparkline history when progress changes
-    useEffect(() => {
-        if (isRunning && progress.current > 0) {
-            setSparklineHistory(prev => {
-                const next = [...prev, progress.current];
-                if (next.length > 20) return next.slice(next.length - 20);
-                return next;
-            });
-        }
-    }, [progress.current, isRunning]);
-
-    // Row content extraction - delegated to DataTransformService
-    // Creates a wrapper that provides the current hfConfig and appMode
-    const getRowContent = useCallback((row: Record<string, unknown>): string => {
-        return DataTransformService.getRowContent(row, {
-            hfConfig,
-            appMode
-        });
-    }, [hfConfig, appMode]);
+    const getRowContent = useRowContent({ hfConfig, appMode });
 
 
 
-    const generateRandomTopic = async () => {
-        setIsGeneratingTopic(true);
-        try {
-            const cat = topicCategory === 'Random (Any)'
-                ? CATEGORIES[Math.floor(Math.random() * (CATEGORIES.length - 1)) + 1]
-                : topicCategory;
-            const topic = await GeminiService.generateGeminiTopic(cat);
-            setGeminiTopic(topic);
-        } catch (e) {
-            setError("Topic generation failed.");
-        } finally {
-            setIsGeneratingTopic(false);
-        }
-    };
+    const { generateRandomTopic } = useTopicGenerator({
+        topicCategory,
+        setGeminiTopic,
+        setIsGeneratingTopic,
+        setError
+    });
 
+    const {
+        handleLoadRubric,
+        handleLoadSourceFile,
+        handleSaveRubric
+    } = useFileHandlers({
+        appMode,
+        systemPrompt,
+        converterPrompt,
+        setSystemPrompt,
+        setConverterPrompt,
+        setError,
+        setManualFileName,
+        setConverterInputText,
+        setRowsToFetch,
+        setAvailableColumns,
+        setDetectedColumns,
+        setHfConfig,
+        hfConfig,
+        detectColumns
+    });
 
-    const handleLoadRubric = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        try {
-            await FileService.loadRubric(file, {
-                appMode,
-                setSystemPrompt,
-                setConverterPrompt
-            });
-        } catch (err) {
-            console.error('Failed to load rubric', err);
-            setError('Failed to load rubric file');
-        }
-        e.target.value = '';
-    };
-
-    const handleLoadSourceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        try {
-            await FileService.loadSourceFile(file, {
-                setManualFileName,
-                setConverterInputText,
-                setRowsToFetch,
-                setAvailableColumns,
-                setDetectedColumns,
-                setHfConfig,
-                hfConfig,
-                detectColumns
-            });
-        } catch (err) {
-            console.error('Failed to load source file', err);
-            setError('Failed to load source file');
-        }
-        e.target.value = '';
-    };
-
-    const handleSaveRubric = () => {
-        FileService.saveRubric({
-            appMode,
-            systemPrompt,
-            converterPrompt
-        });
-    };
-
-    const updateDeepPhase = (phase: keyof DeepConfig['phases'], updates: Partial<DeepPhaseConfig>) => {
-        setDeepConfig(prev => updateDeepPhaseService(prev, phase, updates));
-    };
-
-    const copyDeepConfigToAll = (sourcePhase: keyof DeepConfig['phases']) => {
-        const source = deepConfig.phases[sourcePhase];
-        setDeepConfig(prev => copyDeepConfigToAllService(prev, sourcePhase));
-        // Also apply to User Agent config
-        setUserAgentConfig(prev => applyPhaseToUserAgent(prev, source));
-    };
+    const { updateDeepPhase, copyDeepConfigToAll } = useDeepConfigActions({
+        deepConfig,
+        setDeepConfig,
+        setUserAgentConfig
+    });
 
     // Helper to build SessionConfig from current state
     const getSessionData = () => {
@@ -577,109 +457,6 @@ export default function App() {
     });
 
     // --- Core Generation Logic ---
-    // Runtime prompt configuration for auto-routing (avoids React state race condition)
-    interface RuntimePromptConfig {
-        systemPrompt: string;
-        converterPrompt: string;
-        deepConfig: DeepConfig;
-        promptSet: string;
-    }
-
-    // Thin wrapper around GenerationService.generateSingleItem
-    const generateSingleItem = async (inputText: string, workerId: number, opts: { retryId?: string, originalQuestion?: string, originalAnswer?: string, originalReasoning?: string, row?: any, runtimeConfig?: RuntimePromptConfig } = {}): Promise<SynthLogItem | null> => {
-        const config = buildGenerationConfig();
-        const service = createGenerationService(config);
-        return service.generateSingleItem(inputText, workerId, opts);
-    };
-
-    const retryItem = async (id: string) => {
-        await GenerationService.retryItem(
-            id,
-            sessionUid,
-            environment,
-            visibleLogs,
-            generateSingleItem,
-            setRetryingIds,
-            refreshLogs,
-            updateDbStats
-        );
-    };
-
-    const retrySave = async (id: string) => {
-        await GenerationService.retrySave(
-            id,
-            sessionUid,
-            visibleLogs,
-            setRetryingIds,
-            refreshLogs,
-            updateDbStats
-        );
-    };
-
-    const retryAllFailed = async () => {
-        await GenerationService.retryAllFailed(
-            sessionUid,
-            environment,
-            concurrency,
-            visibleLogs,
-            isInvalidLog,
-            setRetryingIds,
-            generateSingleItem,
-            refreshLogs
-        );
-    };
-
-    // Sync all unsaved items from current session to Firebase
-    const syncAllUnsavedToDb = async () => {
-        await GenerationService.syncAllUnsavedToDb(
-            sessionUid,
-            isInvalidLog,
-            refreshLogs,
-            updateDbStats
-        );
-    };
-
-    // Save a single item to Firebase
-    const saveItemToDb = async (id: string) => {
-        setSavingToDbIds((prev: Set<string>) => new Set([...prev, id]));
-        try {
-            await GenerationService.saveItemToDb(
-                id,
-                sessionUid,
-                visibleLogs,
-                refreshLogs,
-                updateDbStats
-            );
-        } finally {
-            setSavingToDbIds((prev: Set<string>) => {
-                const next = new Set(prev);
-                next.delete(id);
-                return next;
-            });
-        }
-    };
-
-    const startNewSession = async () => {
-        const newSessionConfig = {
-            dataSourceMode: dataSourceMode,
-            hfConfig,
-            manualFileName,
-            environment: environment,
-            appMode: appMode
-        };
-
-        const newUid = await SessionService.startNewSession(newSessionConfig, getSessionData);
-
-        setSessionUid(newUid);
-        sessionUidRef.current = newUid;
-        setSessionName(null);
-        setVisibleLogs([]);
-        setTotalLogCount(0);
-        setFilteredLogCount(0);
-        setSparklineHistory([]);
-        setDbStats({ total: 0, session: 0 });
-    };
-
     // Build configuration for GenerationService
     const buildGenerationConfig = (): CompleteGenerationConfig => {
         const dataSourceModeValue = dataSourceMode;
@@ -785,6 +562,39 @@ export default function App() {
     };
 
     const {
+        retryItem,
+        retrySave,
+        retryAllFailed,
+        syncAllUnsavedToDb,
+        saveItemToDb,
+        startNewSession
+    } = useGenerationActions({
+        buildGenerationConfig,
+        sessionUid,
+        environment,
+        concurrency,
+        visibleLogs,
+        isInvalidLog,
+        refreshLogs,
+        updateDbStats,
+        setRetryingIds,
+        setSavingToDbIds,
+        dataSourceMode,
+        hfConfig,
+        manualFileName,
+        appMode,
+        getSessionData,
+        setSessionUid,
+        sessionUidRef,
+        setSessionName,
+        setVisibleLogs,
+        setTotalLogCount,
+        setFilteredLogCount,
+        setSparklineHistory,
+        setDbStats
+    });
+
+    const {
         startGeneration,
         stopGeneration,
         pauseGeneration,
@@ -806,19 +616,14 @@ export default function App() {
         setShowOverwriteModal
     });
 
-    const handleDeleteLog = useCallback(async (id: string) => {
-        if (streamingConversationsRef.current.has(id)) {
-            streamingConversationsRef.current.delete(id);
-            bumpStreamingConversations();
-        }
-
-        const logItem = visibleLogs.find(l => l.id === id);
-        await handleDeleteLogFromLogs(id);
-
-        if (environment === Environment.Production && FirebaseService.isFirebaseConfigured() && logItem?.savedToDb) {
-            updateDbStats();
-        }
-    }, [bumpStreamingConversations, handleDeleteLogFromLogs, visibleLogs, environment, updateDbStats]);
+    const { handleDeleteLog } = useLogActions({
+        environment,
+        visibleLogs,
+        streamingConversationsRef,
+        bumpStreamingConversations,
+        handleDeleteLogFromLogs,
+        updateDbStats
+    });
 
     const exportJsonl = async () => {
         await FileService.exportJsonl({
@@ -830,37 +635,7 @@ export default function App() {
         });
     };
 
-    // --- Effect: Load Settings & Prompts on Mount ---
-    const refreshPrompts = useCallback(() => {
-        setSystemPrompt(PromptService.getPrompt(PromptCategory.Generator, PromptRole.System));
-        setConverterPrompt(PromptService.getPrompt(PromptCategory.Converter, PromptRole.System));
-
-        setDeepConfig((prev: DeepConfig) => ({
-            ...prev,
-            phases: {
-                meta: { ...prev.phases.meta, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Meta) },
-                retrieval: { ...prev.phases.retrieval, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Retrieval) },
-                derivation: { ...prev.phases.derivation, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Derivation) },
-                writer: { ...prev.phases.writer, systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Writer) },
-                rewriter: { ...prev.phases.rewriter, systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Rewriter) }
-            }
-        }));
-
-        setUserAgentConfig((prev: UserAgentConfig) => ({
-            ...prev,
-            systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.UserAgent)
-        }));
-    }, []);
-
-    useEffect(() => {
-        // Wait for settings to load from IndexedDB, then refresh prompts and prefetch models
-        SettingsService.waitForSettingsInit().then(() => {
-            refreshPrompts();
-            // Prefetch models for providers with configured API keys (background, non-blocking)
-            const settings = SettingsService.getSettings();
-            prefetchModels(settings.providerKeys || {}, SettingsService.getApiKey);
-        });
-    }, [refreshPrompts]);
+    useSettingsInit({ refreshPrompts });
 
     const { sidebarProps, feedProps, verifierProps } = useAppViewProps({
         sessionName,
