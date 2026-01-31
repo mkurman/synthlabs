@@ -109,6 +109,8 @@ for (let attempt = 0; attempt <= maxRetries; attempt++) {
 ```
 src/
 ├── components/       # React UI components
+│   ├── layout/        # App-level layout composition
+│   ├── panels/        # Sidebar and form panels
 ├── services/         # Business logic and API integrations
 ├── utils/           # Utility functions (logger, helpers)
 ├── types.ts          # Shared TypeScript interfaces
@@ -116,6 +118,14 @@ src/
 ├── App.tsx          # Main application component
 └── index.tsx        # Entry point
 ```
+
+### App Structure & Refactor Pattern
+
+- Keep `App.tsx` thin: compose `AppHeader`, `AppMainContent`, `AppOverlays` and pass props via `useAppViewProps`.
+- Prefer extracting UI blocks into `components/panels/` and layout wrappers into `components/layout/`.
+- For large prop bundles, add a hook in `hooks/` (e.g. `useAppViewProps`) to build typed prop objects.
+- Use enums from `interfaces/enums.ts` consistently; avoid string literals (e.g. use `LogFilter.Live`, not `'live'`).
+- Split sidebar in layers: session/control (layout), engine/config (layout), data source (layout), then lower-level panels.
 
 ### Reasoning Protocol (SYNTH Format)
 
