@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings, Edit3, RotateCcw, Check, X, Loader2 } from 'lucide-react';
 import { ChatMessage } from '../types';
-import { ChatRole } from '../interfaces/enums';
+import { ChatRole, StreamingField } from '../interfaces/enums';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import AutoResizeTextarea from './AutoResizeTextarea';
 
@@ -19,7 +19,7 @@ interface ConversationViewProps {
     editValue?: string;
     rewritingIndex?: number;
     streamingContent?: string;  // Real-time streaming content to display
-    streamingField?: 'reasoning' | 'answer' | 'both' | 'query';  // Which field is being streamed
+    streamingField?: StreamingField;  // Which field is being streamed
 }
 
 
@@ -227,7 +227,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                 </div>
 
                                 {/* Reasoning Toggle for Assistant Messages */}
-                                {msg.role === ChatRole.Assistant && (displayReasoning || (rewritingIndex === idx && streamingField === 'reasoning')) && !isEditing && (
+                                {msg.role === ChatRole.Assistant && (displayReasoning || (rewritingIndex === idx && streamingField === StreamingField.Reasoning)) && !isEditing && (
                                     <div className="mt-2 text-left">
                                         <button
                                             onClick={() => toggleReasoning(idx)}
@@ -243,7 +243,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                         </button>
                                         {(expandedReasoning.has(idx) || (rewritingIndex === idx && streamingContent)) && (
                                             <div className="mt-2 bg-slate-900/50 border border-slate-800 rounded-lg p-3">
-                                                {rewritingIndex === idx && streamingContent && streamingField === 'reasoning' ? (
+                                                {rewritingIndex === idx && streamingContent && streamingField === StreamingField.Reasoning ? (
                                                     <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
                                                         {streamingContent}
                                                         <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
@@ -263,7 +263,11 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                         className="w-full bg-slate-900/50 border border-cyan-500/50 rounded p-2 text-inherit outline-none min-h-[100px]"
                                         autoFocus
                                     />
-                                ) : rewritingIndex === idx && streamingContent && (streamingField === 'answer' || streamingField === 'both' || streamingField === 'query') ? (
+                                ) : rewritingIndex === idx && streamingContent && (
+                                    streamingField === StreamingField.Answer ||
+                                    streamingField === StreamingField.Both ||
+                                    streamingField === StreamingField.Query
+                                ) ? (
                                     <p className="text-teal-300 whitespace-pre-wrap animate-pulse">
                                         {streamingContent}
                                         <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />

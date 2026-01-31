@@ -3,7 +3,7 @@ import SessionConfigPanel from '../panels/SessionConfigPanel';
 import { ProgressStats } from '../../types';
 import { DataSource, Environment, AppMode } from '../../interfaces/enums';
 import { PrefetchState } from '../../services/hfPrefetchService';
-import { TaskType } from '../../services/taskClassifierService';
+import { TaskType } from '../../interfaces/enums';
 
 interface SidebarSessionPanelProps {
     sessionName: string | null;

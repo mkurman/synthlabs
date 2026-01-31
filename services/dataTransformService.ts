@@ -6,6 +6,7 @@
  */
 
 import { AppMode } from '../interfaces/enums';
+import { OutputFieldName } from '../interfaces/enums/OutputFieldName';
 import { RowContentConfig, ColumnDetectionResult } from '../interfaces/services/DataTransformConfig';
 
 // Re-export extractInputContent for convenience
@@ -17,17 +18,17 @@ export { extractInputContent } from '../utils/contentExtractor';
  */
 const COLUMN_PATTERNS = {
     input: [
-        'query', 'question', 'prompt', 'input', 'instruction', 'text', 'problem', 'request',
+        OutputFieldName.Query, 'question', 'prompt', 'input', 'instruction', 'text', 'problem', 'request',
         'context', 'document', 'passage', 'user', 'human', 'message', 'conversation',
         'dialog', 'task'
     ],
     output: [
-        'response', 'answer', 'output', 'completion', 'chosen', 'target', 'solution', 'reply',
+        'response', OutputFieldName.Answer, 'output', 'completion', 'chosen', 'target', 'solution', 'reply',
         'assistant', 'gold', 'label', 'expected', 'ground_truth', 'groundtruth', 'reference',
         'correct', 'synthetic_answer', 'gpt', 'model_output'
     ],
     reasoning: [
-        'reasoning', 'thought', 'think', 'rationale', 'chain', 'brain', 'logic', 'cot',
+        OutputFieldName.Reasoning, 'thought', 'think', 'rationale', 'chain', 'brain', 'logic', 'cot',
         'explanation', 'analysis', 'steps', 'work', 'process', 'derivation', 'justification',
         'scratchpad', 'synthetic_reasoning', 'trace'
     ]

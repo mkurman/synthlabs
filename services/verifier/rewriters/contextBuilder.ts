@@ -1,6 +1,7 @@
 import { VerifierItem } from '../../../types';
+import { OutputFieldName } from '../../../interfaces/enums';
 
-export type RewritableField = 'query' | 'reasoning' | 'answer';
+export type RewritableField = OutputFieldName.Query | OutputFieldName.Reasoning | OutputFieldName.Answer;
 
 /**
  * Builds context string from a VerifierItem for AI rewriting

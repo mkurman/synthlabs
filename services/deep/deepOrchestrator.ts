@@ -168,7 +168,7 @@ CRITICAL: " + ${JSON_OUTPUT_FALLBACK} + " Format: { "answer": "Your final refine
     let finalAnswer: string;
     if (schemaDefinesAnswer) {
       if (!writerResult.answer) {
-        throw new Error("[WRITER] Schema requires 'answer' field but model did not produce it.");
+        throw new Error(`[WRITER] Schema requires '${OutputFieldName.Answer}' field but model did not produce it.`);
       }
       finalAnswer = writerResult.answer;
     } else {

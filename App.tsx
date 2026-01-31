@@ -11,7 +11,7 @@ import { PromptService } from './services/promptService';
 import * as FirebaseService from './services/firebaseService';
 import { LogStorageService } from './services/logStorageService';
 import { SettingsService } from './services/settingsService';
-import { TaskType } from './services/taskClassifierService';
+import { TaskType } from './interfaces/enums';
 import { HFPrefetchManager, PrefetchState } from './services/hfPrefetchService';
 import { buildGenerationConfig as buildGenerationConfigService, GenerationService } from './services/generationService';
 import { DataTransformService } from './services/dataTransformService';

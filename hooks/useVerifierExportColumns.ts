@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 
 import type { VerifierItem } from '../types';
+import { ExportColumnName } from '../interfaces/enums';
 
 interface UseVerifierExportColumnsOptions {
     data: VerifierItem[];
@@ -13,7 +14,16 @@ export function useVerifierExportColumns({ data, setExportColumns }: UseVerifier
 
         const allKeys = new Set<string>();
         const excludeKeys = ['id', 'isDuplicate', 'duplicateGroupId', 'isDiscarded', 'verifiedTimestamp'];
-        const defaultChecked = ['query', 'reasoning', 'answer', 'full_seed', 'score', 'modelUsed', 'source', 'messages'];
+        const defaultChecked = [
+            ExportColumnName.Query,
+            ExportColumnName.Reasoning,
+            ExportColumnName.Answer,
+            ExportColumnName.FullSeed,
+            ExportColumnName.Score,
+            ExportColumnName.ModelUsed,
+            ExportColumnName.Source,
+            ExportColumnName.Messages
+        ];
 
         data.forEach(item => {
             Object.keys(item).forEach(key => {
@@ -23,9 +33,10 @@ export function useVerifierExportColumns({ data, setExportColumns }: UseVerifier
             });
         });
 
+        const defaultCheckedSet = new Set<string>(defaultChecked as string[]);
         const newColumns: Record<string, boolean> = {};
         allKeys.forEach(key => {
-            newColumns[key] = defaultChecked.includes(key);
+            newColumns[key] = defaultCheckedSet.has(key);
         });
 
         setExportColumns(newColumns);

@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrainCircuit, Database, Dice5, FileText, Info, Layers, List, MessageSquare, RefreshCcw, Search, Server, Table, Upload } from 'lucide-react';
 import { CATEGORIES, DetectedColumns, HuggingFaceConfig } from '../../types';
-import { DataSource } from '../../interfaces/enums';
+import { DataSource, OutputFieldName } from '../../interfaces/enums';
 import { DEFAULT_HF_PREFETCH_CONFIG } from '../../types';
 import ColumnSelector from '../ColumnSelector';
 import DataPreviewTable from '../DataPreviewTable';
@@ -179,15 +179,15 @@ export default function DataSourcePanel({
                             <div>
                                 <span className="font-bold">Column Mapping Guide:</span>
                                 <ul className="list-disc ml-4 mt-1 space-y-0.5 text-amber-200/80">
-                                    <li><b>Input Column:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">query</code> field. This acts as the prompt for the reasoning engine.</li>
-                                    <li><b>Ground Truth:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">answer</code> field. Used for reference/verification.</li>
+                                    <li><b>Input Column:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">{OutputFieldName.Query}</code> field. This acts as the prompt for the reasoning engine.</li>
+                                    <li><b>Ground Truth:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">{OutputFieldName.Answer}</code> field. Used for reference/verification.</li>
                                     <li><b>Reasoning Column (optional):</b> Explicitly map a column containing pre-existing reasoning.</li>
                                 </ul>
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                             <ColumnSelector
-                                label="Input Column (Maps to 'query')"
+                                label={`Input Column (Maps to '${OutputFieldName.Query}')`}
                                 columns={availableColumns}
                                 selected={hfConfig.inputColumns || []}
                                 onSelect={(cols) => setHfConfig(prev => ({ ...prev, inputColumns: cols }))}
@@ -204,7 +204,7 @@ export default function DataSourcePanel({
                             />
                             <div className="col-span-2">
                                 <ColumnSelector
-                                    label="Ground Truth (Maps to 'answer')"
+                                    label={`Ground Truth (Maps to '${OutputFieldName.Answer}')`}
                                     columns={availableColumns}
                                     selected={hfConfig.outputColumns || []}
                                     onSelect={(cols) => setHfConfig(prev => ({ ...prev, outputColumns: cols }))}
@@ -320,15 +320,15 @@ export default function DataSourcePanel({
                                 <div>
                                     <span className="font-bold">Column Mapping Guide:</span>
                                     <ul className="list-disc ml-4 mt-1 space-y-0.5 text-amber-200/80">
-                                        <li><b>Input Column:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">query</code> field.</li>
-                                        <li><b>Ground Truth:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">answer</code> field. Used for reference/verification.</li>
+                                        <li><b>Input Column:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">{OutputFieldName.Query}</code> field.</li>
+                                        <li><b>Ground Truth:</b> Content maps to the <code className="bg-black/30 px-1 rounded mx-0.5">{OutputFieldName.Answer}</code> field. Used for reference/verification.</li>
                                         <li><b>Reasoning Column (optional):</b> Explicitly map a column containing pre-existing reasoning.</li>
                                     </ul>
                                 </div>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                                 <ColumnSelector
-                                    label="Input Column (Maps to 'query')"
+                                    label={`Input Column (Maps to '${OutputFieldName.Query}')`}
                                     columns={availableColumns}
                                     selected={hfConfig.inputColumns || []}
                                     onSelect={(cols) => setHfConfig(prev => ({ ...prev, inputColumns: cols }))}
@@ -345,7 +345,7 @@ export default function DataSourcePanel({
                                 />
                                 <div className="col-span-2">
                                     <ColumnSelector
-                                        label="Ground Truth (Maps to 'answer')"
+                                        label={`Ground Truth (Maps to '${OutputFieldName.Answer}')`}
                                         columns={availableColumns}
                                         selected={hfConfig.outputColumns || []}
                                         onSelect={(cols) => setHfConfig(prev => ({ ...prev, outputColumns: cols }))}

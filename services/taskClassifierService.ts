@@ -7,36 +7,25 @@
  * - LLM: More accurate, costs tokens, uses model for classification
  */
 
-export type TaskType =
-    | 'math'
-    | 'coding'
-    | 'creative'
-    | 'factual'
-    | 'technical'
-    | 'reasoning'
-    | 'conversation'
-    | 'medical'
-    | 'unknown';
-
-export type ClassifierMethod = 'none' | 'heuristic' | 'llm';
+import { TaskType } from '../interfaces/enums';
 
 // Map task types to recommended prompt sets
 // Users can override; these are suggestions
 export const TASK_PROMPT_MAPPING: Record<TaskType, string> = {
-    math: 'synth-prose',        // Step-by-step derivations benefit from sections
-    coding: 'synth-prose',      // Technical, structured
-    creative: 'synth-expanded', // Flowing prose for creative output
-    factual: 'synth-compact',   // Dense facts, minimal fluff
-    technical: 'synth-prose',   // Structured explanations
-    reasoning: 'synth-prose',   // Logical sections
-    conversation: 'synth-expanded', // Natural flow
-    medical: 'synth-prose',     // Clinical precision with structured explanations
-    unknown: 'default'          // Fall back to user's default
+    [TaskType.Math]: 'synth-prose',        // Step-by-step derivations benefit from sections
+    [TaskType.Coding]: 'synth-prose',      // Technical, structured
+    [TaskType.Creative]: 'synth-expanded', // Flowing prose for creative output
+    [TaskType.Factual]: 'synth-compact',   // Dense facts, minimal fluff
+    [TaskType.Technical]: 'synth-prose',   // Structured explanations
+    [TaskType.Reasoning]: 'synth-prose',   // Logical sections
+    [TaskType.Conversation]: 'synth-expanded', // Natural flow
+    [TaskType.Medical]: 'synth-prose',     // Clinical precision with structured explanations
+    [TaskType.Unknown]: 'default'          // Fall back to user's default
 };
 
 // Heuristic patterns for each task type
 const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }> = {
-    math: {
+    [TaskType.Math]: {
         keywords: [
             'calculate', 'solve', 'equation', 'formula', 'derivative', 'integral',
             'algebra', 'geometry', 'probability', 'statistics', 'proof', 'theorem',
@@ -50,7 +39,7 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /how many/i
         ]
     },
-    coding: {
+    [TaskType.Coding]: {
         keywords: [
             'code', 'function', 'class', 'variable', 'debug', 'error', 'bug',
             'implement', 'algorithm', 'api', 'database', 'sql', 'javascript',
@@ -64,7 +53,7 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /\b(npm|pip|cargo|maven)\b/i       // Package managers
         ]
     },
-    creative: {
+    [TaskType.Creative]: {
         keywords: [
             'write', 'story', 'poem', 'creative', 'imagine', 'fiction',
             'character', 'narrative', 'plot', 'describe', 'compose',
@@ -77,7 +66,7 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /once upon a time/i
         ]
     },
-    factual: {
+    [TaskType.Factual]: {
         keywords: [
             'what is', 'who is', 'when did', 'where is', 'define', 'explain',
             'history', 'fact', 'date', 'capital', 'population', 'founder',
@@ -89,7 +78,7 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /tell me about/i
         ]
     },
-    technical: {
+    [TaskType.Technical]: {
         keywords: [
             'how does', 'explain how', 'architecture', 'system', 'protocol',
             'mechanism', 'process', 'workflow', 'infrastructure', 'design',
@@ -101,7 +90,7 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /what('s| is) the difference between/i
         ]
     },
-    reasoning: {
+    [TaskType.Reasoning]: {
         keywords: [
             'why', 'reason', 'because', 'therefore', 'logic', 'argument',
             'conclude', 'infer', 'deduce', 'analyze', 'compare', 'evaluate',
@@ -114,7 +103,7 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /is it (better|worse|good|bad) to/i
         ]
     },
-    conversation: {
+    [TaskType.Conversation]: {
         keywords: [
             'hello', 'hi', 'hey', 'thanks', 'please', 'help me',
             'can you', 'could you', 'would you', 'chat', 'talk'
@@ -125,7 +114,7 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /how are you/i
         ]
     },
-    medical: {
+    [TaskType.Medical]: {
         keywords: [
             // Clinical specializations
             'cardiology', 'neurology', 'oncology', 'pediatrics', 'psychiatry',
@@ -169,7 +158,7 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
             /mechanism of action/i
         ]
     },
-    unknown: {
+    [TaskType.Unknown]: {
         keywords: [],
         patterns: []
     }
@@ -182,20 +171,20 @@ const TASK_PATTERNS: Record<TaskType, { keywords: string[]; patterns: RegExp[] }
 export function classifyTaskHeuristic(query: string): { type: TaskType; confidence: number } {
     const queryLower = query.toLowerCase();
     const scores: Record<TaskType, number> = {
-        math: 0,
-        coding: 0,
-        creative: 0,
-        factual: 0,
-        technical: 0,
-        reasoning: 0,
-        conversation: 0,
-        medical: 0,
-        unknown: 0
+        [TaskType.Math]: 0,
+        [TaskType.Coding]: 0,
+        [TaskType.Creative]: 0,
+        [TaskType.Factual]: 0,
+        [TaskType.Technical]: 0,
+        [TaskType.Reasoning]: 0,
+        [TaskType.Conversation]: 0,
+        [TaskType.Medical]: 0,
+        [TaskType.Unknown]: 0
     };
 
     // Score each task type
     for (const [taskType, { keywords, patterns }] of Object.entries(TASK_PATTERNS) as [TaskType, typeof TASK_PATTERNS[TaskType]][]) {
-        if (taskType === 'unknown') continue;
+        if (taskType === TaskType.Unknown) continue;
 
         // Keyword matches (0.5 points each) - use word boundaries to avoid false positives
         // e.g., "sum" shouldn't match "assumption"
@@ -216,7 +205,7 @@ export function classifyTaskHeuristic(query: string): { type: TaskType; confiden
 
     // Find highest scoring task
     let maxScore = 0;
-    let bestType: TaskType = 'unknown';
+    let bestType: TaskType = TaskType.Unknown;
 
     for (const [taskType, score] of Object.entries(scores) as [TaskType, number][]) {
         if (score > maxScore) {
@@ -231,7 +220,7 @@ export function classifyTaskHeuristic(query: string): { type: TaskType; confiden
 
     // If very low confidence, mark as unknown
     if (confidence < 0.2) {
-        return { type: 'unknown', confidence: 0.1 };
+        return { type: TaskType.Unknown, confidence: 0.1 };
     }
 
     return { type: bestType, confidence };
@@ -297,15 +286,12 @@ export function parseClassifierResponse(response: string): LLMClassificationResu
         const jsonMatch = cleaned.match(/\{[^{}]*\}/);
         if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
-            const validTypes: TaskType[] = [
-                'math', 'coding', 'creative', 'factual',
-                'technical', 'reasoning', 'conversation', 'medical', 'unknown'
-            ];
+            const validTypes: TaskType[] = Object.values(TaskType);
             // Type guard: ensure parsed.type is a string before calling toLowerCase()
             const typeValue = typeof parsed.type === 'string' ? parsed.type.toLowerCase() : '';
             const type = validTypes.includes(typeValue as TaskType)
                 ? typeValue as TaskType
-                : 'unknown';
+                : TaskType.Unknown;
             const confidence = typeof parsed.confidence === 'number'
                 ? Math.min(1, Math.max(0, parsed.confidence))
                 : 0.8; // Default confidence if not provided
@@ -317,10 +303,7 @@ export function parseClassifierResponse(response: string): LLMClassificationResu
 
     // Fallback: look for task type keyword in response
     const lowerResponse = cleaned.toLowerCase();
-    const validTypes: TaskType[] = [
-        'math', 'coding', 'creative', 'factual',
-        'technical', 'reasoning', 'conversation', 'medical', 'unknown'
-    ];
+    const validTypes: TaskType[] = Object.values(TaskType);
 
     for (const type of validTypes) {
         if (lowerResponse.includes(type)) {
@@ -328,7 +311,7 @@ export function parseClassifierResponse(response: string): LLMClassificationResu
         }
     }
 
-    return { type: 'unknown', confidence: 0.5 };
+    return { type: TaskType.Unknown, confidence: 0.5 };
 }
 
 /**
@@ -342,7 +325,7 @@ export function getRecommendedPromptSet(
     fallback: string = 'default',
     customMapping?: Record<string, string>
 ): string {
-    if (taskType === 'unknown') {
+    if (taskType === TaskType.Unknown) {
         return fallback;
     }
     // Check custom mapping first, then fall back to defaults
@@ -389,7 +372,13 @@ export const TaskClassifierService = {
 
     // Get all task types
     getTaskTypes: (): TaskType[] => [
-        'math', 'coding', 'creative', 'factual',
-        'technical', 'reasoning', 'conversation', 'medical'
+        TaskType.Math,
+        TaskType.Coding,
+        TaskType.Creative,
+        TaskType.Factual,
+        TaskType.Technical,
+        TaskType.Reasoning,
+        TaskType.Conversation,
+        TaskType.Medical
     ]
 };

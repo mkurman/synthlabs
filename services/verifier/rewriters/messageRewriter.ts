@@ -1,6 +1,7 @@
 import { VerifierItem } from '../../../types';
 import { RewriterConfig, RewriterStreamCallback, callRewriterAIRaw, callRewriterAIStreamingWithSystemPrompt } from './aiCaller';
 import { buildMessageContextForTarget } from './targetedContextBuilder';
+import { VerifierRewriteTarget } from '../../../interfaces/enums';
 import { parseRewriteResult, RewriteResult } from './responseParser';
 
 export interface RewriteMessageParams {
@@ -35,7 +36,7 @@ Given a conversation and a target message, regenerate ONLY the reasoning/thinkin
 The answer must remain EXACTLY as provided - do not modify it.
 Respond with a JSON object: { "reasoning": "your new reasoning", "answer": "preserved answer" }`;
 
-    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'reasoning');
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, VerifierRewriteTarget.Reasoning);
 
     const result = await callRewriterAIRaw(systemPrompt, userPrompt, config, signal);
     return parseRewriteResult(result, existingReasoning, existingAnswer);
@@ -58,7 +59,7 @@ export async function rewriteMessageReasoningStreaming(
 Given a conversation and a target message, regenerate ONLY the reasoning/thinking process.
 The answer must remain EXACTLY as provided - do not modify it.`;
 
-    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'reasoning');
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, VerifierRewriteTarget.Reasoning);
 
     const result = await callRewriterAIStreamingWithSystemPrompt(systemPrompt, userPrompt, config, onChunk, signal);
     return result.trim();
@@ -87,7 +88,7 @@ export async function rewriteMessageBoth(params: RewriteMessageParams): Promise<
 Given a conversation, regenerate both the reasoning process AND the final answer for the target message.
 Respond with a JSON object: { "reasoning": "your reasoning", "answer": "your answer" }`;
 
-    const userPrompt = buildMessageContextForTarget(item, messageIndex, 'both');
+    const userPrompt = buildMessageContextForTarget(item, messageIndex, VerifierRewriteTarget.Both);
 
     const result = await callRewriterAIRaw(systemPrompt, userPrompt, config, signal);
     return parseRewriteResult(result, existingReasoning, existingAnswer);

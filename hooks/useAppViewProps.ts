@@ -5,7 +5,7 @@ import { VerifierContentProps } from '../components/layout/VerifierContent';
 import { AppMode, DataSource, DeepPhase, EngineMode, Environment, ExternalProvider, LogFilter, ProviderType, ApiType, OllamaStatus, ViewMode } from '../interfaces/enums';
 import { DeepConfig, DetectedColumns, GenerationParams, HuggingFaceConfig, ProgressStats, UserAgentConfig } from '../types';
 import { PrefetchState } from '../services/hfPrefetchService';
-import { TaskType } from '../services/taskClassifierService';
+import { TaskType } from '../interfaces/enums';
 import { OllamaModel } from '../services/externalApiService';
 import { ModelListProvider, SynthLogItem, StreamingConversationState } from '../types';
 import { OutputField } from '../interfaces/types/PromptSchema';
