@@ -5,12 +5,13 @@ import {
 } from 'lucide-react';
 import { ChatService } from '../services/chatService';
 import { ChatMessage } from '../types';
-import { ChatStorageService } from '../services/chatStorageService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import { PROVIDERS } from '../constants';
 import { ToolExecutor } from '../services/toolService';
 import { VerifierItem } from '../types';
-import { confirmService } from '../services/confirmService';
+import { useChatSessions } from '../hooks/useChatSessions';
+import { useChatPersistence } from '../hooks/useChatPersistence';
+import { useChatScroll } from '../hooks/useChatScroll';
 import { ChatRole, ExternalProvider, ProviderType } from '../interfaces/enums';
 
 
@@ -163,33 +164,29 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    // Initialize session
-    useEffect(() => {
-        const initSession = async () => {
-            // Try to restore last session ID
-            const lastId = await ChatStorageService.getCurrentSessionId();
-            if (lastId) {
-                const session = await ChatStorageService.getSession(lastId);
-                if (session) {
-                    setCurrentSessionId(session.id);
-                    setMessages(session.messages);
-                    syncServiceHistory(session.messages);
-                    return;
-                }
-            }
-
-            // If no last session, create new
-            await handleNewChat();
-        };
-        initSession();
-    }, []);
-
     const syncServiceHistory = (msgs: ChatMessage[]) => {
         if (chatServiceRef.current) {
             chatServiceRef.current.clearHistory();
             msgs.forEach(m => (chatServiceRef.current as any).history.push(m));
         }
     };
+
+    const {
+        handleNewChat,
+        handleHistoryClick,
+        handleSessionSelect,
+        handleDeleteSession
+    } = useChatSessions({
+        chatServiceRef,
+        syncServiceHistory,
+        setCurrentSessionId,
+        setMessages,
+        setShowModelSelector,
+        showHistory,
+        setShowHistory,
+        setHistorySessions,
+        currentSessionId
+    });
 
     const dataRef = useRef(data);
     const setDataRef = useRef(setData);
@@ -221,133 +218,15 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
     }, [toolExecutor, messages.length === 0]); // Re-init if executor changes or on first load (messages check rough proxy for mount/session change)
 
-    // Persist messages to DB
-    useEffect(() => {
-        if (currentSessionId && messages.length > 0) {
-            // We need to fetch current session to update it? 
-            // Or just create object. ChatStorageService needs full object to save.
-            // We should prob cache the full session object in state or just construct it.
-            // Since we only change messages, we can get partial update or just refetch? 
-            // Updating DB on every message is fine for now but efficient?
-            // Let's rely on ChatStorageService.saveSession to accept partial? No, interface strict.
-            // Let's construct it. existing title?
-            // This is tricky without fetching. 
-            // Optimized: Create a 'updateSessionMessages' method?
-            // For now: Fetch-Update-Save is safest or just save directly if we trust we are the only writer.
-
-            // Let's do:
-            ChatStorageService.getSession(currentSessionId).then(session => {
-                if (session) {
-                    session.messages = messages as any;
-                    ChatStorageService.saveSession(session);
-                }
-            });
-        }
-    }, [messages, currentSessionId]);
-
-    const handleNewChat = async () => {
-        const session = await ChatStorageService.createSession();
-        setCurrentSessionId(session.id);
-        setMessages([]);
-        if (chatServiceRef.current) {
-            chatServiceRef.current.clearHistory();
-        }
-        setShowModelSelector(false); // Close other menus
-    };
-
-    const loadHistory = async () => {
-        const sessions = await ChatStorageService.getAllSessions();
-        setHistorySessions(sessions);
-    };
-
-    const handleHistoryClick = () => {
-        if (!showHistory) {
-            loadHistory();
-        }
-        setShowHistory(!showHistory);
-    };
-
-    const handleSessionSelect = async (sessionId: string) => {
-        try {
-            console.log(`Selecting session: ${sessionId}`);
-            const session = await ChatStorageService.getSession(sessionId);
-            console.log('Session loaded:', session);
-
-            if (session) {
-                console.log(`Updating state with ${session.messages.length} messages`);
-                setCurrentSessionId(session.id);
-                setMessages(session.messages);
-
-                // Ensure chat service is synced
-                if (chatServiceRef.current) {
-                    syncServiceHistory(session.messages);
-                }
-
-                await ChatStorageService.setCurrentSessionId(session.id);
-                setShowHistory(false);
-            } else {
-                console.error('Session not found in DB');
-            }
-        } catch (e) {
-            console.error('Error selecting session:', e);
-        }
-    };
-
-    const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
-        e.stopPropagation();
-        const confirmDelete = await confirmService.confirm({
-            title: 'Delete chat?',
-            message: 'Delete this chat? This cannot be undone.',
-            confirmLabel: 'Delete',
-            cancelLabel: 'Cancel',
-            variant: 'danger'
-        });
-        if (confirmDelete) {
-            await ChatStorageService.deleteSession(sessionId);
-            loadHistory(); // Refresh list
-            if (sessionId === currentSessionId) {
-                handleNewChat(); // Switch to new if deleted current
-            }
-        }
-    };
-
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
-
-    const handleScrollToBottom = () => {
-        scrollToBottom();
-        setAutoScroll(true);
-        setShowScrollButton(false);
-    };
-
-    const checkIfNearBottom = () => {
-        const container = messagesContainerRef.current;
-        if (!container) return true;
-
-        const threshold = 50;
-        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
-        return isNearBottom;
-    };
-
-    useEffect(() => {
-        if (autoScroll) {
-            scrollToBottom();
-        }
-    }, [messages]);
-
-    useEffect(() => {
-        const container = messagesContainerRef.current;
-        if (!container) return;
-
-        const handleScroll = () => {
-            const isNearBottom = checkIfNearBottom();
-            setAutoScroll(isNearBottom);
-        };
-
-        container.addEventListener('scroll', handleScroll);
-        return () => container.removeEventListener('scroll', handleScroll);
-    }, []);
+    useChatPersistence({ currentSessionId: currentSessionId || '', messages });
+    const { handleScrollToBottom } = useChatScroll({
+        messages,
+        autoScroll,
+        messagesEndRef,
+        messagesContainerRef,
+        setAutoScroll,
+        setShowScrollButton
+    });
 
     useEffect(() => {
         if (messages.length > 0 && !autoScroll && !isStreaming) {

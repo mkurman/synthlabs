@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import {
     Upload, Database, AlertTriangle, AlertCircle, Star, Trash2, CheckCircle2,
     GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
@@ -11,7 +11,6 @@ import {
 import { VerifierItem, ExternalProvider, ProviderType } from '../types';
 import { ChatRole } from '../interfaces/enums';
 import * as FirebaseService from '../services/firebaseService';
-import * as HuggingFaceService from '../services/huggingFaceService';
 import * as VerifierRewriterService from '../services/verifierRewriterService';
 import * as ExternalApiService from '../services/externalApiService';
 import * as GeminiService from '../services/geminiService';
@@ -26,8 +25,18 @@ import { toast } from '../services/toastService';
 import { confirmService } from '../services/confirmService';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import GenerationParamsInput from './GenerationParamsInput';
-import { resolveSessionFilter } from '../services/verifierSessionFilterService';
-import { parseVerifierItemsFromText } from '../services/verifierFileParseService';
+import { useVerifierToolExecutor } from '../hooks/useVerifierToolExecutor';
+import { useVerifierSessions } from '../hooks/useVerifierSessions';
+import { useVerifierOrphans } from '../hooks/useVerifierOrphans';
+import { useVerifierExportColumns } from '../hooks/useVerifierExportColumns';
+import { useVerifierImport } from '../hooks/useVerifierImport';
+import { useVerifierDbImport } from '../hooks/useVerifierDbImport';
+import { useVerifierPaginationReset } from '../hooks/useVerifierPaginationReset';
+import { useVerifierDeduplication } from '../hooks/useVerifierDeduplication';
+import { useVerifierReviewActions } from '../hooks/useVerifierReviewActions';
+import { useVerifierExportActions } from '../hooks/useVerifierExportActions';
+import { useVerifierDbActions } from '../hooks/useVerifierDbActions';
+import { useVerifierInlineEditing } from '../hooks/useVerifierInlineEditing';
 
 interface VerifierPanelProps {
     currentSessionUid: string;
@@ -156,554 +165,104 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const toolExecutorRef = useRef<ToolExecutor | null>(null);
-    const dataRef = useRef(data);
-    const setDataRef = useRef(setData);
-    const fetchMoreRef = useRef<any>(null);
 
-    // Sync refs
-    useEffect(() => {
-        dataRef.current = data;
-        setDataRef.current = setData;
-    }, [data]);
-
-    // Refs for ToolExecutor content access (must be declared at component level)
-    const autoSaveEnabledRef = useRef(autoSaveEnabled);
-    const handleDbUpdateRef = useRef<((item: VerifierItem) => Promise<void>) | undefined>(undefined);
-
-    // Sync refs on render
-    useEffect(() => {
-        fetchMoreRef.current = handleFetchMore;
-        autoSaveEnabledRef.current = autoSaveEnabled;
-        handleDbUpdateRef.current = handleDbUpdate;
+    const { analyzeDuplicates, handleReScan, toggleDuplicateStatus, autoResolveDuplicates } = useVerifierDeduplication({
+        data,
+        setData
     });
 
-    // Initialize ToolExecutor
-    useEffect(() => {
-        if (!toolExecutorRef.current) {
-            toolExecutorRef.current = new ToolExecutor(() => ({
-                data: dataRef.current,
-                setData: setDataRef.current,
-                autoSaveEnabled: autoSaveEnabledRef.current,
-                handleDbUpdate: handleDbUpdateRef.current,
-                fetchMoreFromDb: async (start: number, end: number) => {
-                    if (fetchMoreRef.current) {
-                        return fetchMoreRef.current(start, end);
-                    }
-                    throw new Error("Fetch handler not ready");
-                }
-            }));
-        }
-    }, []);
+    const { handleDbUpdate, handleDbRollback } = useVerifierDbActions({
+        setItemStates,
+        setData,
+        toast
+    });
 
-    // Load available sessions when Import tab is active
-    useEffect(() => {
-        if (activeTab === 'import' && FirebaseService.isFirebaseConfigured()) {
-            // Fetch saved sessions only - orphan check is now manual
-            FirebaseService.getSessionsFromFirebase()
-                .then(setAvailableSessions)
-                .catch(console.error);
-        }
-    }, [activeTab]);
+    const { handleJsonExport, handleDbSave, handleHfPush } = useVerifierExportActions({
+        data,
+        exportColumns,
+        setIsUploading,
+        hfToken,
+        hfRepo,
+        hfFormat,
+        toast
+    });
 
-    // Manual orphan check handler
-    const handleCheckOrphans = async () => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-        setIsCheckingOrphans(true);
-        setOrphanedLogsInfo(null);  // Clear previous result
-        try {
-            const result = await FirebaseService.getOrphanedLogsInfo();
-            setOrphanedLogsInfo(result);
-            if (!result.hasOrphanedLogs) {
-                toast.success("No orphaned logs found. All logs are synced!");
-            }
-        } catch (e: any) {
-            toast.error("Check failed: " + e.message);
-        } finally {
-            setIsCheckingOrphans(false);
-        }
-    };
+    const { startEditing, cancelEditing, saveEditing } = useVerifierInlineEditing({
+        editingField,
+        editValue,
+        setEditingField,
+        setEditValue,
+        setData,
+        autoSaveEnabled,
+        dataSource,
+        handleDbUpdate
+    });
+    const { handleDbImport, handleFetchMore } = useVerifierDbImport({
+        currentSessionUid,
+        selectedSessionFilter,
+        customSessionId,
+        isLimitEnabled,
+        importLimit,
+        data,
+        setIsImporting,
+        analyzeDuplicates,
+        setData,
+        setDataSource,
+        setActiveTab,
+        toast
+    });
 
-    // Reset pagination when filters or data change
-    useEffect(() => {
-        setCurrentPage(1);
-    }, [showDuplicatesOnly, filterScore, showUnsavedOnly, data.length]);
+    useVerifierToolExecutor({
+        data,
+        setData,
+        autoSaveEnabled,
+        handleFetchMore,
+        handleDbUpdate,
+        toolExecutorRef
+    });
 
-    // Dynamically discover columns from loaded data
-    useEffect(() => {
-        if (data.length === 0) return;
+    useVerifierSessions({
+        activeTab,
+        setAvailableSessions
+    });
 
-        // Collect all unique keys from all items
-        const allKeys = new Set<string>();
-        // Internal fields to exclude from export options
-        const excludeKeys = ['id', 'isDuplicate', 'duplicateGroupId', 'isDiscarded', 'verifiedTimestamp'];
-        // Priority fields that should be checked by default
-        const defaultChecked = ['query', 'reasoning', 'answer', 'full_seed', 'score', 'modelUsed', 'source', 'messages'];
+    const { handleCheckOrphans, handleSyncOrphanedLogs } = useVerifierOrphans({
+        setIsCheckingOrphans,
+        setOrphanedLogsInfo,
+        setIsSyncing,
+        setAvailableSessions
+    });
 
-        data.forEach(item => {
-            Object.keys(item).forEach(key => {
-                if (!excludeKeys.includes(key)) {
-                    allKeys.add(key);
-                }
-            });
-        });
+    useVerifierPaginationReset({
+        showDuplicatesOnly,
+        filterScore,
+        showUnsavedOnly,
+        dataLength: data.length,
+        setCurrentPage
+    });
 
-        // Build new export columns state
-        const newColumns: Record<string, boolean> = {};
-        allKeys.forEach(key => {
-            newColumns[key] = defaultChecked.includes(key);
-        });
+    useVerifierExportColumns({
+        data,
+        setExportColumns
+    });
 
-        setExportColumns(newColumns);
-    }, [data]);
+    const { handleFileUpload } = useVerifierImport({
+        setIsImporting,
+        analyzeDuplicates,
+        setData,
+        setDataSource,
+        setActiveTab,
+        toast
+    });
 
     // --- Logic: Import ---
 
     // normalizeImportItem moved to verifierImportService
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = e.target.files;
-        if (!files || files.length === 0) return;
 
-        setIsImporting(true);
-        const readers: Promise<VerifierItem[]>[] = [];
-
-        Array.from(files).forEach((file: File) => {
-            readers.push(new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    if (typeof event.target?.result === 'string') {
-                        try {
-                            const items = parseVerifierItemsFromText(event.target.result);
-                            resolve(items);
-                            return;
-                        } catch (err) {
-                            console.error("Failed to parse file", file.name, err);
-                        }
-                        resolve([]);
-                    } else {
-                        resolve([]);
-                    }
-                };
-                reader.readAsText(file);
-            }));
-        });
-
-        Promise.all(readers).then(results => {
-            const allItems = results.flat();
-            if (allItems.length > 0) {
-                analyzeDuplicates(allItems);
-                setData(allItems);
-                setDataSource('file');
-                setActiveTab('review');
-            } else {
-                toast.error("No valid data found in selected files. Please check the format (JSON Array or JSONL).");
-            }
-            setIsImporting(false);
-        });
-
-        e.target.value = '';
-    };
-
-    const handleDbImport = async () => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-        setIsImporting(true);
-        try {
-            // Determine parameters
-            const limitToUse = isLimitEnabled ? importLimit : undefined;
-            const { sessionUid, requiresCustom } = resolveSessionFilter(
-                selectedSessionFilter,
-                currentSessionUid,
-                customSessionId
-            );
-            if (requiresCustom && !sessionUid) {
-                toast.info("Please enter a Session ID.");
-                setIsImporting(false);
-                return;
-            }
-
-            const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUid);
-            if (items.length === 0) {
-                toast.info("No items found matching criteria.");
-            } else {
-                analyzeDuplicates(items);
-                setData(items);
-                setDataSource('db');
-                setActiveTab('review');
-            }
-        } catch (e: any) {
-            toast.error("Import failed: " + e.message);
-        } finally {
-            setIsImporting(false);
-        }
-    };
-
-
-
-    const handleFetchMore = async (start: number, end: number) => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-
-        setIsImporting(true);
-        try {
-            // Find the last item to use as cursor
-            const lastItem = data[data.length - 1];
-            const lastDoc = lastItem?._doc;
-
-            const { sessionUid } = resolveSessionFilter(
-                selectedSessionFilter,
-                currentSessionUid,
-                customSessionId
-            );
-
-            // Calculate needed items
-            // If explicit start/end via tool, we might need logic, but for UI button we usually just fetch 'pageSize' more
-            // For tool compatibility: the tool is asking for index X to Y.
-            // If we have items up to index Z, and X > Z, we need to fetch.
-            // But we can only fetch APPENDING to the end. We cannot invoke random access startAt(X).
-            // So we just fetch next batch using fetchLogsAfter with lastDoc.
-
-            const limitToFetch = (end && start) ? (end - start) : (importLimit || 100);
-
-            const newItems = await FirebaseService.fetchLogsAfter({
-                limitCount: limitToFetch,
-                sessionUid,
-                lastDoc: lastDoc
-            });
-
-            if (newItems.length === 0) {
-                toast.info("No more items to fetch.");
-                return;
-            }
-
-            // Append to data
-            setData(prev => {
-                const next = [...prev, ...newItems];
-                analyzeDuplicates(next); // Re-analyze duplicates with new data
-                return next;
-            });
-            toast.success(`Fetched ${newItems.length} more items.`);
-
-        } catch (e: any) {
-            toast.error("Fetch more failed: " + e.message);
-        } finally {
-            setIsImporting(false);
-        }
-    };
-
-    // --- Logic: Sync Orphaned Logs ---
-
-    const handleSyncOrphanedLogs = async () => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-        setIsSyncing(true);
-        try {
-            const result = await FirebaseService.syncOrphanedLogsToSessions();
-            if (result.sessionsCreated === 0) {
-                toast.info("No orphaned logs found. All logs are already connected to sessions.");
-            } else {
-                toast.success(`Created ${result.sessionsCreated} sessions for ${result.logsAssigned} orphaned logs.`);
-            }
-            // Refresh session data after sync
-            FirebaseService.getSessionsFromFirebase()
-                .then(setAvailableSessions)
-                .catch(console.error);
-            // Re-check for orphaned logs (should now be empty)
-            FirebaseService.getOrphanedLogsInfo()
-                .then(setOrphanedLogsInfo)
-                .catch(console.error);
-        } catch (e: any) {
-            toast.error("Sync failed: " + e.message);
-        } finally {
-            setIsSyncing(false);
-        }
-    };
-
-    // --- Logic: Deduplication ---
-
-    const analyzeDuplicates = (items: VerifierItem[]) => {
-        const map = new Map<string, string[]>(); // Hash -> ID[]
-
-        // Reset flags first
-        items.forEach(i => {
-            i.isDuplicate = false;
-            i.duplicateGroupId = undefined;
-        });
-
-        // Group by Input hash (simple string matching for now)
-        items.forEach(item => {
-            if (item.isDiscarded) return; // Skip discarded items from colliding
-
-            const key = (item.query || item.full_seed || '').trim().toLowerCase();
-            if (!map.has(key)) map.set(key, []);
-            map.get(key)?.push(item.id);
-        });
-
-        // Mark duplicates
-        map.forEach((ids, _key) => {
-            if (ids.length > 1) {
-                const groupId = crypto.randomUUID();
-                ids.forEach(id => {
-                    const item = items.find(i => i.id === id);
-                    if (item) {
-                        item.isDuplicate = true;
-                        item.duplicateGroupId = groupId;
-                    }
-                });
-            }
-        });
-    };
-
-    const handleReScan = () => {
-        setData((prev: VerifierItem[]) => {
-            const next = prev.map(i => ({ ...i })); // Shallow copy
-            analyzeDuplicates(next);
-
-            // Check for changes in duplicate status
-            if (next.length === prev.length) {
-                for (let i = 0; i < next.length; i++) {
-                    if (next[i].isDuplicate !== prev[i].isDuplicate || next[i].duplicateGroupId !== prev[i].duplicateGroupId) {
-                        next[i].hasUnsavedChanges = true;
-                    }
-                }
-            }
-
-            return next;
-        });
-    };
-
-    const toggleDuplicateStatus = (id: string) => {
-        setData((prev: VerifierItem[]) => prev.map(item => {
-            if (item.id === id) {
-                return { ...item, isDuplicate: !item.isDuplicate, hasUnsavedChanges: true };
-            }
-            return item;
-        }));
-    };
-
-    const autoResolveDuplicates = () => {
-        // For each duplicate group, keep the one with the highest score.
-        // If scores tied, keep the longest answer.
-        const groups = new Map<string, VerifierItem[]>();
-
-        data.filter((i: VerifierItem) => i.isDuplicate && !i.isDiscarded).forEach((i: VerifierItem) => {
-            if (i.duplicateGroupId) {
-                if (!groups.has(i.duplicateGroupId)) groups.set(i.duplicateGroupId, []);
-                groups.get(i.duplicateGroupId)?.push(i);
-            }
-        });
-
-        const idsToDiscard = new Set<string>();
-
-        groups.forEach((groupItems) => {
-            // Sort desc by score, then answer length
-            groupItems.sort((a, b) => {
-                if (b.score !== a.score) return b.score - a.score;
-                return (b.answer?.length || 0) - (a.answer?.length || 0);
-            });
-
-            // Keep [0], discard rest
-            for (let i = 1; i < groupItems.length; i++) {
-                idsToDiscard.add(groupItems[i].id);
-            }
-        });
-
-        setData((prev: VerifierItem[]) => prev.map(item =>
-            idsToDiscard.has(item.id)
-                ? { ...item, isDiscarded: true, hasUnsavedChanges: true }
-                : item
-        ));
-    };
-
-    // --- Logic: Review ---
-
-    const setScore = (id: string, score: number) => {
-        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, score, hasUnsavedChanges: true } : i));
-    };
-
-    const toggleDiscard = (id: string) => {
-        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, isDiscarded: !i.isDiscarded, hasUnsavedChanges: true } : i));
-    };
-
-    // --- Logic: Export ---
-
-    const getExportData = () => {
-        return data.filter((i: VerifierItem) => !i.isDiscarded).map((item: VerifierItem) => {
-            const exportItem: any = {};
-            Object.keys(exportColumns).forEach(key => {
-                if (exportColumns[key]) {
-                    exportItem[key] = (item as any)[key];
-                }
-            });
-            return exportItem;
-        });
-    };
-
-    const handleJsonExport = () => {
-        const exportData = getExportData();
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `synth_verified_${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    };
-
-    const handleDbSave = async () => {
-        setIsUploading(true);
-        try {
-            const itemsToSave = data.filter((i: VerifierItem) => !i.isDiscarded);
-            const count = await FirebaseService.saveFinalDataset(itemsToSave, 'synth_verified');
-            toast.success(`Saved ${count} items to 'synth_verified' collection.`);
-        } catch (e: any) {
-            toast.error("DB Save Failed: " + e.message);
-        } finally {
-            setIsUploading(false);
-        }
-    };
-
-    const handleDbUpdate = async (item: VerifierItem) => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-
-        setItemStates(prev => ({ ...prev, [item.id]: 'saving' }));
-
-        try {
-            await FirebaseService.updateLogItem(item.id, {
-                query: item.query,
-                reasoning: item.reasoning,
-                answer: item.answer,
-                // Note: 'score' and 'isDiscarded' are verifier-only fields, not part of the raw synth_log schema
-            });
-            setData(prev => prev.map(i => i.id === item.id ? { ...i, hasUnsavedChanges: false } : i));
-            setItemStates(prev => ({ ...prev, [item.id]: 'saved' }));
-            setTimeout(() => {
-                setItemStates(prev => ({ ...prev, [item.id]: 'idle' }));
-            }, 10000);
-        } catch (e: any) {
-            console.error("Failed to update item:", e);
-            toast.error("Update failed: " + e.message);
-            setItemStates(prev => ({ ...prev, [item.id]: 'idle' }));
-        }
-    };
-
-    const handleDbRollback = async (item: VerifierItem) => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-
-        toast.info("Rolling back from DB...");
-
-        try {
-            const freshItem = await FirebaseService.fetchLogItem(item.id);
-            if (freshItem) {
-                // Preserve local UI flags that aren't in DB
-                const restoredItem = {
-                    ...freshItem,
-                    isDuplicate: item.isDuplicate,        // Keep duplicate status (local analysis)
-                    duplicateGroupId: item.duplicateGroupId,
-                    hasUnsavedChanges: false
-                };
-
-                setData((prev: VerifierItem[]) => prev.map(i => i.id === item.id ? restoredItem : i));
-                toast.success("Changes reverted to DB version.");
-            } else {
-                toast.error("Item not found in DB.");
-            }
-        } catch (e: any) {
-            console.error("Failed to rollback item:", e);
-            toast.error("Rollback failed: " + e.message);
-        }
-    };
-
-    const handleHfPush = async () => {
-        if (!hfToken || !hfRepo) {
-            toast.info("Please provide HF Token and Repo ID.");
-            return;
-        }
-        setIsUploading(true);
-        try {
-            const itemsToSave = getExportData();
-            const filename = hfFormat === 'parquet' ? 'train.parquet' : 'data.jsonl';
-            const url = await HuggingFaceService.uploadToHuggingFace(hfToken, hfRepo, itemsToSave, filename, true, hfFormat);
-            toast.success("Successfully pushed to: " + url);
-        } catch (e: any) {
-            toast.error("HF Push Failed: " + e.message);
-        } finally {
-            setIsUploading(false);
-        }
-    };
-
-    // --- Inline Editing Handlers ---
-
-    const startEditing = (itemId: string, field: 'query' | 'reasoning' | 'answer', currentValue: string) => {
-        setEditingField({ itemId, field, originalValue: currentValue });
-        setEditValue(currentValue);
-    };
-
-    const cancelEditing = () => {
-        setEditingField(null);
-        setEditValue('');
-    };
-
-    const saveEditing = () => {
-        if (!editingField) return;
-
-        let updatedItem: VerifierItem | null = null;
-
-        setData((prev: VerifierItem[]) => prev.map(item => {
-            if (item.id === editingField.itemId) {
-                let newItem = { ...item };
-                if (editingField.field === 'message' && editingField.messageIndex !== undefined && item.messages) {
-                    const newMessages = [...item.messages];
-                    if (newMessages[editingField.messageIndex]) {
-                        // Parse <think> tags to update reasoning field as well
-                        const thinkMatch = editValue.match(/<think>([\s\S]*?)<\/think>/);
-                        const newReasoning = thinkMatch ? thinkMatch[1].trim() : undefined;
-
-                        newMessages[editingField.messageIndex] = {
-                            ...newMessages[editingField.messageIndex],
-                            content: editValue,
-                            // Update reasoning field to match <think> content, or clear it if no <think> tags
-                            reasoning: newReasoning
-                        };
-                    }
-                    newItem = { ...item, messages: newMessages };
-                } else if (['query', 'reasoning', 'answer'].includes(editingField.field)) {
-                    newItem = { ...item, [editingField.field]: editValue };
-                }
-
-                // Mark as unsaved
-                newItem.hasUnsavedChanges = true;
-
-                updatedItem = newItem;
-                return newItem;
-            }
-            return item;
-        }));
-
-        setEditingField(null);
-        setEditValue('');
-
-        if (autoSaveEnabled && dataSource === 'db' && updatedItem) {
-            handleDbUpdate(updatedItem);
-        }
-    };
+    const { setScore, toggleDiscard } = useVerifierReviewActions({
+        setData
+    });
 
     // Handler for rewriting user query messages with streaming
     const handleMessageQueryRewrite = async (itemId: string, messageIndex: number) => {
