@@ -1,5 +1,7 @@
 import { GenerationParams, HuggingFaceConfig, UserAgentConfig, DeepConfig } from '../../types';
 import { ApiType, AppMode, DataSource, DeepPhase, EngineMode, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
+import { OutputField } from '../../interfaces/types/PromptSchema';
+import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
 import { OllamaModel } from '../../services/externalApiService';
 import { ModelListProvider } from '../../types';
 import EngineHeaderPanel from '../panels/EngineHeaderPanel';
@@ -69,6 +71,13 @@ interface SidebarEnginePanelProps {
     onMaxRetriesChange: (value: number) => void;
     retryDelay: number;
     onRetryDelayChange: (value: number) => void;
+    // Field selection props
+    outputFields: OutputField[];
+    selectedFields: OutputFieldName[];
+    onFieldToggle: (fieldName: OutputFieldName) => void;
+    onResetFieldSelection: () => void;
+    onSelectAllFields: () => void;
+    onDeselectAllFields: () => void;
 }
 
 export default function SidebarEnginePanel({
@@ -129,7 +138,13 @@ export default function SidebarEnginePanel({
     maxRetries,
     onMaxRetriesChange,
     retryDelay,
-    onRetryDelayChange
+    onRetryDelayChange,
+    outputFields,
+    selectedFields: _selectedFields,
+    onFieldToggle,
+    onResetFieldSelection,
+    onSelectAllFields,
+    onDeselectAllFields
 }: SidebarEnginePanelProps) {
     return (
         <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5 space-y-4">
@@ -182,6 +197,11 @@ export default function SidebarEnginePanel({
                         dataSourceMode={dataSourceMode}
                         hfConfig={hfConfig}
                         onHfConfigChange={onHfConfigChange}
+                        outputFields={outputFields}
+                        onFieldToggle={onFieldToggle}
+                        onResetFieldSelection={onResetFieldSelection}
+                        onSelectAllFields={onSelectAllFields}
+                        onDeselectAllFields={onDeselectAllFields}
                     />
                 </div>
             ) : (

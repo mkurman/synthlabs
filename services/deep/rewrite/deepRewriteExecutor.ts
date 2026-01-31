@@ -1,4 +1,5 @@
 import { DeepConfig, GenerationParams, StreamChunkCallback } from '../../../types';
+import { OutputFieldName } from '../../../interfaces/enums';
 import { logger } from '../../../utils/logger';
 import { orchestrateDeepReasoning } from '../deepOrchestrator';
 
@@ -42,8 +43,29 @@ export async function executeDeepRewrite(
     };
   }
 
+  // Handle field selection: only use generated fields that are selected
+  const selectedFields = generationParams?.selectedFields;
+  
+  logger.log('[Field Selection] Deep Rewrite:', {
+    selectedFields,
+    hasReasoning: !!deepResult.reasoning,
+    hasAnswer: !!deepResult.answer,
+    reasoningLength: deepResult.reasoning?.length,
+    answerLength: deepResult.answer?.length
+  });
+  
+  const shouldUseReasoning = !selectedFields || selectedFields.includes(OutputFieldName.Reasoning);
+  const shouldUseAnswer = !selectedFields || selectedFields.includes(OutputFieldName.Answer);
+  
+  logger.log('[Field Selection] Decision:', {
+    shouldUseReasoning,
+    shouldUseAnswer,
+    finalReasoningLength: shouldUseReasoning ? deepResult.reasoning?.length : 0,
+    finalAnswerLength: shouldUseAnswer ? deepResult.answer?.length : outsideThinkContent.length
+  });
+
   return {
-    newReasoning: deepResult.reasoning || '',
-    newAnswer: deepResult.answer || outsideThinkContent
+    newReasoning: shouldUseReasoning ? (deepResult.reasoning || '') : '',
+    newAnswer: shouldUseAnswer ? (deepResult.answer || outsideThinkContent) : outsideThinkContent
   };
 }

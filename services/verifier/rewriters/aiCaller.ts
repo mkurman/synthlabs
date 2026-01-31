@@ -1,4 +1,4 @@
-import { ProviderType, ApiType } from '../../../interfaces/enums';
+import { ProviderType, ApiType, ResponsesSchemaName } from '../../../interfaces/enums';
 import { SettingsService } from '../../settingsService';
 import * as GeminiService from '../../geminiService';
 import * as ExternalApiService from '../../externalApiService';
@@ -60,7 +60,9 @@ export async function callRewriterAI(
         return cleanResponse(rawText);
     } else {
         const isRewriteField = schema?.output.some(f => f.name === 'response');
-        const responsesSchema: ExternalApiService.ResponsesSchemaName = isRewriteField ? 'rewriteResponse' : 'reasoningTrace';
+        const responsesSchema: ExternalApiService.ResponsesSchemaName = isRewriteField
+            ? ResponsesSchemaName.RewriteResponse
+            : ResponsesSchemaName.ReasoningTrace;
 
         const result = await ExternalApiService.callExternalApi({
             provider: config.externalProvider,
@@ -228,7 +230,7 @@ export async function callRewriterAIRaw(
             retryDelay: config.retryDelay ?? 1000,
             generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
             structuredOutput: true,
-            responsesSchema: 'reasoningTrace'
+            responsesSchema: ResponsesSchemaName.ReasoningTrace
         });
 
         return result;

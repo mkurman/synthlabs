@@ -1,5 +1,7 @@
+import { OutputFieldName } from '../enums/OutputFieldName';
+
 export interface OutputField {
-  name: string;
+  name: OutputFieldName;
   description: string;
   optional?: boolean;
 }

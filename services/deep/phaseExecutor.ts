@@ -1,5 +1,5 @@
 import { DeepPhaseConfig, GenerationParams, StreamChunkCallback, StreamPhase, ProviderType, ApiType } from '../../types';
-import { PromptCategory, PromptRole, DeepPhase } from '../../interfaces/enums';
+import { PromptCategory, PromptRole, DeepPhase, ResponsesSchemaName } from '../../interfaces/enums';
 import { JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../../constants';
 import * as GeminiService from '../geminiService';
 import * as ExternalApiService from '../externalApiService';
@@ -36,13 +36,29 @@ export const executePhase = async (
   structuredOutput: boolean = true,
   streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<PhaseExecutionResult> => {
-  const { id, provider, externalProvider, apiType, apiKey, model, customBaseUrl, promptSchema: configSchema } = phaseConfig;
+  const { id, provider, externalProvider, apiType, apiKey, model, customBaseUrl, promptSchema: configSchema, selectedFields } = phaseConfig;
   const modelName = provider === ProviderType.Gemini ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
   const startTime = Date.now();
   const timestamp = new Date().toISOString();
 
   // Get schema: from config if provided, otherwise lookup by phase ID
   const schema = configSchema || PHASE_TO_SCHEMA[id]?.();
+
+  const defaultSelectedFields = schema?.output
+    ?.filter(field => !field.optional)
+    .map(field => field.name) || [];
+
+  const effectiveSelectedFields = selectedFields && selectedFields.length > 0
+    ? selectedFields
+    : defaultSelectedFields;
+  
+  // Filter schema fields based on effectiveSelectedFields
+  const effectiveSchema = schema && effectiveSelectedFields.length > 0
+    ? {
+        ...schema,
+        output: schema.output.filter(f => effectiveSelectedFields.includes(f.name))
+      }
+    : schema;
   
   logger.groupCollapsed(`[Deep Phase: ${id.toUpperCase()}]`);
   logger.log("Model:", modelName);
@@ -52,16 +68,16 @@ export const executePhase = async (
   let result;
   try {
     if (provider === ProviderType.Gemini) {
-      // For Gemini, build the prompt with schema
-      const geminiSystemPrompt = schema 
+      // For Gemini, build the prompt with effective schema (filtered by selected fields)
+      const geminiSystemPrompt = effectiveSchema 
         ? (structuredOutput 
-            ? schema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
+            ? effectiveSchema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
                 type: 'object',
-                properties: Object.fromEntries(schema.output.map(f => [f.name, { type: 'string', description: f.description }])),
-                required: schema.output.filter(f => !f.optional).map(f => f.name),
+                properties: Object.fromEntries(effectiveSchema.output.map(f => [f.name, { type: 'string', description: f.description }])),
+                required: effectiveSchema.output.filter(f => !f.optional).map(f => f.name),
                 additionalProperties: true
               })
-            : schema.prompt + '\n\n' + JSON_OUTPUT_FALLBACK)
+            : effectiveSchema.prompt + '\n\n' + JSON_OUTPUT_FALLBACK)
         : '\n\n' + JSON_OUTPUT_FALLBACK;
       result = await GeminiService.generateGenericJSON(userContent, geminiSystemPrompt, { maxRetries, retryDelay, generationParams, structuredOutput });
     } else {
@@ -70,7 +86,7 @@ export const executePhase = async (
       const resolvedBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
 
       // Determine appropriate schema for Responses API
-      const responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
+      const responsesSchema: ExternalApiService.ResponsesSchemaName = ResponsesSchemaName.ReasoningTrace;
 
       result = await ExternalApiService.callExternalApi({
         provider: externalProvider,
@@ -78,7 +94,7 @@ export const executePhase = async (
         model: model,
         apiType: apiType || ApiType.Chat,
         customBaseUrl: resolvedBaseUrl,
-        promptSchema: schema,
+        promptSchema: effectiveSchema,
         userPrompt: userContent,
         signal: signal,
         maxRetries,
@@ -86,6 +102,7 @@ export const executePhase = async (
         generationParams,
         structuredOutput,
         responsesSchema,
+        selectedFields,
         // Streaming: only enable if streamOptions provided with callback
         stream: streamOptions?.stream,
         onStreamChunk: streamOptions?.onStreamChunk,

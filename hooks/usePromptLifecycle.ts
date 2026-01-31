@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 
 import { PromptService } from '../services/promptService';
 import { SettingsService } from '../services/settingsService';
-import { PromptCategory, PromptRole } from '../interfaces/enums';
+import { PromptCategory, PromptRole, OutputFieldName } from '../interfaces/enums';
 import type { DeepConfig, UserAgentConfig } from '../types';
 
 interface UsePromptLifecycleOptions {
@@ -23,6 +23,12 @@ export function usePromptLifecycle({
     setDeepConfig,
     setUserAgentConfig
 }: UsePromptLifecycleOptions) {
+    const getDefaultSelectedFields = (schema?: { output?: { name: OutputFieldName; optional?: boolean }[] }, existing?: OutputFieldName[]) => {
+        if (existing && existing.length > 0) {
+            return existing;
+        }
+        return schema?.output?.filter(field => !field.optional).map(field => field.name) || [];
+    };
     useEffect(() => {
         const sets = PromptService.getAvailableSets();
         setAvailablePromptSets(sets);
@@ -37,11 +43,51 @@ export function usePromptLifecycle({
         setDeepConfig((prev: DeepConfig) => ({
             ...prev,
             phases: {
-                meta: { ...prev.phases.meta, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Meta, activeSet) },
-                retrieval: { ...prev.phases.retrieval, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Retrieval, activeSet) },
-                derivation: { ...prev.phases.derivation, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Derivation, activeSet) },
-                writer: { ...prev.phases.writer, systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Writer, activeSet) },
-                rewriter: { ...prev.phases.rewriter, systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Rewriter, activeSet) }
+                meta: {
+                    ...prev.phases.meta,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Meta, activeSet),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Meta, activeSet),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Meta, activeSet),
+                        prev.phases.meta.selectedFields
+                    )
+                },
+                retrieval: {
+                    ...prev.phases.retrieval,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Retrieval, activeSet),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Retrieval, activeSet),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Retrieval, activeSet),
+                        prev.phases.retrieval.selectedFields
+                    )
+                },
+                derivation: {
+                    ...prev.phases.derivation,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Derivation, activeSet),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Derivation, activeSet),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Derivation, activeSet),
+                        prev.phases.derivation.selectedFields
+                    )
+                },
+                writer: {
+                    ...prev.phases.writer,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Writer, activeSet),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Writer, activeSet),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Writer, activeSet),
+                        prev.phases.writer.selectedFields
+                    )
+                },
+                rewriter: {
+                    ...prev.phases.rewriter,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Rewriter, activeSet),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Rewriter, activeSet),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Rewriter, activeSet),
+                        prev.phases.rewriter.selectedFields
+                    )
+                }
             }
         }));
 
@@ -58,11 +104,51 @@ export function usePromptLifecycle({
         setDeepConfig((prev: DeepConfig) => ({
             ...prev,
             phases: {
-                meta: { ...prev.phases.meta, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Meta) },
-                retrieval: { ...prev.phases.retrieval, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Retrieval) },
-                derivation: { ...prev.phases.derivation, systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Derivation) },
-                writer: { ...prev.phases.writer, systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Writer) },
-                rewriter: { ...prev.phases.rewriter, systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Rewriter) }
+                meta: {
+                    ...prev.phases.meta,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Meta),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Meta),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Meta),
+                        prev.phases.meta.selectedFields
+                    )
+                },
+                retrieval: {
+                    ...prev.phases.retrieval,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Retrieval),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Retrieval),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Retrieval),
+                        prev.phases.retrieval.selectedFields
+                    )
+                },
+                derivation: {
+                    ...prev.phases.derivation,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Generator, PromptRole.Derivation),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Derivation),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Generator, PromptRole.Derivation),
+                        prev.phases.derivation.selectedFields
+                    )
+                },
+                writer: {
+                    ...prev.phases.writer,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Writer),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Writer),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Writer),
+                        prev.phases.writer.selectedFields
+                    )
+                },
+                rewriter: {
+                    ...prev.phases.rewriter,
+                    systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Rewriter),
+                    promptSchema: PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Rewriter),
+                    selectedFields: getDefaultSelectedFields(
+                        PromptService.getPromptSchema(PromptCategory.Converter, PromptRole.Rewriter),
+                        prev.phases.rewriter.selectedFields
+                    )
+                }
             }
         }));
 

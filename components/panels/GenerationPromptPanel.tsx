@@ -2,7 +2,10 @@ import React from 'react';
 import { Layers, RefreshCw, Settings, Upload, Save, Wand2 } from 'lucide-react';
 import { AppMode, DataSource } from '../../interfaces/enums';
 import { HuggingFaceConfig, GenerationParams } from '../../types';
+import { OutputField } from '../../interfaces/types/PromptSchema';
+import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
 import GenerationParamsInput from '../GenerationParamsInput';
+import FieldSelectionPanel from './FieldSelectionPanel';
 
 interface GenerationPromptPanelProps {
     generationParams: GenerationParams;
@@ -20,6 +23,12 @@ interface GenerationPromptPanelProps {
     dataSourceMode: DataSource;
     hfConfig: HuggingFaceConfig;
     onHfConfigChange: (config: HuggingFaceConfig) => void;
+    // Field selection props
+    outputFields?: OutputField[];
+    onFieldToggle?: (fieldName: OutputFieldName) => void;
+    onResetFieldSelection?: () => void;
+    onSelectAllFields?: () => void;
+    onDeselectAllFields?: () => void;
 }
 
 export default function GenerationPromptPanel({
@@ -37,7 +46,13 @@ export default function GenerationPromptPanel({
     fileInputRef,
     dataSourceMode,
     hfConfig,
-    onHfConfigChange
+    onHfConfigChange,
+    // Field selection props
+    outputFields = [],
+    onFieldToggle,
+    onResetFieldSelection,
+    onSelectAllFields,
+    onDeselectAllFields
 }: GenerationPromptPanelProps) {
     return (
         <>
@@ -74,6 +89,17 @@ export default function GenerationPromptPanel({
                     spellCheck={false}
                     placeholder={appMode === AppMode.Generator ? "# ROLE..." : "# CONVERTER ROLE..."}
                 />
+
+                {outputFields.length > 0 && onFieldToggle && (
+                    <FieldSelectionPanel
+                        outputFields={outputFields}
+                        selectedFields={generationParams.selectedFields || []}
+                        onFieldToggle={onFieldToggle}
+                        onResetToDefault={onResetFieldSelection || (() => {})}
+                        onSelectAll={onSelectAllFields || (() => {})}
+                        onDeselectAll={onDeselectAllFields || (() => {})}
+                    />
+                )}
             </div>
 
             {(dataSourceMode === DataSource.HuggingFace || dataSourceMode === DataSource.Manual) && (

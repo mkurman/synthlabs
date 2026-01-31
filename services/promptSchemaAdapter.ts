@@ -12,17 +12,27 @@
 import { PromptSchema, ParsedSchemaOutput, OutputField } from '../types';
 import { JSON_OUTPUT_FALLBACK } from '../constants';
 import { PromptService } from './promptService';
-import { PromptCategory, PromptRole } from '../interfaces/enums';
+import { PromptCategory, PromptRole, OutputFieldName, ResponsesSchemaName } from '../interfaces/enums';
+import { filterFieldsBySelection } from './fieldSelectionService';
 
 /**
  * Convert PromptSchema output fields to OpenAI-compatible JSON schema
  * Only non-optional fields are added to the 'required' array
+ * 
+ * @param outputFields - All output fields from schema
+ * @param selectedFields - Optional array of field names to include (if provided, only these fields are used)
+ * @returns OpenAI-compatible JSON schema
  */
-export function toOpenAIJsonSchema(outputFields: OutputField[]): Record<string, any> {
+export function toOpenAIJsonSchema(outputFields: OutputField[], selectedFields?: OutputFieldName[]): Record<string, any> {
+    // Filter fields if selection is provided
+    const fieldsToUse = selectedFields && selectedFields.length > 0
+        ? filterFieldsBySelection(outputFields, selectedFields)
+        : outputFields;
+    
     const properties: Record<string, any> = {};
     const required: string[] = [];
 
-    for (const field of outputFields) {
+    for (const field of fieldsToUse) {
         properties[field.name] = {
             type: 'string',
             description: field.description
@@ -44,14 +54,23 @@ export function toOpenAIJsonSchema(outputFields: OutputField[]): Record<string, 
 /**
  * Convert PromptSchema output fields to Gemini-compatible schema format
  * Only non-optional fields are added to the 'required' array
+ *
+ * @param outputFields - All output fields from schema
+ * @param selectedFields - Optional array of field names to include (if provided, only these fields are used)
+ * @returns Gemini-compatible JSON schema
  */
-export function toGeminiSchema(outputFields: OutputField[]): Record<string, any> {
+export function toGeminiSchema(outputFields: OutputField[], selectedFields?: OutputFieldName[]): Record<string, any> {
+    // Filter fields if selection is provided
+    const fieldsToUse = selectedFields && selectedFields.length > 0
+        ? filterFieldsBySelection(outputFields, selectedFields)
+        : outputFields;
+
     // Gemini uses a different format with Type enum
     // This will be used with the GoogleGenAI SDK
     const properties: Record<string, any> = {};
     const required: string[] = [];
 
-    for (const field of outputFields) {
+    for (const field of fieldsToUse) {
         properties[field.name] = {
             type: 'string',
             description: field.description
@@ -76,28 +95,28 @@ export function toGeminiSchema(outputFields: OutputField[]): Record<string, any>
  */
 export function getResponsesSchemaName(
     outputFields: OutputField[]
-): 'reasoningTrace' | 'reasoningTraceWithFollowUp' | 'rewriteResponse' | 'userAgentResponse' | 'genericObject' {
+): ResponsesSchemaName {
     const fieldNames = outputFields.map(f => f.name).sort();
     const fieldSet = new Set(fieldNames);
 
     // Check for known schema patterns
-    if (fieldSet.has('follow_up_question') || fieldSet.has('question')) {
-        return 'userAgentResponse';
+    if (fieldSet.has(OutputFieldName.FollowUpQuestion) || fieldSet.has(OutputFieldName.Question)) {
+        return ResponsesSchemaName.UserAgentResponse;
     }
 
-    if (fieldSet.has('response') && fieldNames.length === 1) {
-        return 'rewriteResponse';
+    if (fieldSet.has(OutputFieldName.Response) && fieldNames.length === 1) {
+        return ResponsesSchemaName.RewriteResponse;
     }
 
-    if (fieldSet.has('reasoning') && fieldSet.has('answer')) {
-        if (fieldSet.has('follow_up_question') || fieldSet.has('query')) {
-            return 'reasoningTraceWithFollowUp';
+    if (fieldSet.has(OutputFieldName.Reasoning) && fieldSet.has(OutputFieldName.Answer)) {
+        if (fieldSet.has(OutputFieldName.FollowUpQuestion) || fieldSet.has(OutputFieldName.Query)) {
+            return ResponsesSchemaName.ReasoningTraceWithFollowUp;
         }
-        return 'reasoningTrace';
+        return ResponsesSchemaName.ReasoningTrace;
     }
 
     // Default to generic object for unknown schemas
-    return 'genericObject';
+    return ResponsesSchemaName.GenericObject;
 }
 
 /**

@@ -1,9 +1,11 @@
 import React from 'react';
 import { DeepPhaseConfig } from '../types';
 import { ExternalProvider, ProviderType, ApiType } from '../interfaces/enums';
+import { OutputFieldName } from '../interfaces/enums/OutputFieldName';
 import { SettingsService } from '../services/settingsService';
 import { EXTERNAL_PROVIDERS } from '../constants';
 import ModelSelector from './ModelSelector';
+import FieldSelectionPanel from './panels/FieldSelectionPanel';
 
 interface DeepPhaseConfigPanelProps {
   title: string;
@@ -144,6 +146,31 @@ export default function DeepPhaseConfigPanel({
           spellCheck={false} 
         />
       </div>
+
+      {/* Field Selection for Deep Phase */}
+      {phase.promptSchema?.output && phase.promptSchema.output.length > 0 && (
+        <FieldSelectionPanel
+          outputFields={phase.promptSchema.output}
+          selectedFields={phase.selectedFields || phase.promptSchema.output.filter(f => !f.optional).map(f => f.name)}
+          onFieldToggle={(fieldName: OutputFieldName) => {
+            const currentSelected = phase.selectedFields || phase.promptSchema!.output.filter(f => !f.optional).map(f => f.name);
+            const newSelected = currentSelected.includes(fieldName)
+              ? currentSelected.filter(f => f !== fieldName)
+              : [...currentSelected, fieldName];
+            onUpdatePhase({ selectedFields: newSelected });
+          }}
+          onResetToDefault={() => {
+            const defaultFields = phase.promptSchema!.output.filter(f => !f.optional).map(f => f.name);
+            onUpdatePhase({ selectedFields: defaultFields });
+          }}
+          onSelectAll={() => {
+            onUpdatePhase({ selectedFields: phase.promptSchema!.output.map(f => f.name) });
+          }}
+          onDeselectAll={() => {
+            onUpdatePhase({ selectedFields: [] });
+          }}
+        />
+      )}
     </div>
   );
 }

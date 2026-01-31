@@ -8,6 +8,8 @@ import { PrefetchState } from '../services/hfPrefetchService';
 import { TaskType } from '../services/taskClassifierService';
 import { OllamaModel } from '../services/externalApiService';
 import { ModelListProvider, SynthLogItem, StreamingConversationState } from '../types';
+import { OutputField } from '../interfaces/types/PromptSchema';
+import { OutputFieldName } from '../interfaces/enums/OutputFieldName';
 
 interface UseAppViewPropsInput {
     sessionName: string | null;
@@ -72,6 +74,13 @@ interface UseAppViewPropsInput {
     converterPrompt: string;
     onSystemPromptChange: (value: string) => void;
     onConverterPromptChange: (value: string) => void;
+    // Field selection props
+    outputFields: OutputField[];
+    selectedFields: OutputFieldName[];
+    onFieldToggle: (fieldName: OutputFieldName) => void;
+    onResetFieldSelection: () => void;
+    onSelectAllFields: () => void;
+    onDeselectAllFields: () => void;
     onLoadRubric: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onSaveRubric: () => void;
     onOptimizePrompt: () => void;
@@ -224,6 +233,12 @@ export function useAppViewProps(input: UseAppViewPropsInput) {
         converterPrompt: input.converterPrompt,
         onSystemPromptChange: input.onSystemPromptChange,
         onConverterPromptChange: input.onConverterPromptChange,
+        outputFields: input.outputFields,
+        selectedFields: input.selectedFields,
+        onFieldToggle: input.onFieldToggle,
+        onResetFieldSelection: input.onResetFieldSelection,
+        onSelectAllFields: input.onSelectAllFields,
+        onDeselectAllFields: input.onDeselectAllFields,
         onLoadRubric: input.onLoadRubric,
         onSaveRubric: input.onSaveRubric,
         onOptimizePrompt: input.onOptimizePrompt,

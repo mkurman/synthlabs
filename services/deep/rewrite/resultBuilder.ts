@@ -24,8 +24,8 @@ export function buildSuccessResult(params: ResultBuilderParams): SynthLogItem {
   const displayQuery = firstUser?.content || "Conversation";
 
   const allReasoning = messagesForLog
-    .filter(m => m.role === ChatRole.Assistant && m.reasoning)
-    .map(m => m.reasoning)
+    .filter(m => m.role === ChatRole.Assistant && m.reasoning_content)
+    .map(m => m.reasoning_content)
     .join('\n---\n');
 
   const finalResult: SynthLogItem = {
@@ -66,7 +66,7 @@ export function buildAbortedResult(params: ResultBuilderParams): SynthLogItem {
     seed_preview: displayQuery.substring(0, 150) + (displayQuery.length >= 150 ? "..." : ""),
     full_seed: messages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join('\n\n'),
     query: displayQuery,
-    reasoning: messages.filter(m => m.role === ChatRole.Assistant && m.reasoning).map(m => m.reasoning).join('\n---\n'),
+    reasoning: messages.filter(m => m.role === ChatRole.Assistant && m.reasoning_content).map(m => m.reasoning_content).join('\n---\n'),
     answer: "Halted",
     timestamp: new Date().toISOString(),
     duration: Date.now() - startTime,

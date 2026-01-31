@@ -1,3 +1,5 @@
+import type { StreamingPhase } from './interfaces/enums/StreamingPhase';
+
 // Enums
 export { LogItemStatus } from './interfaces/enums';
 export { DataSource } from './interfaces/enums';
@@ -126,12 +128,7 @@ export type StreamChunkCallback = (
   usage?: UsageData
 ) => void;
 
-export type StreamingConversationPhase =
-  | 'idle'
-  | 'waiting_for_response'
-  | 'extracting_reasoning'
-  | 'extracting_answer'
-  | 'message_complete';
+export type StreamingConversationPhase = StreamingPhase;
 
 export interface StreamingConversationState {
   id: string;

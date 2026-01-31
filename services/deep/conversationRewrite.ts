@@ -1,4 +1,4 @@
-import { DeepConfig, SynthLogItem, GenerationParams, ChatMessage, ChatRole, EngineMode, StreamChunkCallback } from '../../types';
+import { DeepConfig, SynthLogItem, GenerationParams, ChatMessage, ChatRole, EngineMode, StreamChunkCallback, AppMode } from '../../types';
 import { logger } from '../../utils/logger';
 import { parseThinkTags } from './rewrite/thinkTagParser';
 import { buildRewriteInput } from './rewrite/inputBuilder';
@@ -13,6 +13,8 @@ export interface ConversationRewriteParams {
   config: DeepConfig;
   engineMode: EngineMode;
   converterPrompt?: string;
+  systemPrompt?: string;
+  appMode?: AppMode;
   signal?: AbortSignal;
   maxRetries: number;
   retryDelay: number;
@@ -34,6 +36,8 @@ export const orchestrateConversationRewrite = async (
     config,
     engineMode,
     converterPrompt,
+    systemPrompt,
+    appMode,
     signal,
     maxRetries,
     retryDelay,
@@ -106,13 +110,18 @@ export const orchestrateConversationRewrite = async (
         newReasoning = deepResult.newReasoning || originalThinking;
         newAnswer = deepResult.newAnswer;
       } else {
+        // Use systemPrompt for Generator mode, converterPrompt for Converter mode
+        const effectivePrompt = appMode === AppMode.Generator ? systemPrompt : converterPrompt;
+        
         const regularResult = await executeRegularRewrite(
           rewriteInput,
           originalThinking,
+          outsideThinkContent,
           regularModeConfig,
           config,
-          converterPrompt,
+          effectivePrompt,
           promptSet,
+          appMode,
           signal,
           maxRetries,
           retryDelay,
@@ -122,6 +131,7 @@ export const orchestrateConversationRewrite = async (
           onStreamChunk
         );
         newReasoning = regularResult.newReasoning;
+        newAnswer = regularResult.newAnswer;
       }
 
       // Reconstruct message

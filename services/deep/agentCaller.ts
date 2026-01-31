@@ -1,4 +1,5 @@
 import { GenerationParams, StreamChunkCallback, StreamPhase, ProviderType, ApiType, ExternalProvider } from '../../types';
+import { OutputFieldName, ResponsesSchemaName } from '../../interfaces/enums';
 import { JSON_OUTPUT_FALLBACK } from '../../constants';
 import * as GeminiService from '../geminiService';
 import * as ExternalApiService from '../externalApiService';
@@ -28,9 +29,9 @@ export const callAgent = async (
   const schema = config.promptSchema;
   
   // Determine responses schema based on output fields
-  let responsesSchema: ExternalApiService.ResponsesSchemaName = 'reasoningTrace';
-  if (schema?.output.some(f => f.name === 'follow_up_question' || f.name === 'question')) {
-    responsesSchema = 'userAgentResponse';
+  let responsesSchema: ExternalApiService.ResponsesSchemaName = ResponsesSchemaName.ReasoningTrace;
+  if (schema?.output.some(f => f.name === OutputFieldName.FollowUpQuestion || f.name === OutputFieldName.Question)) {
+    responsesSchema = ResponsesSchemaName.UserAgentResponse;
   }
   
   if (config.provider === ProviderType.Gemini) {

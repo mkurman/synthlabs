@@ -1,6 +1,8 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { DeepConfig, DetectedColumns, GenerationParams, HuggingFaceConfig, ProgressStats, UserAgentConfig } from '../../types';
 import { ApiType, AppMode, DataSource, DeepPhase, EngineMode, Environment, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
+import { OutputField } from '../../interfaces/types/PromptSchema';
+import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
 import { PrefetchState } from '../../services/hfPrefetchService';
 import { TaskType } from '../../services/taskClassifierService';
 import SidebarSessionPanel from './SidebarSessionPanel';
@@ -72,6 +74,13 @@ export interface SidebarPanelProps {
     converterPrompt: string;
     onSystemPromptChange: (value: string) => void;
     onConverterPromptChange: (value: string) => void;
+    // Field selection props
+    outputFields: OutputField[];
+    selectedFields: OutputFieldName[];
+    onFieldToggle: (fieldName: OutputFieldName) => void;
+    onResetFieldSelection: () => void;
+    onSelectAllFields: () => void;
+    onDeselectAllFields: () => void;
     onLoadRubric: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onSaveRubric: () => void;
     onOptimizePrompt: () => void;
@@ -195,6 +204,12 @@ export default function SidebarPanel(props: SidebarPanelProps) {
         converterPrompt,
         onSystemPromptChange,
         onConverterPromptChange,
+        outputFields,
+        selectedFields,
+        onFieldToggle,
+        onResetFieldSelection,
+        onSelectAllFields,
+        onDeselectAllFields,
         onLoadRubric,
         onSaveRubric,
         onOptimizePrompt,
@@ -340,6 +355,12 @@ export default function SidebarPanel(props: SidebarPanelProps) {
                 onDisableUserAgent={onDisableUserAgent}
                 userAgentConfig={userAgentConfig}
                 onUserAgentConfigChange={onUserAgentConfigChange}
+                outputFields={outputFields}
+                selectedFields={selectedFields}
+                onFieldToggle={onFieldToggle}
+                onResetFieldSelection={onResetFieldSelection}
+                onSelectAllFields={onSelectAllFields}
+                onDeselectAllFields={onDeselectAllFields}
                 concurrency={concurrency}
                 onConcurrencyChange={onConcurrencyChange}
                 sleepTime={sleepTime}

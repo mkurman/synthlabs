@@ -8,15 +8,14 @@ export interface ReconstructedMessage {
 export function reconstructMessage(
   originalMessage: ChatMessage,
   newReasoning: string,
-  outsideThinkContent: string,
+  newAnswer: string,
   assistantIndex: number
 ): ReconstructedMessage {
-  const newContent = `<think>${newReasoning}</think>\n\n${outsideThinkContent}`;
-
+  // Store reasoning in dedicated field, content is just the answer (no <think> tags)
   const reconstructedMessage: ChatMessage = {
     ...originalMessage,
-    content: newContent,
-    reasoning: newReasoning
+    content: newAnswer,
+    reasoning_content: newReasoning
   };
 
   return {
