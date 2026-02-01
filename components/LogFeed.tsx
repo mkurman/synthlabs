@@ -2,6 +2,7 @@
 import React, { useEffect } from 'react';
 import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2 } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
+import { parseThinkTagsForDisplay } from '../utils/thinkTagParser';
 import ConversationView from './ConversationView';
 import StreamingConversationCard from './StreamingConversationCard';
 import { SynthLogItem, StreamingConversationState } from '../types';
@@ -52,6 +53,14 @@ const LogFeed: React.FC<LogFeedProps> = ({
       // No-op: ensures re-render tracking for streaming updates
     }
   }, [streamingVersion]);
+
+  const getDisplayFields = (answer: string, reasoning: string) => {
+    const parsed = parseThinkTagsForDisplay(answer || '');
+    return {
+      displayReasoning: reasoning || parsed.reasoning || '',
+      displayAnswer: parsed.hasThinkTags ? parsed.answer : answer
+    };
+  };
 
   const hasActiveStreams = streamingConversations && streamingConversations.size > 0;
   const isInvalidLog = (item: SynthLogItem) => item.status === 'TIMEOUT' || item.status === 'ERROR' || item.isError;
@@ -259,36 +268,41 @@ const LogFeed: React.FC<LogFeedProps> = ({
                 <ConversationView messages={item.messages} />
               </div>
             ) : (
-              <div className="grid lg:grid-cols-2">
-                {/* Left: Reasoning Trace */}
-                <div className="p-4 border-r border-slate-800 bg-slate-950/20">
-                  <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                    Stenographic Trace
-                  </h4>
-                  <ReasoningHighlighter text={item.reasoning} />
-                </div>
+              (() => {
+                const { displayReasoning, displayAnswer } = getDisplayFields(item.answer || '', item.reasoning || '');
+                return (
+                  <div className="grid lg:grid-cols-2">
+                    {/* Left: Reasoning Trace */}
+                    <div className="p-4 border-r border-slate-800 bg-slate-950/20">
+                      <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                        Stenographic Trace
+                      </h4>
+                      <ReasoningHighlighter text={displayReasoning} />
+                    </div>
 
-                {/* Right: Final Answer & Seed */}
-                <div className="flex flex-col">
-                  <div className="p-4 flex-1">
-                    <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      Final Output
-                    </h4>
-                    <p className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
-                      {renderSafeContent(item.answer)}
-                    </p>
-                  </div>
+                    {/* Right: Final Answer & Seed */}
+                    <div className="flex flex-col">
+                      <div className="p-4 flex-1">
+                        <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                          Final Output
+                        </h4>
+                        <p className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+                          {renderSafeContent(displayAnswer)}
+                        </p>
+                      </div>
 
-                  <div className="p-3 bg-slate-950/50 border-t border-slate-800">
-                    <h5 className="text-[10px] text-slate-500 mb-1">Seed Context</h5>
-                    <p className="text-xs text-slate-600 italic line-clamp-2 font-serif opacity-70">
-                      "{renderSafeContent(item.seed_preview)}"
-                    </p>
+                      <div className="p-3 bg-slate-950/50 border-t border-slate-800">
+                        <h5 className="text-[10px] text-slate-500 mb-1">Seed Context</h5>
+                        <p className="text-xs text-slate-600 italic line-clamp-2 font-serif opacity-70">
+                          "{renderSafeContent(item.seed_preview)}"
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()
             )}
 
             {/* Generation Error */}

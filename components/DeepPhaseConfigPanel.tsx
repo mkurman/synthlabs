@@ -169,6 +169,9 @@ export default function DeepPhaseConfigPanel({
           onDeselectAll={() => {
             onUpdatePhase({ selectedFields: [] });
           }}
+          showNativeToggle={phase.promptSchema.output.some(field => field.name === OutputFieldName.Reasoning)}
+          useNativeOutput={phase.useNativeOutput || false}
+          onToggleNativeOutput={(value) => onUpdatePhase({ useNativeOutput: value })}
         />
       )}
     </div>

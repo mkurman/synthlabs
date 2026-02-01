@@ -10,6 +10,7 @@ export interface SynthLogItem {
   full_seed: string;
   query: string;
   reasoning: string;
+  reasoning_content: string;
   original_reasoning?: string;
   answer: string;
   original_answer?: string;

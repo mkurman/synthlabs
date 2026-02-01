@@ -1,7 +1,9 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 interface UseChatScrollOptions {
     messages: any[];
+    isStreaming: boolean;
+    lastMessageLength: number;
     autoScroll: boolean;
     messagesEndRef: React.RefObject<HTMLDivElement | null>;
     messagesContainerRef: React.RefObject<HTMLDivElement | null>;
@@ -11,12 +13,20 @@ interface UseChatScrollOptions {
 
 export function useChatScroll({
     messages,
+    isStreaming,
+    lastMessageLength,
     autoScroll,
     messagesEndRef,
     messagesContainerRef,
     setAutoScroll,
     setShowScrollButton
 }: UseChatScrollOptions) {
+    const isStreamingRef = useRef(isStreaming);
+
+    useEffect(() => {
+        isStreamingRef.current = isStreaming;
+    }, [isStreaming]);
+
     const scrollToBottom = useCallback(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messagesEndRef]);
@@ -45,6 +55,11 @@ export function useChatScroll({
         if (!container) return undefined;
 
         const handleScroll = () => {
+            // Never show scroll button during streaming
+            if (isStreamingRef.current) {
+                setShowScrollButton(false);
+                return;
+            }
             if (!checkIfNearBottom()) {
                 setAutoScroll(false);
                 setShowScrollButton(true);

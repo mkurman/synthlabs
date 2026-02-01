@@ -78,6 +78,8 @@ interface SidebarEnginePanelProps {
     onResetFieldSelection: () => void;
     onSelectAllFields: () => void;
     onDeselectAllFields: () => void;
+    useNativeOutput: boolean;
+    onToggleNativeOutput: (value: boolean) => void;
 }
 
 export default function SidebarEnginePanel({
@@ -144,7 +146,9 @@ export default function SidebarEnginePanel({
     onFieldToggle,
     onResetFieldSelection,
     onSelectAllFields,
-    onDeselectAllFields
+    onDeselectAllFields,
+    useNativeOutput,
+    onToggleNativeOutput
 }: SidebarEnginePanelProps) {
     return (
         <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5 space-y-4">
@@ -202,6 +206,8 @@ export default function SidebarEnginePanel({
                         onResetFieldSelection={onResetFieldSelection}
                         onSelectAllFields={onSelectAllFields}
                         onDeselectAllFields={onDeselectAllFields}
+                        useNativeOutput={useNativeOutput}
+                        onToggleNativeOutput={onToggleNativeOutput}
                     />
                 </div>
             ) : (

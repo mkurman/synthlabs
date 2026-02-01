@@ -81,6 +81,8 @@ export interface SidebarPanelProps {
     onResetFieldSelection: () => void;
     onSelectAllFields: () => void;
     onDeselectAllFields: () => void;
+    useNativeOutput: boolean;
+    onToggleNativeOutput: (value: boolean) => void;
     onLoadRubric: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onSaveRubric: () => void;
     onOptimizePrompt: () => void;
@@ -210,6 +212,8 @@ export default function SidebarPanel(props: SidebarPanelProps) {
         onResetFieldSelection,
         onSelectAllFields,
         onDeselectAllFields,
+        useNativeOutput,
+        onToggleNativeOutput,
         onLoadRubric,
         onSaveRubric,
         onOptimizePrompt,
@@ -361,6 +365,8 @@ export default function SidebarPanel(props: SidebarPanelProps) {
                 onResetFieldSelection={onResetFieldSelection}
                 onSelectAllFields={onSelectAllFields}
                 onDeselectAllFields={onDeselectAllFields}
+                useNativeOutput={useNativeOutput}
+                onToggleNativeOutput={onToggleNativeOutput}
                 concurrency={concurrency}
                 onConcurrencyChange={onConcurrencyChange}
                 sleepTime={sleepTime}

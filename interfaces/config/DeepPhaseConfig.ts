@@ -18,4 +18,6 @@ export interface DeepPhaseConfig {
   systemPrompt?: string;
   /** Selected output fields for this phase (undefined = all fields) */
   selectedFields?: OutputFieldName[];
+  /** When true, ignore schema and parse native model output */
+  useNativeOutput?: boolean;
 }

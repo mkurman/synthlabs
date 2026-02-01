@@ -14,6 +14,7 @@ import { TaskType } from '../../interfaces/enums';
 import { PromptService } from '../promptService';
 import { DEFAULT_HF_PREFETCH_CONFIG } from '../../types';
 import { extractInputContent } from '../../utils/contentExtractor';
+import { parseThinkTagsForDisplay, parseNativeOutput } from '../../utils/thinkTagParser';
 import { DataSource, EngineMode, AppMode, Environment, ProviderType, ExternalProvider, ApiType, ChatRole, ResponderPhase, LogItemStatus, PromptCategory, PromptRole, StreamingPhase, OutputFieldName, SynthLogFieldName, ResponsesSchemaName } from '../../interfaces/enums';
 import { ExtractContentFormat } from '../../interfaces/services/DataTransformConfig';
 import type { CompleteGenerationConfig as GenerationConfig, RuntimePromptConfig, WorkItem } from '../../interfaces';
@@ -619,6 +620,25 @@ export class GenerationService {
             }
         }
 
+        // If reasoning_content exists on the row, use it as original reasoning
+        if (!originalReasoning && row && (row[OutputFieldName.ReasoningContent] || row[OutputFieldName.Reasoning])) {
+            const reasoningValue = row[OutputFieldName.ReasoningContent] || row[OutputFieldName.Reasoning];
+            if (reasoningValue !== undefined && reasoningValue !== null) {
+                originalReasoning = typeof reasoningValue === 'string' ? reasoningValue : JSON.stringify(reasoningValue);
+            }
+        }
+
+        // If answer includes <think> tags, split into reasoning_content + clean answer
+        if (originalAnswer) {
+            const parsed = parseThinkTagsForDisplay(originalAnswer);
+            if (parsed.hasThinkTags) {
+                originalAnswer = parsed.answer;
+                if (!originalReasoning && parsed.reasoning) {
+                    originalReasoning = parsed.reasoning;
+                }
+            }
+        }
+
         return { originalQuestion, originalAnswer, originalReasoning };
     }
 
@@ -710,6 +730,7 @@ export class GenerationService {
                 const effectiveDeepConfig = runtimeConfig?.deepConfig ?? config.deepConfig;
                 const activePrompt = config.appMode === AppMode.Generator ? effectiveSystemPrompt : effectiveConverterPrompt;
                 const genParams = config.generationParams;
+                const useNativeOutput = genParams?.useNativeOutput ?? false;
                 const retryConfig = { maxRetries: config.maxRetries, retryDelay: config.retryDelay, generationParams: genParams };
 
                 // Get prompt schema for field selection
@@ -747,8 +768,6 @@ export class GenerationService {
                 // Progressive streaming callback that parses JSON fields
                 const MAX_STREAM_RAW_CHARS = 5000;
                 const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase) => {
-                    const extracted = extractJsonFields(accumulated);
-
                     const current = config.streamingConversationsRef.current.get(generationId);
                     if (!current) return;
 
@@ -758,26 +777,54 @@ export class GenerationService {
                     const expectAnswer = !selectedFields || selectedFields.includes(OutputFieldName.Answer);
 
                     let newPhase = current.phase;
-                    
-                    if (expectReasoning) {
-                        // Normal flow: expect reasoning first, then answer
-                        if (extracted.hasReasoningStart && !extracted.hasReasoningEnd) {
-                            newPhase = StreamingPhase.ExtractingReasoning;
-                        } else if (extracted.hasReasoningEnd && (!extracted.hasAnswerEnd || !current.useOriginalAnswer)) {
+                    let nextReasoning = current.currentReasoning;
+                    let nextAnswer = current.currentAnswer;
+
+                    if (useNativeOutput) {
+                        const thinkStart = /<think>/i.test(accumulated);
+                        const thinkEnd = /<\/think>/i.test(accumulated);
+
+                        if (expectReasoning) {
+                            if (thinkStart && !thinkEnd) {
+                                newPhase = StreamingPhase.ExtractingReasoning;
+                                const partial = accumulated.match(/<think>([\s\S]*)$/i);
+                                nextReasoning = partial?.[1] || nextReasoning;
+                            } else if (thinkStart && thinkEnd) {
+                                newPhase = StreamingPhase.ExtractingAnswer;
+                                const parsed = parseThinkTagsForDisplay(accumulated);
+                                nextReasoning = parsed.reasoning || nextReasoning;
+                                nextAnswer = parsed.answer || nextAnswer;
+                            }
+                        } else if (expectAnswer) {
                             newPhase = StreamingPhase.ExtractingAnswer;
+                            nextAnswer = accumulated;
                         }
-                    } else if (expectAnswer) {
-                        // No reasoning expected, go straight to answer
-                        if (extracted.hasAnswerStart && !extracted.hasAnswerEnd) {
-                            newPhase = StreamingPhase.ExtractingAnswer;
+                    } else {
+                        const extracted = extractJsonFields(accumulated);
+
+                        if (expectReasoning) {
+                            // Normal flow: expect reasoning first, then answer
+                            if (extracted.hasReasoningStart && !extracted.hasReasoningEnd) {
+                                newPhase = StreamingPhase.ExtractingReasoning;
+                            } else if (extracted.hasReasoningEnd && (!extracted.hasAnswerEnd || !current.useOriginalAnswer)) {
+                                newPhase = StreamingPhase.ExtractingAnswer;
+                            }
+                        } else if (expectAnswer) {
+                            // No reasoning expected, go straight to answer
+                            if (extracted.hasAnswerStart && !extracted.hasAnswerEnd) {
+                                newPhase = StreamingPhase.ExtractingAnswer;
+                            }
                         }
+
+                        nextReasoning = extracted.reasoning || nextReasoning;
+                        nextAnswer = extracted.answer || nextAnswer;
                     }
 
                     const updated: StreamingConversationState = {
                         ...current,
                         phase: newPhase,
-                        currentReasoning: extracted.reasoning || current.currentReasoning,
-                        currentAnswer: extracted.answer || current.currentAnswer,
+                        currentReasoning: nextReasoning,
+                        currentAnswer: nextAnswer,
                         rawAccumulated: accumulated.slice(-MAX_STREAM_RAW_CHARS)
                     };
                     config.streamingConversationsRef.current.set(generationId, updated);
@@ -807,10 +854,18 @@ export class GenerationService {
                                     case 'tool': role = ChatRole.Tool; break;
                                     default: role = ChatRole.User; // fallback
                                 }
+                                if (role === ChatRole.Assistant) {
+                                    const parsed = parseThinkTagsForDisplay(content);
+                                    return {
+                                        role,
+                                        content: parsed.hasThinkTags ? parsed.answer : content,
+                                        reasoning_content: m.reasoning_content || m.reasoning || parsed.reasoning || undefined
+                                    };
+                                }
+
                                 return {
                                     role,
-                                    content: content,
-                                    reasoning: m.reasoning
+                                    content: content
                                 };
                             })
                             .filter((m: ChatMessage) => m.content.trim().length > 0);
@@ -919,32 +974,29 @@ export class GenerationService {
 
                 // Regular generation mode
                 if (config.engineMode === EngineMode.Regular) {
-                    if (config.provider === ProviderType.Gemini) {
-                        let enhancedPrompt = activePrompt;
-                        if (!enhancedPrompt.toLowerCase().includes("json")) {
-                            enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with '${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', and '${OutputFieldName.Answer}' fields.`;
-                        }
+                    let promptInput = "";
+                    if (config.appMode === AppMode.Generator) {
+                        promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
+                    } else {
+                        const contentToConvert = extractInputContent(safeInput);
+                        promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
+                    }
 
-                        if (config.appMode === AppMode.Generator) {
+                    let enhancedPrompt = activePrompt;
+                    if (!useNativeOutput && !enhancedPrompt.toLowerCase().includes("json")) {
+                        enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with '${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', and '${OutputFieldName.Answer}' fields.`;
+                    }
+
+                    if (config.provider === ProviderType.Gemini) {
+                        if (useNativeOutput) {
+                            result = await GeminiService.generateNativeText(promptInput, enhancedPrompt, { ...retryConfig, model: config.externalModel });
+                        } else if (config.appMode === AppMode.Generator) {
                             result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, { ...retryConfig, model: config.externalModel });
                         } else {
                             const contentToConvert = extractInputContent(safeInput);
                             result = await GeminiService.convertReasoningTrace(contentToConvert, enhancedPrompt, { ...retryConfig, model: config.externalModel });
                         }
                     } else {
-                        let promptInput = "";
-                        if (config.appMode === AppMode.Generator) {
-                            promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
-                        } else {
-                            const contentToConvert = extractInputContent(safeInput);
-                            promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
-                        }
-
-                        let enhancedPrompt = activePrompt;
-                        if (!enhancedPrompt.toLowerCase().includes("json")) {
-                            enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with '${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', and '${OutputFieldName.Answer}' fields.`;
-                        }
-
                         const regularStreamState = initStreamingState(1, promptInput, true);
                         config.streamingConversationsRef.current.set(generationId, regularStreamState);
                         config.bumpStreamingConversations();
@@ -957,14 +1009,14 @@ export class GenerationService {
                             customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
                             systemPrompt: enhancedPrompt,
                             userPrompt: promptInput,
-                            promptSchema: promptSchema,
+                            promptSchema: useNativeOutput ? undefined : promptSchema,
                             signal: itemAbortController.signal,
                             maxRetries: config.maxRetries,
                             retryDelay: config.retryDelay,
                             generationParams: genParams,
-                            structuredOutput: genParams?.forceStructuredOutput ?? true,
+                            structuredOutput: useNativeOutput ? false : (genParams?.forceStructuredOutput ?? true),
                             responsesSchema: ResponsesSchemaName.ReasoningTrace,
-                            selectedFields: genParams?.selectedFields,
+                            selectedFields: useNativeOutput ? undefined : genParams?.selectedFields,
                             stream: config.isStreamingEnabled,
                             onStreamChunk: handleStreamChunk,
                             streamPhase: 'regular'
@@ -992,7 +1044,14 @@ export class GenerationService {
 
                     let finalResult: Record<string, any>;
 
-                    if (hasFieldSelection && schema.output.length > 0) {
+                    if (useNativeOutput) {
+                        const rawText = typeof result === 'string' ? result : JSON.stringify(result);
+                        finalResult = parseNativeOutput(rawText);
+                    } else {
+                        finalResult = result;
+                    }
+
+                    if (!useNativeOutput && hasFieldSelection && schema.output.length > 0) {
                         // In both Generator and Converter modes with field selection: merge generated fields with existing data
                         const existingItem: Partial<SynthLogItem> = {
                             reasoning: originalReasoning,
@@ -1016,13 +1075,21 @@ export class GenerationService {
                         if (mergeResult.preservedFields.length > 0) {
                             logger.log(`Preserved fields from existing data: ${mergeResult.preservedFields.join(', ')}`);
                         }
-                    } else {
-                        // Normal mode: use all fields from result
-                        finalResult = result;
                     }
 
-                    const answer = ensureString(finalResult.answer);
-                    const reasoning = ensureString(finalResult.reasoning);
+                    let answer = ensureString(finalResult.answer);
+                    let reasoning = ensureString(finalResult.reasoning);
+                    let reasoningContent = ensureString(finalResult.reasoning_content || reasoning);
+
+                    if (useNativeOutput && hasFieldSelection) {
+                        if (selectedFields && !selectedFields.includes(OutputFieldName.Reasoning)) {
+                            reasoning = originalReasoning || '';
+                            reasoningContent = reasoning;
+                        }
+                        if (selectedFields && !selectedFields.includes(OutputFieldName.Answer)) {
+                            answer = originalAnswer || '';
+                        }
+                    }
                     // If field selection is enabled and answer was not selected, use original answer
                     const finalAnswer = (originalAnswer && hasFieldSelection && !selectedFields?.includes(OutputFieldName.Answer)) 
                         ? originalAnswer 
@@ -1036,6 +1103,7 @@ export class GenerationService {
                         full_seed: safeInput,
                         query: originalQuestion || (config.appMode === AppMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
                         reasoning: reasoning,
+                        reasoning_content: reasoningContent,
                         [SynthLogFieldName.OriginalReasoning]: originalReasoning,
                         answer: finalAnswer,
                         [SynthLogFieldName.OriginalAnswer]: originalAnswer,
@@ -1160,6 +1228,7 @@ export class GenerationService {
                     full_seed: safeErrInput,
                     query: originalQuestion || 'HALTED',
                     reasoning: "",
+                    reasoning_content: "",
                     answer: "Halted",
                     [SynthLogFieldName.OriginalReasoning]: originalReasoning,
                     [SynthLogFieldName.OriginalAnswer]: originalAnswer,
@@ -1182,6 +1251,7 @@ export class GenerationService {
                     full_seed: safeErrInput,
                     query: originalQuestion || 'TIMEOUT',
                     reasoning: "",
+                    reasoning_content: "",
                     answer: "Timed out",
                     [SynthLogFieldName.OriginalReasoning]: originalReasoning,
                     [SynthLogFieldName.OriginalAnswer]: originalAnswer,
@@ -1203,6 +1273,7 @@ export class GenerationService {
                 full_seed: safeErrInput,
                 query: originalQuestion || 'ERROR',
                 reasoning: "",
+                reasoning_content: "",
                 answer: "Failed",
                 [SynthLogFieldName.OriginalReasoning]: originalReasoning,
                 [SynthLogFieldName.OriginalAnswer]: originalAnswer,

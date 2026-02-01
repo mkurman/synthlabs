@@ -3,6 +3,7 @@ import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings, Edit3, RotateCcw
 import { ChatMessage } from '../types';
 import { ChatRole, StreamingField } from '../interfaces/enums';
 import ReasoningHighlighter from './ReasoningHighlighter';
+import { parseThinkTagsForDisplay } from '../utils/thinkTagParser';
 import AutoResizeTextarea from './AutoResizeTextarea';
 
 interface ConversationViewProps {
@@ -114,9 +115,9 @@ const ConversationView: React.FC<ConversationViewProps> = ({
     return (
         <div className="space-y-3">
             {messages.map((msg, idx) => {
-                // Use reasoning_content field (compatible with chat datasets)
-                const displayReasoning = msg.reasoning_content;
-                const displayContent = msg.content;
+                const parsed = parseThinkTagsForDisplay(msg.content || '');
+                const displayReasoning = msg.reasoning_content || parsed.reasoning;
+                const displayContent = parsed.hasThinkTags ? parsed.answer : msg.content;
 
                 const styles = getRoleStyles(msg.role);
                 const IconComponent = styles.icon;

@@ -81,6 +81,8 @@ interface UseAppViewPropsInput {
     onResetFieldSelection: () => void;
     onSelectAllFields: () => void;
     onDeselectAllFields: () => void;
+    useNativeOutput: boolean;
+    onToggleNativeOutput: (value: boolean) => void;
     onLoadRubric: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onSaveRubric: () => void;
     onOptimizePrompt: () => void;
@@ -239,6 +241,8 @@ export function useAppViewProps(input: UseAppViewPropsInput) {
         onResetFieldSelection: input.onResetFieldSelection,
         onSelectAllFields: input.onSelectAllFields,
         onDeselectAllFields: input.onDeselectAllFields,
+        useNativeOutput: input.useNativeOutput,
+        onToggleNativeOutput: input.onToggleNativeOutput,
         onLoadRubric: input.onLoadRubric,
         onSaveRubric: input.onSaveRubric,
         onOptimizePrompt: input.onOptimizePrompt,
