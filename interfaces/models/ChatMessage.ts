@@ -1,6 +1,7 @@
 import { ChatRole } from '../enums';
 
 export interface ChatMessage {
+  id?: string;
   role: ChatRole;
   content: string;
   reasoning?: string;

@@ -16,6 +16,7 @@ import * as ExternalApiService from '../services/externalApiService';
 import * as GeminiService from '../services/geminiService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import ReasoningHighlighter from './ReasoningHighlighter';
+import { parseThinkTagsForDisplay } from '../utils/thinkTagParser';
 import ConversationView from './ConversationView';
 import ChatPanel from './ChatPanel';
 import { ToolExecutor } from '../services/toolService';
@@ -1696,7 +1697,12 @@ Based on the criteria above, provide a 1-5 score.`;
                         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                             <div className={`flex-1 overflow-y-auto pr-2 grid gap-4 ${viewMode === 'grid' ? 'grid-cols-2 lg:grid-cols-3 content-start' : 'grid-cols-1 content-start'}`}>
 
-                                {currentItems.map(item => (
+                                {currentItems.map(item => {
+                                    const parsedAnswer = parseThinkTagsForDisplay(item.answer || '');
+                                    const displayReasoning = item.reasoning || parsedAnswer.reasoning || '';
+                                    const displayAnswer = parsedAnswer.hasThinkTags ? parsedAnswer.answer : item.answer;
+
+                                    return (
                                     <div key={item.id} className={`bg-slate-900 border relative group transition-all rounded-xl p-4 flex flex-col gap-3 ${item.hasUnsavedChanges
                                         ? 'border-orange-500/80 shadow-[0_0_15px_-3px_rgba(249,115,22,0.3)]'
                                         : item.isDuplicate
@@ -1952,7 +1958,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                         </div>
                                                     ) : (
                                                         <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
-                                                            <ReasoningHighlighter text={item.reasoning} />
+                                                            <ReasoningHighlighter text={displayReasoning} />
                                                         </div>
                                                     ))}
                                                 </div>
@@ -1995,7 +2001,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                         </div>
                                                     ) : (
                                                         <div className="max-h-32 overflow-y-auto">
-                                                            <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{item.answer}</p>
+                                                            <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{displayAnswer}</p>
                                                         </div>
                                                     )}
                                                 </div>
@@ -2007,7 +2013,8 @@ Based on the criteria above, provide a 1-5 score.`;
                                             {item.deepMetadata && <span className="bg-teal-900/20 text-teal-400 px-1.5 py-0.5 rounded">Deep</span>}
                                         </div>
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
 
 

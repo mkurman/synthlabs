@@ -130,7 +130,12 @@ function getText(node: unknown): string {
     if (Array.isArray(node)) return node.map(getText).join('\n');
     if (typeof node === 'object' && node !== null) {
         const obj = node as Record<string, unknown>;
-        return String(obj.content || obj.value || obj.text || JSON.stringify(node));
+        const content = obj.content || obj.value || obj.text;
+        const reasoning = obj.reasoning_content || obj.reasoning;
+        if (content && reasoning) {
+            return `<think>${String(reasoning)}</think>${String(content)}`;
+        }
+        return String(content || JSON.stringify(node));
     }
     return String(node);
 }
@@ -230,6 +235,17 @@ export function getRowContent(row: Record<string, unknown>, config: RowContentCo
                 const inputQuery = contents.join(COLUMN_SEPARATOR);
                 const outputQuery = outputContent ? `<output>${outputContent}</output>` : '';
                 return `<input_query>${inputQuery}</input_query><model_response><think>${reasoning}</think>${outputQuery}</model_response>`;
+            }
+        }
+
+        // Fallback: if reasoning_content exists on the row, include it
+        if (!hfConfig.reasoningColumns || hfConfig.reasoningColumns.length === 0) {
+            const rowReasoning = row[OutputFieldName.ReasoningContent] || row[OutputFieldName.Reasoning];
+            if (rowReasoning !== undefined && rowReasoning !== null) {
+                const reasoningText = typeof rowReasoning === 'string' ? rowReasoning : JSON.stringify(rowReasoning);
+                const inputQuery = contents.join(COLUMN_SEPARATOR);
+                const outputQuery = outputContent ? `<output>${outputContent}</output>` : '';
+                return `<input_query>${inputQuery}</input_query><model_response><think>${reasoningText}</think>${outputQuery}</model_response>`;
             }
         }
 

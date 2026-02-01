@@ -10,6 +10,9 @@ interface FieldSelectionPanelProps {
   onResetToDefault: () => void;
   onSelectAll: () => void;
   onDeselectAll: () => void;
+  showNativeToggle?: boolean;
+  useNativeOutput?: boolean;
+  onToggleNativeOutput?: (value: boolean) => void;
 }
 
 export default function FieldSelectionPanel({
@@ -18,7 +21,10 @@ export default function FieldSelectionPanel({
   onFieldToggle,
   onResetToDefault,
   onSelectAll,
-  onDeselectAll
+  onDeselectAll,
+  showNativeToggle = false,
+  useNativeOutput = false,
+  onToggleNativeOutput
 }: FieldSelectionPanelProps) {
   const [isExpanded, setIsExpanded] = React.useState(true);
   const selectedSet = new Set(selectedFields);
@@ -57,6 +63,21 @@ export default function FieldSelectionPanel({
           <p className="text-[9px] text-slate-500 leading-relaxed">
             Uncheck fields you don't want to generate. Unselected fields will use existing values from the data source.
           </p>
+
+          {showNativeToggle && (
+            <label className="flex items-center justify-between bg-slate-900/40 border border-slate-800/60 rounded px-2 py-1.5">
+              <div className="text-[9px] text-slate-300">
+                Get native
+                <span className="text-[9px] text-slate-500 ml-1">(ignore schema, parse &lt;think&gt; or reasoning_content)</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={useNativeOutput}
+                onChange={(e) => onToggleNativeOutput?.(e.target.checked)}
+                className="accent-indigo-500"
+              />
+            </label>
+          )}
 
           <div className="flex items-center gap-1">
             <button

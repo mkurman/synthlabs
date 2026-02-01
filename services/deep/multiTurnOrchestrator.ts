@@ -19,6 +19,7 @@ export interface MultiTurnOrchestrationParams {
     apiType?: ApiType;
     promptSchema?: import('../../types').PromptSchema;
     generationParams?: GenerationParams;
+    useNativeOutput?: boolean;
   };
   signal?: AbortSignal;
   maxRetries: number;
@@ -64,8 +65,12 @@ export const orchestrateMultiTurnConversation = async (
 
   const responderSchema = responderConfig.promptSchema || PHASE_TO_SCHEMA[DeepPhase.Responder]?.();
   const schemaOutputFields = responderSchema?.output?.map((f: any) => f.name) || [];
-  const schemaDefinesAnswer = schemaOutputFields.includes(OutputFieldName.Answer);
-  const schemaDefinesReasoning = schemaOutputFields.includes(OutputFieldName.Reasoning);
+  const schemaDefinesAnswer = responderConfig.useNativeOutput
+    ? false
+    : schemaOutputFields.includes(OutputFieldName.Answer);
+  const schemaDefinesReasoning = responderConfig.useNativeOutput
+    ? false
+    : schemaOutputFields.includes(OutputFieldName.Reasoning);
 
   try {
     messages.push({ role: ChatRole.User, content: displayQuery });
@@ -176,7 +181,7 @@ export const orchestrateMultiTurnConversation = async (
       messages.push({
         role: ChatRole.Assistant,
         content: formatAssistantContent(responseResult.answer || responseResult.reasoning || "Response generated.", responseResult.reasoning),
-        reasoning: responseResult.reasoning
+        reasoning_content: responseResult.reasoning
       });
     }
 
@@ -189,7 +194,8 @@ export const orchestrateMultiTurnConversation = async (
         seed_preview: displayQuery.substring(0, 150) + (displayQuery.length > 150 ? "..." : ""),
         full_seed: initialInput,
         query: initialQuery || displayQuery,
-        reasoning: messages.filter(m => m.role === ChatRole.Assistant).map(m => m.reasoning).filter(Boolean).join('\n---\n'),
+        reasoning: messages.filter(m => m.role === ChatRole.Assistant).map(m => m.reasoning_content).filter(Boolean).join('\n---\n'),
+        reasoning_content: messages.filter(m => m.role === ChatRole.Assistant).map(m => m.reasoning_content).filter(Boolean).join('\n---\n'),
         answer: "Halted",
         timestamp: new Date().toISOString(),
         duration: Date.now() - startTime,
@@ -214,7 +220,8 @@ export const orchestrateMultiTurnConversation = async (
       seed_preview: displayQuery.substring(0, 150) + (displayQuery.length > 150 ? "..." : ""),
       full_seed: initialInput,
       query: initialQuery || displayQuery,
-      reasoning: messagesForLog.filter(m => m.role === ChatRole.Assistant).map(m => m.reasoning).filter(Boolean).join('\n---\n'),
+      reasoning: messagesForLog.filter(m => m.role === ChatRole.Assistant).map(m => m.reasoning_content).filter(Boolean).join('\n---\n'),
+      reasoning_content: messagesForLog.filter(m => m.role === ChatRole.Assistant).map(m => m.reasoning_content).filter(Boolean).join('\n---\n'),
       answer: messagesForLog[messagesForLog.length - 1]?.content || "",
       timestamp: new Date().toISOString(),
       duration: Date.now() - startTime,
@@ -237,6 +244,7 @@ export const orchestrateMultiTurnConversation = async (
       full_seed: initialInput,
       query: "ERROR",
       reasoning: "",
+      reasoning_content: "",
       answer: "Multi-turn conversation failed",
       timestamp: new Date().toISOString(),
       duration: Date.now() - startTime,

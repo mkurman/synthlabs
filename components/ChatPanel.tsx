@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Bot, Sparkles,
     ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, Brain, RotateCcw
@@ -164,12 +164,12 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    const syncServiceHistory = (msgs: ChatMessage[]) => {
+    const syncServiceHistory = useCallback((msgs: ChatMessage[]) => {
         if (chatServiceRef.current) {
             chatServiceRef.current.clearHistory();
             msgs.forEach(m => (chatServiceRef.current as any).history.push(m));
         }
-    };
+    }, []);
 
     const {
         handleNewChat,
@@ -208,19 +208,17 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             executor = toolExecutorRef.current;
         }
 
-        // Initialize ChatService
-        chatServiceRef.current = new ChatService(executor);
-
-        // Sync initial messages if present
-        if (messages.length > 0) {
-            syncServiceHistory(messages);
+        // Initialize ChatService only if not already initialized
+        if (!chatServiceRef.current) {
+            chatServiceRef.current = new ChatService(executor);
         }
-
-    }, [toolExecutor, messages.length === 0]); // Re-init if executor changes or on first load (messages check rough proxy for mount/session change)
+    }, [toolExecutor]);
 
     useChatPersistence({ currentSessionId: currentSessionId || '', messages });
     const { handleScrollToBottom } = useChatScroll({
         messages,
+        isStreaming,
+        lastMessageLength: messages.length > 0 ? (messages[messages.length - 1]?.content?.length || 0) : 0,
         autoScroll,
         messagesEndRef,
         messagesContainerRef,
@@ -229,9 +227,15 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     });
 
     useEffect(() => {
-        if (messages.length > 0 && !autoScroll && !isStreaming) {
+        // Never show scroll button during streaming
+        if (isStreaming) {
+            setShowScrollButton(false);
+            return;
+        }
+        // Only show after streaming completes if not near bottom
+        if (messages.length > 0 && !autoScroll) {
             setShowScrollButton(true);
-        } else if (autoScroll || isStreaming) {
+        } else if (autoScroll) {
             setShowScrollButton(false);
         }
     }, [messages.length, autoScroll, isStreaming]);
@@ -613,7 +617,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar" ref={messagesContainerRef}>
                 {messages.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-0 animate-in fade-in zoom-in duration-500">
+                    <div className="h-full flex flex-col items-center justify-center text-center p-8 animate-in fade-in zoom-in duration-500">
                         <h2 className="text-3xl font-serif text-slate-200 mb-2">Hi, how are you?</h2>
                         <p className="text-slate-400">I can help you verify and clean your data.</p>
                     </div>

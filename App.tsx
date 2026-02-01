@@ -266,6 +266,13 @@ export default function App() {
         resetOnPromptChange: true
     });
 
+    const handleToggleNativeOutput = (value: boolean) => {
+        setGenerationParams(prev => ({
+            ...prev,
+            useNativeOutput: value
+        }));
+    };
+
     // Update generationParams when field selection changes
     const handleGenerationParamsChange = (params: GenerationParams) => {
         setGenerationParams(prev => ({
@@ -756,6 +763,8 @@ export default function App() {
         onResetFieldSelection: fieldSelection.resetToDefault,
         onSelectAllFields: fieldSelection.selectAll,
         onDeselectAllFields: fieldSelection.deselectAll,
+        useNativeOutput: generationParams.useNativeOutput ?? false,
+        onToggleNativeOutput: handleToggleNativeOutput,
         onLoadRubric: handleLoadRubric,
         onSaveRubric: handleSaveRubric,
         onOptimizePrompt: handleOptimizePrompt,

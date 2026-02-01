@@ -163,7 +163,9 @@ CRITICAL: " + ${JSON_OUTPUT_FALLBACK} + " Format: { "answer": "Your final refine
 
     const writerSchema = config.phases.writer.promptSchema || PHASE_TO_SCHEMA[DeepPhase.Writer]?.();
     const schemaOutputFields = writerSchema?.output?.map(f => f.name) || [];
-    const schemaDefinesAnswer = schemaOutputFields.includes(OutputFieldName.Answer);
+    const schemaDefinesAnswer = config.phases.writer.useNativeOutput
+      ? false
+      : schemaOutputFields.includes(OutputFieldName.Answer);
     
     let finalAnswer: string;
     if (schemaDefinesAnswer) {
@@ -181,6 +183,7 @@ CRITICAL: " + ${JSON_OUTPUT_FALLBACK} + " Format: { "answer": "Your final refine
       full_seed: cleanQuery,
       query: cleanQuery.trim(),
       reasoning: writerResult.reasoning || "Writer failed to generate reasoning.",
+      reasoning_content: writerResult.reasoning || "Writer failed to generate reasoning.",
       answer: finalAnswer,
       timestamp: new Date().toISOString(),
       modelUsed: `DEEP: ${config.phases.writer.model}`,
@@ -207,6 +210,7 @@ CRITICAL: " + ${JSON_OUTPUT_FALLBACK} + " Format: { "answer": "Your final refine
       full_seed: input,
       query: "ERROR",
       reasoning: "",
+      reasoning_content: "",
       answer: "Orchestration Failed",
       timestamp: new Date().toISOString(),
       modelUsed: "DEEP ENGINE",

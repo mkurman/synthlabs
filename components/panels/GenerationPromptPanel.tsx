@@ -29,6 +29,8 @@ interface GenerationPromptPanelProps {
     onResetFieldSelection?: () => void;
     onSelectAllFields?: () => void;
     onDeselectAllFields?: () => void;
+    useNativeOutput?: boolean;
+    onToggleNativeOutput?: (value: boolean) => void;
 }
 
 export default function GenerationPromptPanel({
@@ -52,7 +54,9 @@ export default function GenerationPromptPanel({
     onFieldToggle,
     onResetFieldSelection,
     onSelectAllFields,
-    onDeselectAllFields
+    onDeselectAllFields,
+    useNativeOutput = false,
+    onToggleNativeOutput
 }: GenerationPromptPanelProps) {
     return (
         <>
@@ -98,6 +102,9 @@ export default function GenerationPromptPanel({
                         onResetToDefault={onResetFieldSelection || (() => {})}
                         onSelectAll={onSelectAllFields || (() => {})}
                         onDeselectAll={onDeselectAllFields || (() => {})}
+                        showNativeToggle={outputFields.some(field => field.name === OutputFieldName.Reasoning)}
+                        useNativeOutput={useNativeOutput}
+                        onToggleNativeOutput={onToggleNativeOutput}
                     />
                 )}
             </div>

@@ -6,6 +6,7 @@ import { SettingsService } from '../../settingsService';
 import { PromptService } from '../../promptService';
 import { executePhase } from '../phaseExecutor';
 import { logger } from '../../../utils/logger';
+import { parseNativeOutput } from '../../../utils/thinkTagParser';
 
 export interface RegularModeConfig {
   provider: ProviderType;
@@ -48,13 +49,21 @@ export async function executeRegularRewrite(
     externalProvider: regularModeConfig?.externalProvider
   });
   
+  const useNativeOutput = generationParams?.useNativeOutput ?? false;
+
   if (regularModeConfig?.provider === ProviderType.Gemini) {
     const geminiPrompt = converterPrompt || PromptService.getSystemPrompt(PromptCategory.Converter, PromptRole.Writer, promptSet, structuredOutput);
-    const result = await GeminiService.generateGenericJSON(
-      rewriteInput,
-      geminiPrompt,
-      { maxRetries, retryDelay, generationParams: regularModeConfig.generationParams || generationParams }
-    );
+    const result = useNativeOutput
+      ? parseNativeOutput(await GeminiService.generateNativeText(
+          rewriteInput,
+          geminiPrompt,
+          { maxRetries, retryDelay, generationParams: regularModeConfig.generationParams || generationParams }
+        ))
+      : await GeminiService.generateGenericJSON(
+          rewriteInput,
+          geminiPrompt,
+          { maxRetries, retryDelay, generationParams: regularModeConfig.generationParams || generationParams }
+        );
     
     // Handle field selection: only use generated fields that are selected
     const shouldUseReasoning = !selectedFields || selectedFields.includes(OutputFieldName.Reasoning);
@@ -82,25 +91,26 @@ export async function executeRegularRewrite(
       customBaseUrl: regularModeConfig.customBaseUrl || SettingsService.getCustomBaseUrl(),
       systemPrompt: systemPrompt,
       userPrompt: `[INPUT LOGIC START]\n${rewriteInput}\n[INPUT LOGIC END]`,
-      promptSchema: promptSchema,
+      promptSchema: useNativeOutput ? undefined : promptSchema,
       signal,
       maxRetries,
       retryDelay,
       generationParams,
-      structuredOutput,
+      structuredOutput: useNativeOutput ? false : structuredOutput,
       stream: stream,
       onStreamChunk: onStreamChunk,
       streamPhase: 'regular',
-      selectedFields
+      selectedFields: useNativeOutput ? undefined : selectedFields
     });
+    const finalResult = useNativeOutput && typeof result === 'string' ? parseNativeOutput(result) : result;
     
     // Handle field selection: only use generated fields that are selected
     const shouldUseReasoning = !selectedFields || selectedFields.includes(OutputFieldName.Reasoning);
     const shouldUseAnswer = !selectedFields || selectedFields.includes(OutputFieldName.Answer);
     
-    return { 
-      newReasoning: shouldUseReasoning ? (result.reasoning || originalThinking) : originalThinking,
-      newAnswer: shouldUseAnswer ? (result.answer || outsideThinkContent) : outsideThinkContent
+    return {
+      newReasoning: shouldUseReasoning ? (finalResult.reasoning || originalThinking) : originalThinking,
+      newAnswer: shouldUseAnswer ? (finalResult.answer || outsideThinkContent) : outsideThinkContent
     };
   } else {
     // Fallback to writer phase

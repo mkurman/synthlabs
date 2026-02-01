@@ -2,6 +2,7 @@ import { DeepPhaseConfig, GenerationParams, StreamChunkCallback, StreamPhase, Pr
 import { PromptCategory, PromptRole, DeepPhase, ResponsesSchemaName } from '../../interfaces/enums';
 import { JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../../constants';
 import * as GeminiService from '../geminiService';
+import { parseNativeOutput } from '../../utils/thinkTagParser';
 import * as ExternalApiService from '../externalApiService';
 import { SettingsService } from '../settingsService';
 import { logger } from '../../utils/logger';
@@ -36,7 +37,7 @@ export const executePhase = async (
   structuredOutput: boolean = true,
   streamOptions?: { stream: boolean; onStreamChunk?: StreamChunkCallback; streamPhase?: StreamPhase }
 ): Promise<PhaseExecutionResult> => {
-  const { id, provider, externalProvider, apiType, apiKey, model, customBaseUrl, promptSchema: configSchema, selectedFields } = phaseConfig;
+  const { id, provider, externalProvider, apiType, apiKey, model, customBaseUrl, promptSchema: configSchema, selectedFields, useNativeOutput } = phaseConfig;
   const modelName = provider === ProviderType.Gemini ? 'Gemini 3 Flash' : `${externalProvider}/${model}`;
   const startTime = Date.now();
   const timestamp = new Date().toISOString();
@@ -68,18 +69,27 @@ export const executePhase = async (
   let result;
   try {
     if (provider === ProviderType.Gemini) {
+      const useNative = useNativeOutput === true;
       // For Gemini, build the prompt with effective schema (filtered by selected fields)
-      const geminiSystemPrompt = effectiveSchema 
-        ? (structuredOutput 
-            ? effectiveSchema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
-                type: 'object',
-                properties: Object.fromEntries(effectiveSchema.output.map(f => [f.name, { type: 'string', description: f.description }])),
-                required: effectiveSchema.output.filter(f => !f.optional).map(f => f.name),
-                additionalProperties: true
-              })
-            : effectiveSchema.prompt + '\n\n' + JSON_OUTPUT_FALLBACK)
-        : '\n\n' + JSON_OUTPUT_FALLBACK;
-      result = await GeminiService.generateGenericJSON(userContent, geminiSystemPrompt, { maxRetries, retryDelay, generationParams, structuredOutput });
+      const geminiSystemPrompt = effectiveSchema
+        ? (useNative
+            ? effectiveSchema.prompt
+            : (structuredOutput
+                ? effectiveSchema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
+                    type: 'object',
+                    properties: Object.fromEntries(effectiveSchema.output.map(f => [f.name, { type: 'string', description: f.description }])),
+                    required: effectiveSchema.output.filter(f => !f.optional).map(f => f.name),
+                    additionalProperties: true
+                  })
+                : effectiveSchema.prompt + '\n\n' + JSON_OUTPUT_FALLBACK))
+        : (useNative ? '' : '\n\n' + JSON_OUTPUT_FALLBACK);
+
+      if (useNative) {
+        const nativeText = await GeminiService.generateNativeText(userContent, geminiSystemPrompt, { maxRetries, retryDelay, generationParams, structuredOutput: false });
+        result = parseNativeOutput(nativeText);
+      } else {
+        result = await GeminiService.generateGenericJSON(userContent, geminiSystemPrompt, { maxRetries, retryDelay, generationParams, structuredOutput });
+      }
     } else {
       // Resolve API key from phaseConfig first, then fall back to SettingsService
       const resolvedApiKey = apiKey || (externalProvider ? SettingsService.getApiKey(externalProvider) : '');
@@ -94,20 +104,24 @@ export const executePhase = async (
         model: model,
         apiType: apiType || ApiType.Chat,
         customBaseUrl: resolvedBaseUrl,
-        promptSchema: effectiveSchema,
+        promptSchema: useNativeOutput ? undefined : effectiveSchema,
         userPrompt: userContent,
         signal: signal,
         maxRetries,
         retryDelay,
         generationParams,
-        structuredOutput,
+        structuredOutput: useNativeOutput ? false : structuredOutput,
         responsesSchema,
-        selectedFields,
+        selectedFields: useNativeOutput ? undefined : selectedFields,
         // Streaming: only enable if streamOptions provided with callback
         stream: streamOptions?.stream,
         onStreamChunk: streamOptions?.onStreamChunk,
         streamPhase: streamOptions?.streamPhase
       });
+
+      if (useNativeOutput && typeof result === 'string') {
+        result = parseNativeOutput(result);
+      }
     }
 
     const duration = Date.now() - startTime;

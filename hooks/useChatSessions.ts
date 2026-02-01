@@ -1,6 +1,7 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { ChatStorageService } from '../services/chatStorageService';
+import { createChatMessageId } from '../utils/chatMessageId';
 import type { ChatMessage } from '../types';
 import { confirmService } from '../services/confirmService';
 import type { ChatService } from '../services/chatService';
@@ -28,6 +29,13 @@ export function useChatSessions({
     setHistorySessions,
     currentSessionId
 }: UseChatSessionsOptions) {
+    const normalizeMessages = useCallback((msgs: ChatMessage[]) => {
+        const normalized = msgs.map(msg => ({
+            ...msg,
+            id: msg.id || createChatMessageId()
+        }));
+        return normalized.sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+    }, []);
     const handleNewChat = useCallback(async () => {
         const session = await ChatStorageService.createSession();
         setCurrentSessionId(session.id);
@@ -55,10 +63,11 @@ export function useChatSessions({
             const session = await ChatStorageService.getSession(sessionId);
             if (session) {
                 setCurrentSessionId(session.id);
-                setMessages(session.messages);
+                const normalized = normalizeMessages(session.messages);
+                setMessages(normalized);
 
                 if (chatServiceRef.current) {
-                    syncServiceHistory(session.messages);
+                    syncServiceHistory(normalized);
                 }
 
                 await ChatStorageService.setCurrentSessionId(session.id);
@@ -87,22 +96,46 @@ export function useChatSessions({
         }
     }, [currentSessionId, handleNewChat, loadHistory]);
 
+    // Use a ref to track if initialization has been done to prevent repeated calls
+    const isInitializedRef = useRef(false);
+
+    // Store callbacks in refs to avoid effect re-runs
+    const handleNewChatRef = useRef(handleNewChat);
+    const setCurrentSessionIdRef = useRef(setCurrentSessionId);
+    const setMessagesRef = useRef(setMessages);
+    const syncServiceHistoryRef = useRef(syncServiceHistory);
+    const normalizeMessagesRef = useRef(normalizeMessages);
+
+    // Keep refs up to date
     useEffect(() => {
+        handleNewChatRef.current = handleNewChat;
+        setCurrentSessionIdRef.current = setCurrentSessionId;
+        setMessagesRef.current = setMessages;
+        syncServiceHistoryRef.current = syncServiceHistory;
+        normalizeMessagesRef.current = normalizeMessages;
+    });
+
+    useEffect(() => {
+        // Prevent double initialization (React StrictMode or re-renders)
+        if (isInitializedRef.current) return;
+        isInitializedRef.current = true;
+
         const initSession = async () => {
             const lastId = await ChatStorageService.getCurrentSessionId();
             if (lastId) {
                 const session = await ChatStorageService.getSession(lastId);
                 if (session) {
-                    setCurrentSessionId(session.id);
-                    setMessages(session.messages);
-                    syncServiceHistory(session.messages);
+                    setCurrentSessionIdRef.current(session.id);
+                    const normalized = normalizeMessagesRef.current(session.messages);
+                    setMessagesRef.current(normalized);
+                    syncServiceHistoryRef.current(normalized);
                     return;
                 }
             }
-            await handleNewChat();
+            await handleNewChatRef.current();
         };
         initSession();
-    }, [handleNewChat, setCurrentSessionId, setMessages, syncServiceHistory]);
+    }, []); // Empty deps - run only once on mount
 
     return {
         handleNewChat,

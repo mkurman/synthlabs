@@ -307,6 +307,39 @@ export const generateReasoningTrace = async (
   }
 };
 
+export const generateNativeText = async (
+  input: string,
+  systemPrompt: string,
+  retryOptions?: RetryOptions
+): Promise<string> => {
+  if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
+
+  const genConfig: any = {
+    systemInstruction: systemPrompt
+  };
+
+  if (retryOptions?.generationParams) {
+    if (retryOptions.generationParams.temperature !== undefined) genConfig.temperature = retryOptions.generationParams.temperature;
+    if (retryOptions.generationParams.topP !== undefined) genConfig.topP = retryOptions.generationParams.topP;
+    if (retryOptions.generationParams.topK !== undefined) genConfig.topK = retryOptions.generationParams.topK;
+    if (retryOptions.generationParams.presencePenalty !== undefined) genConfig.presencePenalty = retryOptions.generationParams.presencePenalty;
+    if (retryOptions.generationParams.frequencyPenalty !== undefined) genConfig.frequencyPenalty = retryOptions.generationParams.frequencyPenalty;
+  }
+
+  try {
+    const response = await callGeminiWithRetry(() => ai.models.generateContent({
+      model: retryOptions?.model || 'gemini-2.0-flash-exp',
+      contents: input,
+      config: genConfig
+    }), retryOptions);
+
+    return response.text?.trim() || '';
+  } catch (error) {
+    console.error("Native Text Gen Error", error);
+    throw error;
+  }
+};
+
 export const generateGenericJSON = async (
   input: string,
   systemPrompt: string,

@@ -77,7 +77,11 @@ export const orchestrateConversationRewrite = async (
       }
 
       // Parse think tags
-      const { originalThinking, outsideThinkContent, isImputation } = parseThinkTags(message.content, i);
+      const { originalThinking, outsideThinkContent, isImputation } = parseThinkTags(
+        message.content,
+        i,
+        message.reasoning_content
+      );
 
       // Build rewrite input
       const { rewriteInput } = buildRewriteInput(
