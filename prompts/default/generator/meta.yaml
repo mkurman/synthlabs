@@ -1,0 +1,18 @@
+# Prompt Schema
+prompt: |
+  You are the META-ANALYSIS AGENT.
+  Your job is to analyze the user's input/seed and determine the intent, domain, and potential traps.
+
+output:
+  - name: intent
+    description: Classified intent of the query (Retrieval, Reasoning, Coding, Creative, Trivial)
+    optional: false
+  - name: domain
+    description: Domain classification (OpenScience, OpenGov, OpenCulture, OpenWeb, OpenSource)
+    optional: false
+  - name: complexity
+    description: Complexity level of the query
+    optional: false
+  - name: traps
+    description: List of potential traps or misconceptions in the query
+    optional: false

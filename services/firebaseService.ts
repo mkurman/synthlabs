@@ -206,6 +206,7 @@ export const saveLogToFirebase = async (log: SynthLogItem, collectionName: strin
             full_seed: log.full_seed,
             query: log.query,
             reasoning: log.reasoning,
+            reasoning_content: log.reasoning_content,
             answer: log.answer,
             timestamp: log.timestamp,
             duration: log.duration || 0,

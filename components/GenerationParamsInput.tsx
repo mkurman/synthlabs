@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Settings, ChevronDown, ChevronRight, RefreshCcw, HelpCircle } from 'lucide-react';
 import { GenerationParams } from '../types';
 
@@ -18,6 +18,13 @@ export default function GenerationParamsInput({ params, onChange, label = "Gener
     const currentParams = params || {};
 
     const updateParam = (key: keyof GenerationParams, value: number | undefined) => {
+        onChange({
+            ...currentParams,
+            [key]: value
+        });
+    };
+
+    const updateBoolParam = (key: keyof GenerationParams, value: boolean) => {
         onChange({
             ...currentParams,
             [key]: value
@@ -147,6 +154,25 @@ export default function GenerationParamsInput({ params, onChange, label = "Gener
                                 className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
                             />
                         </div>
+                    </div>
+
+                    {/* Structured Output Toggle */}
+                    <div className="flex items-center justify-between pt-3 border-t border-slate-800/50">
+                        <div className="flex items-center gap-2">
+                            <label className="text-[10px] text-slate-400 font-bold uppercase">Force Structured Output</label>
+                            <span className="text-[9px] text-slate-500" title="When enabled, requests JSON response format from the model">
+                                (JSON mode)
+                            </span>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={currentParams.forceStructuredOutput ?? true}
+                                onChange={(e) => updateBoolParam('forceStructuredOutput', e.target.checked)}
+                                className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
                     </div>
 
                     <div className="flex justify-between items-center pt-2 border-t border-slate-800/50 mt-2">

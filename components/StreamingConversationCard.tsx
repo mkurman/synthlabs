@@ -2,6 +2,7 @@ import React from 'react';
 import { User, Bot, Loader, ChevronDown, ChevronUp, Sparkles, X, Square } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import { ChatMessage, StreamingConversationState } from '../types';
+import { ChatRole, StreamingPhase } from '../interfaces/enums';
 
 interface StreamingConversationCardProps {
     /** Streaming conversation state from App.tsx */
@@ -13,16 +14,16 @@ interface StreamingConversationCardProps {
 }
 
 // Role styling
-const getRoleStyles = (role: string) => {
+const getRoleStyles = (role: ChatRole) => {
     switch (role) {
-        case 'user':
+        case ChatRole.User:
             return {
                 avatar: 'bg-indigo-500/20 text-indigo-400',
                 bubble: 'bg-indigo-600/30 text-indigo-100 border border-indigo-500/30',
                 icon: User,
                 label: 'User'
             };
-        case 'assistant':
+        case ChatRole.Assistant:
         default:
             return {
                 avatar: 'bg-emerald-500/20 text-emerald-400',
@@ -71,17 +72,17 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
         const IconComponent = styles.icon;
 
         return (
-            <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+            <div key={idx} className={`flex gap-3 ${msg.role === ChatRole.User ? 'flex-row-reverse' : ''}`}>
                 {/* Avatar */}
                 <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${styles.avatar}`}>
                     <IconComponent className="w-3.5 h-3.5" />
                 </div>
 
                 {/* Message */}
-                <div className={`flex-1 max-w-[85%] ${msg.role === 'user' ? 'text-right' : ''}`}>
+                <div className={`flex-1 max-w-[85%] ${msg.role === ChatRole.User ? 'text-right' : ''}`}>
                     <div className={`inline-block w-full text-left rounded-lg px-3 py-2 text-xs leading-relaxed ${styles.bubble} ${isStreaming ? 'border-emerald-500/30' : ''}`}>
                         {/* Reasoning toggle for assistant */}
-                        {msg.role === 'assistant' && msg.reasoning && (
+                        {msg.role === ChatRole.Assistant && msg.reasoning_content && (
                             <div className="mb-2">
                                 <button
                                     onClick={() => toggleReasoning(idx)}
@@ -93,14 +94,14 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                 </button>
                                 {expandedReasoning.has(idx) && (
                                     <div className="mt-2 bg-slate-900/50 border border-slate-800 rounded p-2">
-                                        <ReasoningHighlighter text={msg.reasoning} />
+                                        <ReasoningHighlighter text={msg.reasoning_content} />
                                     </div>
                                 )}
                             </div>
                         )}
                         <p className="whitespace-pre-wrap">{msg.content}</p>
                     </div>
-                    <div className={`text-[8px] text-slate-600 uppercase font-bold mt-0.5 ${msg.role === 'user' ? 'text-right mr-1' : 'ml-1'}`}>
+                    <div className={`text-[8px] text-slate-600 uppercase font-bold mt-0.5 ${msg.role === ChatRole.User ? 'text-right mr-1' : 'ml-1'}`}>
                         {styles.label}
                     </div>
                 </div>
@@ -147,7 +148,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                     <div className="p-4 border-r border-slate-800 bg-slate-950/20">
                         <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
                             <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                            {phase === 'extracting_reasoning' ? (
+                            {phase === StreamingPhase.ExtractingReasoning ? (
                                 <>
                                     <Sparkles className="w-3 h-3 text-emerald-400 animate-pulse" />
                                     Extracting Reasoning...
@@ -160,11 +161,11 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                             {currentReasoning ? (
                                 <>
                                     <ReasoningHighlighter text={currentReasoning} />
-                                    {phase === 'extracting_reasoning' && (
+                                    {phase === StreamingPhase.ExtractingReasoning && (
                                         <span className="inline-block w-1.5 h-4 bg-emerald-400/60 ml-0.5 animate-pulse" />
                                     )}
                                 </>
-                            ) : phase === 'waiting_for_response' ? (
+                            ) : phase === StreamingPhase.WaitingForResponse ? (
                                 <div className="flex items-center gap-2 text-slate-500">
                                     <Loader className="w-3 h-3 animate-spin" />
                                     <span>Waiting for response...</span>
@@ -179,7 +180,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                     <div className="p-4 bg-slate-950/20">
                         <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                            {phase === 'extracting_answer' ? (
+                            {phase === StreamingPhase.ExtractingAnswer ? (
                                 <>
                                     <Sparkles className="w-3 h-3 text-emerald-400 animate-pulse" />
                                     Extracting Answer...
@@ -192,11 +193,11 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                             {currentAnswer ? (
                                 <>
                                     {currentAnswer}
-                                    {phase === 'extracting_answer' && (
+                                    {phase === StreamingPhase.ExtractingAnswer && (
                                         <span className="inline-block w-1.5 h-4 bg-emerald-400/60 ml-0.5 animate-pulse" />
                                     )}
                                 </>
-                            ) : phase === 'extracting_answer' ? (
+                            ) : phase === StreamingPhase.ExtractingAnswer ? (
                                 <span className="text-slate-600 italic">Generating answer...</span>
                             ) : (
                                 <span className="text-slate-600 italic">Waiting...</span>
@@ -246,11 +247,11 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
 
                 {/* Current user message (if we have one) */}
                 {currentUserMessage && phase !== 'idle' && (
-                    renderMessage({ role: 'user', content: currentUserMessage }, completedMessages.length)
+                    renderMessage({ role: ChatRole.User, content: currentUserMessage }, completedMessages.length)
                 )}
 
                 {/* Current assistant response - streaming */}
-                {(phase === 'waiting_for_response' || phase === 'extracting_reasoning' || phase === 'extracting_answer') && (
+                {(phase === StreamingPhase.WaitingForResponse || phase === StreamingPhase.ExtractingReasoning || phase === StreamingPhase.ExtractingAnswer) && (
                     <div className="flex gap-3">
                         <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-emerald-500/20 text-emerald-400">
                             <Bot className="w-3.5 h-3.5" />
@@ -259,7 +260,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                             <div className="inline-block w-full text-left rounded-lg px-3 py-2 text-xs leading-relaxed bg-slate-800 text-slate-200 border border-emerald-500/30">
 
                                 {/* Waiting state */}
-                                {phase === 'waiting_for_response' && (
+                                {phase === StreamingPhase.WaitingForResponse && (
                                     <div className="flex items-center gap-2 text-slate-400">
                                         <Loader className="w-3 h-3 animate-spin" />
                                         <span>Generating response...</span>
@@ -267,7 +268,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                 )}
 
                                 {/* Extracting reasoning */}
-                                {phase === 'extracting_reasoning' && (
+                                {phase === StreamingPhase.ExtractingReasoning && (
                                     <>
                                         <div className="flex items-center gap-1 text-[9px] text-emerald-400 uppercase font-bold mb-1">
                                             <Sparkles className="w-2.5 h-2.5 animate-pulse" />
@@ -287,7 +288,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                 )}
 
                                 {/* Extracting answer */}
-                                {phase === 'extracting_answer' && (
+                                {phase === StreamingPhase.ExtractingAnswer && (
                                     <>
                                         {/* Show collapsed reasoning */}
                                         {currentReasoning && (

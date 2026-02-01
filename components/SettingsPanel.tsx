@@ -1,11 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server } from 'lucide-react';
-import { SettingsService, AppSettings, AVAILABLE_PROVIDERS, WorkflowDefaults, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS, EMPTY_STEP_CONFIG, EMPTY_DEEP_DEFAULTS } from '../services/settingsService';
+import React, { useEffect } from 'react';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2 } from 'lucide-react';
+import { SettingsService, AVAILABLE_PROVIDERS, EMPTY_STEP_CONFIG } from '../services/settingsService';
+import { ApiType, ExternalProvider, ProviderType, EngineMode, SettingsPanelTab, ApiSubTab } from '../interfaces/enums';
 import GenerationParamsInput from './GenerationParamsInput';
-import { PromptService, PromptSetMetadata } from '../services/promptService';
-import { TaskClassifierService, TASK_PROMPT_MAPPING, TaskType } from '../services/taskClassifierService';
-import { PROVIDER_URLS } from '../constants';
-import { fetchOllamaModels, checkOllamaStatus, formatOllamaModelSize, OllamaModel } from '../services/externalApiService';
+import { PromptService } from '../services/promptService';
+import { TaskClassifierService, TASK_PROMPT_MAPPING } from '../services/taskClassifierService';
+import { PROVIDERS } from '../constants';
+import { formatOllamaModelSize } from '../services/externalApiService';
+import ModelSelector from './ModelSelector';
+import { ModelListProvider } from '../types';
+import { OllamaStatus } from '../interfaces/enums';
+import { useSettingsState } from '../hooks/useSettingsState';
+import { useSettingsOllama } from '../hooks/useSettingsOllama';
 
 interface SettingsPanelProps {
     isOpen: boolean;
@@ -13,197 +19,98 @@ interface SettingsPanelProps {
     onSettingsChanged?: () => void;
 }
 
-// Provider display names and descriptions
-const PROVIDER_INFO: Record<string, { name: string; description: string }> = {
-    'gemini': { name: 'Google Gemini', description: 'Primary provider (env: VITE_GEMINI_API_KEY)' },
-    'openai': { name: 'OpenAI', description: 'GPT-4, GPT-3.5, etc.' },
-    'anthropic': { name: 'Anthropic', description: 'Claude models' },
-    'openrouter': { name: 'OpenRouter', description: 'Multi-model router' },
-    'together': { name: 'Together AI', description: 'Open-source models' },
-    'groq': { name: 'Groq', description: 'Ultra-fast inference' },
-    'cerebras': { name: 'Cerebras', description: 'High-performance AI' },
-    'featherless': { name: 'Featherless', description: 'Serverless inference' },
-    'qwen': { name: 'Qwen', description: 'Alibaba Qwen models' },
-    'qwen-deepinfra': { name: 'Qwen (DeepInfra)', description: 'Qwen via DeepInfra' },
-    'kimi': { name: 'Kimi (Moonshot)', description: 'Moonshot AI' },
-    'z.ai': { name: 'Z.AI', description: 'Z.AI platform' },
-    'ollama': { name: 'Ollama', description: 'Local models (no key needed)' },
-    'chutes': { name: 'Chutes', description: 'Chutes LLM API' },
-    'huggingface': { name: 'HuggingFace Inference', description: 'HF Inference API' },
-    'other': { name: 'Custom Endpoint', description: 'Your own OpenAI-compatible API' },
-};
+
 
 export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: SettingsPanelProps) {
-    const [settings, setSettings] = useState<AppSettings>({ providerKeys: {} });
-    const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-    const [saved, setSaved] = useState(false);
-    const [confirmClear, setConfirmClear] = useState(false);
-    const [activeTab, setActiveTab] = useState<'providers' | 'generation' | 'huggingface' | 'firebase' | 'storage' | 'prompts'>('providers');
-    const [apiSubTab, setApiSubTab] = useState<'keys' | 'defaults'>('keys');
-    const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ generalPurpose: true, generator: true, converter: false });
-    const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
-    const [promptMetadata, setPromptMetadata] = useState<Record<string, PromptSetMetadata>>({});
-    
-    // Ollama integration state
-    const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-    const [ollamaLoading, setOllamaLoading] = useState(false);
+    const {
+        settings,
+        showKeys,
+        saved,
+        isFullscreen,
+        setIsFullscreen,
+        confirmClear,
+        setConfirmClear,
+        activeTab,
+        setActiveTab,
+        apiSubTab,
+        setApiSubTab,
+        expandedSections,
+        availablePromptSets,
+        setAvailablePromptSets,
+        promptMetadata,
+        setPromptMetadata,
+        toggleShowKey,
+        updateSetting,
+        updateProviderKey,
+        updateDefaultModel,
+        updateWorkflowDefault,
+        toggleSection,
+        handleSave,
+        handleClearAll,
+        loadSettings
+    } = useSettingsState(onSettingsChanged);
 
-    // Fetch Ollama models when panel opens
-    const refreshOllamaModels = async () => {
-        setOllamaLoading(true);
-        setOllamaStatus('checking');
-        try {
-            const isOnline = await checkOllamaStatus();
-            if (isOnline) {
-                setOllamaStatus('online');
-                const models = await fetchOllamaModels();
-                setOllamaModels(models);
-            } else {
-                setOllamaStatus('offline');
-                setOllamaModels([]);
-            }
-        } catch {
-            setOllamaStatus('offline');
-            setOllamaModels([]);
-        }
-        setOllamaLoading(false);
-    };
+    const {
+        ollamaModels,
+        ollamaStatus,
+        ollamaLoading,
+        refreshOllamaModels
+    } = useSettingsOllama();
 
+    // Load settings and prompt sets when panel opens
     useEffect(() => {
         if (isOpen) {
-            setSettings(SettingsService.getSettings());
-            setSaved(false);
-            setConfirmClear(false);
+            loadSettings();
             setAvailablePromptSets(PromptService.getAvailableSets());
             setPromptMetadata(PromptService.getAllMetadata());
-            // Auto-fetch Ollama models when panel opens
             refreshOllamaModels();
+        } else {
+            setIsFullscreen(false);
         }
-    }, [isOpen]);
+    }, [isOpen, loadSettings, setAvailablePromptSets, setPromptMetadata, refreshOllamaModels, setIsFullscreen]);
 
-    const handleSave = async () => {
-        await SettingsService.saveSettingsAsync(settings);
-        setSaved(true);
-        onSettingsChanged?.();
-        setTimeout(() => setSaved(false), 2000);
-    };
-
-    const handleClearAll = async () => {
-        if (!confirmClear) {
-            setConfirmClear(true);
-            return;
-        }
-        await SettingsService.clearAllData();
-        setSettings({ providerKeys: {} });
-        setConfirmClear(false);
-        onSettingsChanged?.();
-        // Small delay to ensure clearAllData completes before reload
-        await new Promise(resolve => setTimeout(resolve, 100));
-        window.location.reload();
-    };
-
-    const toggleShowKey = (key: string) => {
-        setShowKeys(prev => ({ ...prev, [key]: !prev[key] }));
-    };
-
-    const updateProviderKey = (provider: string, value: string) => {
-        setSettings(prev => ({
-            ...prev,
-            providerKeys: { ...prev.providerKeys, [provider]: value }
-        }));
-    };
-
-    const updateDefaultModel = (provider: string, value: string) => {
-        setSettings(prev => ({
-            ...prev,
-            providerDefaultModels: { ...(prev.providerDefaultModels || {}), [provider]: value }
-        }));
-    };
-
-    const updateWorkflowDefault = (
-        workflow: 'generator' | 'converter',
-        mode: 'regular' | 'deep',
-        step: keyof DeepModeDefaults | null,
-        field: keyof StepModelConfig,
-        value: any
-    ) => {
-        setSettings(prev => {
-            const current = prev.workflowDefaults || DEFAULT_WORKFLOW_DEFAULTS;
-            if (mode === 'regular') {
-                return {
-                    ...prev,
-                    workflowDefaults: {
-                        ...current,
-                        [workflow]: {
-                            ...current[workflow],
-                            regular: { ...current[workflow].regular, [field]: value }
-                        }
-                    }
-                };
-            } else if (step) {
-                return {
-                    ...prev,
-                    workflowDefaults: {
-                        ...current,
-                        [workflow]: {
-                            ...current[workflow],
-                            deep: {
-                                ...current[workflow].deep,
-                                [step]: { ...current[workflow].deep[step], [field]: value }
-                            }
-                        }
-                    }
-                };
-            }
-            return prev;
-        });
-    };
-
-    const toggleSection = (section: string) => {
-        setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
-    };
-
-    const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-        setSettings(prev => ({ ...prev, [key]: value }));
-    };
-
-    // All providers including Gemini and custom endpoint
-    // externalProviders now includes 'other' (custom endpoint) for Default Models dropdowns
-    const externalProviders = AVAILABLE_PROVIDERS;
     // All providers including Gemini for unified dropdowns (Gemini first)
-    const allProviders = ['gemini', ...AVAILABLE_PROVIDERS];
-    const allProvidersForKeys = ['gemini', ...AVAILABLE_PROVIDERS.filter(p => p !== 'other'), 'other'];
+    const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];
+    const allProvidersForKeys = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS.filter(p => p !== ExternalProvider.Other), ExternalProvider.Other];
 
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-            <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className={`bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full overflow-hidden flex flex-col ${isFullscreen ? 'max-w-[90vw] h-[90vh]' : 'max-w-2xl h-[80vh]'}`}>
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-slate-800">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2">
                         <Settings className="w-5 h-5 text-indigo-400" />
                         Settings
                     </h2>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white">
-                        <X className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setIsFullscreen(prev => !prev)}
+                            className="text-slate-400 hover:text-white"
+                            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                        >
+                            {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+                        </button>
+                        <button onClick={onClose} className="text-slate-400 hover:text-white" title="Close">
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Tabs */}
                 <div className="flex border-b border-slate-800">
                     {[
-                        { id: 'providers', label: 'API Keys', icon: Key },
-                        { id: 'generation', label: 'Generation', icon: Sliders },
-                        { id: 'prompts', label: 'Prompts', icon: FileText },
-                        { id: 'huggingface', label: 'HuggingFace', icon: Cloud },
-                        { id: 'firebase', label: 'Firebase', icon: Database },
-                        { id: 'storage', label: 'Storage', icon: Cpu },
+                        { id: SettingsPanelTab.Providers, label: 'API Keys', icon: Key },
+                        { id: SettingsPanelTab.Generation, label: 'Generation', icon: Sliders },
+                        { id: SettingsPanelTab.Prompts, label: 'Prompts', icon: FileText },
+                        { id: SettingsPanelTab.HuggingFace, label: 'HuggingFace', icon: Cloud },
+                        { id: SettingsPanelTab.Firebase, label: 'Firebase', icon: Database },
+                        { id: SettingsPanelTab.Storage, label: 'Storage', icon: Cpu },
                     ].map(tab => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                            onClick={() => setActiveTab(tab.id)}
                             className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${activeTab === tab.id
                                 ? 'text-indigo-400 border-b-2 border-indigo-400 bg-slate-800/50'
                                 : 'text-slate-500 hover:text-slate-300'
@@ -217,13 +124,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {activeTab === 'providers' && (
+                    {activeTab === SettingsPanelTab.Providers && (
                         <div className="space-y-4">
                             {/* Sub-tabs: API Keys | Default Models */}
                             <div className="flex gap-2 p-1 bg-slate-800/50 rounded-lg">
                                 <button
-                                    onClick={() => setApiSubTab('keys')}
-                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === 'keys'
+                                    onClick={() => setApiSubTab(ApiSubTab.Keys)}
+                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Keys
                                         ? 'bg-indigo-600 text-white'
                                         : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                                         }`}
@@ -232,8 +139,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     API Keys
                                 </button>
                                 <button
-                                    onClick={() => setApiSubTab('defaults')}
-                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === 'defaults'
+                                    onClick={() => setApiSubTab(ApiSubTab.Defaults)}
+                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Defaults
                                         ? 'bg-indigo-600 text-white'
                                         : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                                         }`}
@@ -244,15 +151,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             </div>
 
                             {/* API Keys Sub-tab */}
-                            {apiSubTab === 'keys' && (
+                            {apiSubTab === ApiSubTab.Keys && (
                                 <div className="space-y-2">
                                     <p className="text-xs text-slate-500">
                                         Configure API keys. Leave empty to use .env values.
                                     </p>
-                                    <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                                    <div className="space-y-2 h-full overflow-y-auto pr-1">
                                         {allProvidersForKeys.map(provider => {
-                                            const info = PROVIDER_INFO[provider] || { name: provider, description: '' };
-                                            const baseUrl = PROVIDER_URLS[provider] || '';
+                                            const providerConfig = PROVIDERS[provider];
+                                            const info = providerConfig || { name: provider, description: '' };
                                             const envVarMap: Record<string, string | undefined> = {
                                                 'gemini': import.meta.env.VITE_GEMINI_API_KEY,
                                                 'openai': import.meta.env.VITE_OPENAI_API_KEY,
@@ -269,12 +176,12 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 'chutes': import.meta.env.VITE_CHUTES_API_KEY,
                                                 'huggingface': import.meta.env.VITE_HF_TOKEN,
                                             };
-                                            const keyValue = provider === 'gemini'
+                                            const keyValue = provider === ProviderType.Gemini
                                                 ? settings.geminiApiKey
                                                 : settings.providerKeys[provider];
                                             const hasEnvVar = envVarMap[provider] && !keyValue;
-                                            const isCustom = provider === 'other';
-                                            const isOllama = provider === 'ollama';
+                                            const isCustom = provider === ExternalProvider.Other;
+                                            const isOllama = provider === ExternalProvider.Ollama;
 
                                             return (
                                                 <div key={provider} className={`flex flex-col gap-2 py-1.5 px-2 bg-slate-900/50 rounded border ${isOllama ? 'border-emerald-800/50' : 'border-slate-800'} hover:border-slate-700`}>
@@ -285,27 +192,18 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 <span className="text-emerald-400 text-[8px] ml-1">✓</span>
                                                             )}
                                                             {isOllama && (
-                                                                <span className={`text-[8px] ml-1 ${ollamaStatus === 'online' ? 'text-emerald-400' : ollamaStatus === 'offline' ? 'text-red-400' : 'text-yellow-400'}`}>
-                                                                    {ollamaStatus === 'online' ? '● Online' : ollamaStatus === 'offline' ? '● Offline' : '● ...'}
+                                                                <span className={`text-[8px] ml-1 ${ollamaStatus === OllamaStatus.Online ? 'text-emerald-400' : ollamaStatus === OllamaStatus.Offline ? 'text-red-400' : 'text-yellow-400'}`}>
+                                                                    {ollamaStatus === OllamaStatus.Online ? '● Online' : ollamaStatus === OllamaStatus.Offline ? '● Offline' : '● ...'}
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        {isCustom && (
-                                                            <input
-                                                                type="text"
-                                                                value={settings.customEndpointUrl || ''}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
-                                                                placeholder="Base URL"
-                                                                className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
-                                                            />
-                                                        )}
                                                         {!isOllama && (
-                                                            <div className="relative flex-1 min-w-0">
+                                                            <div className="relative w-48 shrink-0">
                                                                 <input
                                                                     type={showKeys[provider] ? 'text' : 'password'}
                                                                     value={keyValue || ''}
                                                                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                                        if (provider === 'gemini') {
+                                                                        if (provider === ProviderType.Gemini) {
                                                                             updateSetting('geminiApiKey', e.target.value);
                                                                         } else {
                                                                             updateProviderKey(provider, e.target.value);
@@ -336,12 +234,12 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     value={settings.providerDefaultModels?.[provider] || ''}
                                                                     onChange={(e) => updateDefaultModel(provider, e.target.value)}
                                                                     className="w-36 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-emerald-500 outline-none"
-                                                                    disabled={ollamaStatus !== 'online' || ollamaModels.length === 0}
+                                                                    disabled={ollamaStatus !== OllamaStatus.Online || ollamaModels.length === 0}
                                                                 >
                                                                     <option value="">
-                                                                        {ollamaStatus === 'checking' ? 'Loading...' : 
-                                                                         ollamaStatus === 'offline' ? 'Ollama offline' :
-                                                                         ollamaModels.length === 0 ? 'No models' : 'Select model'}
+                                                                        {ollamaStatus === OllamaStatus.Checking ? 'Loading...' :
+                                                                            ollamaStatus === OllamaStatus.Offline ? 'Ollama offline' :
+                                                                                ollamaModels.length === 0 ? 'No models' : 'Select model'}
                                                                     </option>
                                                                     {ollamaModels.map(model => (
                                                                         <option key={model.name} value={model.name}>
@@ -359,17 +257,32 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 </button>
                                                             </div>
                                                         ) : (
-                                                            <input
-                                                                type="text"
+                                                            <ModelSelector
+                                                                provider={provider as ModelListProvider}
                                                                 value={settings.providerDefaultModels?.[provider] || ''}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateDefaultModel(provider, e.target.value)}
+                                                                onChange={(model) => updateDefaultModel(provider, model)}
+                                                                apiKey={provider === ProviderType.Gemini
+                                                                    ? (settings.geminiApiKey || '')
+                                                                    : (settings.providerKeys?.[provider] || '')}
+                                                                customBaseUrl={provider === ExternalProvider.Other ? settings.customEndpointUrl : undefined}
                                                                 placeholder="Default Model"
-                                                                className="w-32 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
+                                                                className="flex-1 min-w-[220px]"
                                                             />
                                                         )}
                                                     </div>
+                                                    {isCustom && (
+                                                        <div className="mt-2">
+                                                            <input
+                                                                type="text"
+                                                                value={settings.customEndpointUrl || ''}
+                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
+                                                                placeholder="Base URL"
+                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
+                                                            />
+                                                        </div>
+                                                    )}
                                                     {/* Ollama: Show loaded models list */}
-                                                    {isOllama && ollamaStatus === 'online' && ollamaModels.length > 0 && (
+                                                    {isOllama && ollamaStatus === OllamaStatus.Online && ollamaModels.length > 0 && (
                                                         <div className="flex flex-wrap gap-1 pl-28">
                                                             {ollamaModels.slice(0, 6).map(model => {
                                                                 // Ollama model names are typically in the form "family:size" (e.g., "llama2:7b").
@@ -382,11 +295,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     <button
                                                                         key={model.name}
                                                                         onClick={() => updateDefaultModel('ollama', model.name)}
-                                                                        className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${
-                                                                            settings.providerDefaultModels?.['ollama'] === model.name
-                                                                                ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
-                                                                                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
-                                                                        }`}
+                                                                        className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${settings.providerDefaultModels?.['ollama'] === model.name
+                                                                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                                                                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
+                                                                            }`}
                                                                     >
                                                                         {displayName}
                                                                     </button>
@@ -397,7 +309,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             )}
                                                         </div>
                                                     )}
-                                                    {isOllama && ollamaStatus === 'offline' && (
+                                                    {isOllama && ollamaStatus === OllamaStatus.Offline && (
                                                         <div className="text-[9px] text-red-400/80 pl-28">
                                                             Start Ollama with: <code className="bg-slate-800 px-1 rounded">ollama serve</code>
                                                         </div>
@@ -410,7 +322,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             )}
 
                             {/* Default Models Sub-tab */}
-                            {apiSubTab === 'defaults' && (
+                            {apiSubTab === ApiSubTab.Defaults && (
                                 <div className="space-y-4">
                                     <p className="text-xs text-slate-500">
                                         Configure default provider and model for each workflow step.
@@ -432,40 +344,67 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             <div className="p-3 pt-0 space-y-3">
                                                 <div className="space-y-2">
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Default Model</label>
-                                                    <div className="flex gap-2">
+                                                    <div className="flex gap-2 flex-wrap">
                                                         <select
-                                                            value={settings.generalPurposeModel?.provider === 'external'
-                                                                ? settings.generalPurposeModel?.externalProvider || 'gemini'
-                                                                : settings.generalPurposeModel?.provider || 'gemini'}
+                                                            value={settings.generalPurposeModel?.provider === ProviderType.External
+                                                                ? settings.generalPurposeModel?.externalProvider || ProviderType.Gemini
+                                                                : settings.generalPurposeModel?.provider || ProviderType.Gemini}
                                                             onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                                                                 const selectedProvider = e.target.value;
-                                                                const isExternal = selectedProvider !== 'gemini';
+                                                                const isExternal = selectedProvider !== ProviderType.Gemini;
                                                                 updateSetting('generalPurposeModel', {
                                                                     ...settings.generalPurposeModel,
                                                                     ...EMPTY_STEP_CONFIG,
-                                                                    provider: isExternal ? 'external' : 'gemini',
-                                                                    externalProvider: isExternal ? selectedProvider : '',
+                                                                    provider: isExternal ? ProviderType.External : ProviderType.Gemini,
+                                                                    externalProvider: isExternal ? selectedProvider as ExternalProvider : ExternalProvider.Other,
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 });
                                                             }}
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
-                                                        <input
-                                                            type="text"
+                                                        {/* API Type dropdown for external providers */}
+                                                        {settings.generalPurposeModel?.provider === ProviderType.External && (
+                                                            <select
+                                                                value={settings.generalPurposeModel?.apiType || ApiType.Chat}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateSetting('generalPurposeModel', {
+                                                                    ...settings.generalPurposeModel,
+                                                                    ...EMPTY_STEP_CONFIG,
+                                                                    apiType: e.target.value as ApiType,
+                                                                    provider: settings.generalPurposeModel?.provider || ProviderType.External,
+                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
+                                                                    model: settings.generalPurposeModel?.model || ''
+                                                                })}
+                                                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                                title="API Type: chat=completions, responses=responses API"
+                                                            >
+                                                                <option value="chat">Chat</option>
+                                                                <option value="responses">Responses</option>
+                                                            </select>
+                                                        )}
+                                                        <ModelSelector
+                                                                provider={(settings.generalPurposeModel?.provider === ProviderType.External
+                                                                    ? settings.generalPurposeModel?.externalProvider
+                                                                    : ProviderType.Gemini) as ModelListProvider}
                                                             value={settings.generalPurposeModel?.model || ''}
-                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('generalPurposeModel', {
+                                                            onChange={(model) => updateSetting('generalPurposeModel', {
                                                                 ...settings.generalPurposeModel,
                                                                 ...EMPTY_STEP_CONFIG,
-                                                                model: e.target.value,
-                                                                provider: settings.generalPurposeModel?.provider || 'gemini',
-                                                                externalProvider: settings.generalPurposeModel?.externalProvider || ''
+                                                                model,
+                                                                provider: settings.generalPurposeModel?.provider || ProviderType.Gemini,
+                                                                externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other
                                                             })}
+                                                                apiKey={settings.generalPurposeModel?.provider === ProviderType.External
+                                                                    ? (settings.providerKeys?.[settings.generalPurposeModel?.externalProvider || ''] || '')
+                                                                    : (settings.geminiApiKey || '')}
+                                                                customBaseUrl={settings.generalPurposeModel?.externalProvider === ExternalProvider.Other
+                                                                    ? settings.customEndpointUrl
+                                                                    : undefined}
                                                             placeholder="Model ID"
-                                                            className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                            className="flex-1 min-w-[120px]"
                                                         />
                                                     </div>
                                                     <p className="text-[10px] text-slate-500">Used for general tasks that don't require specialized prompts (e.g., optimization)</p>
@@ -477,8 +416,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     ...settings.generalPurposeModel,
                                                                     ...EMPTY_STEP_CONFIG,
                                                                     generationParams: newParams,
-                                                                    provider: settings.generalPurposeModel?.provider || 'gemini',
-                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || '',
+                                                                    provider: settings.generalPurposeModel?.provider || ProviderType.Gemini,
+                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 });
                                                             }}
@@ -506,27 +445,47 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 {/* Regular Mode */}
                                                 <div className="space-y-2">
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Regular Mode</label>
-                                                    <div className="flex gap-2">
+                                                    <div className="flex gap-2 flex-wrap">
                                                         <select
-                                                            value={settings.workflowDefaults?.generator.regular.provider || 'gemini'}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', 'regular', null, 'provider', e.target.value)}
+                                                            value={settings.workflowDefaults?.generator.regular.provider || ProviderType.Gemini}
+                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'provider', e.target.value)}
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
-                                                        <input
-                                                            type="text"
+                                                        {/* API Type dropdown for external providers */}
+                                                        {settings.workflowDefaults?.generator.regular.provider === ProviderType.External && (
+                                                            <select
+                                                                value={settings.workflowDefaults?.generator.regular.apiType || ApiType.Chat}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'apiType', e.target.value)}
+                                                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                                title="API Type: chat=completions, responses=responses API"
+                                                            >
+                                                                <option value="chat">Chat</option>
+                                                                <option value="responses">Responses</option>
+                                                            </select>
+                                                        )}
+                                                        <ModelSelector
+                                                            provider={(settings.workflowDefaults?.generator.regular.provider === ProviderType.External
+                                                                ? settings.workflowDefaults?.generator.regular.externalProvider
+                                                                : ProviderType.Gemini) as ModelListProvider}
                                                             value={settings.workflowDefaults?.generator.regular.model || ''}
-                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateWorkflowDefault('generator', 'regular', null, 'model', e.target.value)}
+                                                            onChange={(model) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'model', model)}
+                                                            apiKey={settings.workflowDefaults?.generator.regular.provider === ProviderType.External
+                                                                ? (settings.providerKeys?.[settings.workflowDefaults?.generator.regular.externalProvider || ''] || '')
+                                                                : (settings.geminiApiKey || '')}
+                                                            customBaseUrl={settings.workflowDefaults?.generator.regular.externalProvider === ExternalProvider.Other
+                                                                ? settings.customEndpointUrl
+                                                                : undefined}
                                                             placeholder="Model ID"
-                                                            className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                            className="flex-1 min-w-[120px]"
                                                         />
                                                     </div>
                                                     <GenerationParamsInput
                                                         params={settings.workflowDefaults?.generator.regular.generationParams}
-                                                        onChange={(newParams) => updateWorkflowDefault('generator', 'regular', null, 'generationParams', newParams)}
+                                                        onChange={(newParams) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'generationParams', newParams)}
                                                     />
                                                 </div>
 
@@ -535,28 +494,48 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Deep Mode Steps</label>
                                                     {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
                                                         <div key={step} className="space-y-2 p-2 bg-slate-900/30 rounded border border-slate-800">
-                                                            <div className="flex items-center gap-2">
+                                                            <div className="flex items-center gap-2 flex-wrap">
                                                                 <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
                                                                 <select
-                                                                    value={settings.workflowDefaults?.generator.deep[step]?.provider || 'gemini'}
-                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', 'deep', step, 'provider', e.target.value)}
+                                                                    value={settings.workflowDefaults?.generator.deep[step]?.provider || ProviderType.Gemini}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'provider', e.target.value)}
                                                                     className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
-                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                        <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                                     ))}
                                                                 </select>
-                                                                <input
-                                                                    type="text"
+                                                                {/* API Type dropdown for external providers */}
+                                                                {settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External && (
+                                                                    <select
+                                                                        value={settings.workflowDefaults?.generator.deep[step]?.apiType || ApiType.Chat}
+                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'apiType', e.target.value)}
+                                                                        className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                        title="API Type: chat=completions, responses=responses API"
+                                                                    >
+                                                                        <option value="chat">Chat</option>
+                                                                        <option value="responses">Responses</option>
+                                                                    </select>
+                                                                )}
+                                                                <ModelSelector
+                                                                    provider={(settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External
+                                                                        ? settings.workflowDefaults?.generator.deep[step]?.externalProvider
+                                                                        : ProviderType.Gemini) as ModelListProvider}
                                                                     value={settings.workflowDefaults?.generator.deep[step]?.model || ''}
-                                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateWorkflowDefault('generator', 'deep', step, 'model', e.target.value)}
+                                                                    onChange={(model) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'model', model)}
+                                                                    apiKey={settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External
+                                                                        ? (settings.providerKeys?.[settings.workflowDefaults?.generator.deep[step]?.externalProvider || ''] || '')
+                                                                        : (settings.geminiApiKey || '')}
+                                                                    customBaseUrl={settings.workflowDefaults?.generator.deep[step]?.externalProvider === ExternalProvider.Other
+                                                                        ? settings.customEndpointUrl
+                                                                        : undefined}
                                                                     placeholder="Model"
-                                                                    className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                    className="flex-1 min-w-[100px]"
                                                                 />
                                                             </div>
                                                             <GenerationParamsInput
                                                                 params={settings.workflowDefaults?.generator.deep[step]?.generationParams}
-                                                                onChange={(newParams) => updateWorkflowDefault('generator', 'deep', step, 'generationParams', newParams)}
+                                                                onChange={(newParams) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'generationParams', newParams)}
                                                                 label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
                                                             />
                                                         </div>
@@ -583,27 +562,47 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 {/* Regular Mode */}
                                                 <div className="space-y-2">
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Regular Mode</label>
-                                                    <div className="flex gap-2">
+                                                    <div className="flex gap-2 flex-wrap">
                                                         <select
-                                                            value={settings.workflowDefaults?.converter.regular.provider || 'gemini'}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', 'regular', null, 'provider', e.target.value)}
+                                                            value={settings.workflowDefaults?.converter.regular.provider || ProviderType.Gemini}
+                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'provider', e.target.value)}
                                                             className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                             ))}
                                                         </select>
-                                                        <input
-                                                            type="text"
+                                                        {/* API Type dropdown for external providers */}
+                                                        {settings.workflowDefaults?.converter.regular.provider === ProviderType.External && (
+                                                            <select
+                                                                value={settings.workflowDefaults?.converter.regular.apiType || ApiType.Chat}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'apiType', e.target.value)}
+                                                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                                title="API Type: chat=completions, responses=responses API"
+                                                            >
+                                                                <option value="chat">Chat</option>
+                                                                <option value="responses">Responses</option>
+                                                            </select>
+                                                        )}
+                                                        <ModelSelector
+                                                            provider={(settings.workflowDefaults?.converter.regular.provider === ProviderType.External
+                                                                ? settings.workflowDefaults?.converter.regular.externalProvider
+                                                                : ProviderType.Gemini) as ModelListProvider}
                                                             value={settings.workflowDefaults?.converter.regular.model || ''}
-                                                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateWorkflowDefault('converter', 'regular', null, 'model', e.target.value)}
+                                                            onChange={(model) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'model', model)}
+                                                            apiKey={settings.workflowDefaults?.converter.regular.provider === ProviderType.External
+                                                                ? (settings.providerKeys?.[settings.workflowDefaults?.converter.regular.externalProvider || ''] || '')
+                                                                : (settings.geminiApiKey || '')}
+                                                            customBaseUrl={settings.workflowDefaults?.converter.regular.externalProvider === ExternalProvider.Other
+                                                                ? settings.customEndpointUrl
+                                                                : undefined}
                                                             placeholder="Model ID"
-                                                            className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                            className="flex-1 min-w-[120px]"
                                                         />
                                                     </div>
                                                     <GenerationParamsInput
                                                         params={settings.workflowDefaults?.converter.regular.generationParams}
-                                                        onChange={(newParams) => updateWorkflowDefault('converter', 'regular', null, 'generationParams', newParams)}
+                                                        onChange={(newParams) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'generationParams', newParams)}
                                                     />
                                                 </div>
 
@@ -612,28 +611,48 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     <label className="text-[10px] text-slate-400 font-bold uppercase">Deep Mode Steps</label>
                                                     {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
                                                         <div key={step} className="space-y-2 p-2 bg-slate-900/30 rounded border border-slate-800">
-                                                            <div className="flex items-center gap-2">
+                                                            <div className="flex items-center gap-2 flex-wrap">
                                                                 <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
                                                                 <select
-                                                                    value={settings.workflowDefaults?.converter.deep[step]?.provider || 'gemini'}
-                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', 'deep', step, 'provider', e.target.value)}
+                                                                    value={settings.workflowDefaults?.converter.deep[step]?.provider || ProviderType.Gemini}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'provider', e.target.value)}
                                                                     className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
-                                                                        <option key={p} value={p}>{p === 'gemini' ? 'Gemini' : (PROVIDER_INFO[p]?.name || p)}</option>
+                                                                        <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
                                                                     ))}
                                                                 </select>
-                                                                <input
-                                                                    type="text"
+                                                                {/* API Type dropdown for external providers */}
+                                                                {settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External && (
+                                                                    <select
+                                                                        value={settings.workflowDefaults?.converter.deep[step]?.apiType || ApiType.Chat}
+                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'apiType', e.target.value)}
+                                                                        className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                        title="API Type: chat=completions, responses=responses API"
+                                                                    >
+                                                                        <option value="chat">Chat</option>
+                                                                        <option value="responses">Responses</option>
+                                                                    </select>
+                                                                )}
+                                                                <ModelSelector
+                                                                    provider={(settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External
+                                                                        ? settings.workflowDefaults?.converter.deep[step]?.externalProvider
+                                                                        : ProviderType.Gemini) as ModelListProvider}
                                                                     value={settings.workflowDefaults?.converter.deep[step]?.model || ''}
-                                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateWorkflowDefault('converter', 'deep', step, 'model', e.target.value)}
+                                                                    onChange={(model) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'model', model)}
+                                                                    apiKey={settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External
+                                                                        ? (settings.providerKeys?.[settings.workflowDefaults?.converter.deep[step]?.externalProvider || ''] || '')
+                                                                        : (settings.geminiApiKey || '')}
+                                                                    customBaseUrl={settings.workflowDefaults?.converter.deep[step]?.externalProvider === ExternalProvider.Other
+                                                                        ? settings.customEndpointUrl
+                                                                        : undefined}
                                                                     placeholder="Model"
-                                                                    className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                    className="flex-1 min-w-[100px]"
                                                                 />
                                                             </div>
                                                             <GenerationParamsInput
                                                                 params={settings.workflowDefaults?.converter.deep[step]?.generationParams}
-                                                                onChange={(newParams) => updateWorkflowDefault('converter', 'deep', step, 'generationParams', newParams)}
+                                                                onChange={(newParams) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'generationParams', newParams)}
                                                                 label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
                                                             />
                                                         </div>
@@ -647,7 +666,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'generation' && (
+                    {activeTab === SettingsPanelTab.Generation && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
@@ -809,6 +828,29 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     </div>
                                 </div>
 
+                                {/* Force Structured Output Toggle */}
+                                <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800">
+                                    <div className="flex items-center gap-2">
+                                        <label htmlFor="forceStructuredOutput" className="text-xs text-slate-300">Force Structured Output</label>
+                                        <span className="text-[9px] text-slate-500" title="When enabled, requests JSON response format from the model">
+                                            (JSON mode)
+                                        </span>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            id="forceStructuredOutput"
+                                            type="checkbox"
+                                            checked={settings.defaultGenerationParams?.forceStructuredOutput ?? true}
+                                            onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                ...(settings.defaultGenerationParams || {}),
+                                                forceStructuredOutput: e.target.checked
+                                            })}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                                    </label>
+                                </div>
+
                                 <div className="mt-4 pt-4 border-t border-slate-800">
                                     <button
                                         onClick={() => updateSetting('defaultGenerationParams', {
@@ -817,7 +859,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             topK: undefined,
                                             presencePenalty: undefined,
                                             frequencyPenalty: undefined,
-                                            maxTokens: undefined
+                                            maxTokens: undefined,
+                                            forceStructuredOutput: true
                                         })}
                                         className="text-[10px] text-purple-400 hover:text-purple-300 underline"
                                     >
@@ -828,7 +871,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'huggingface' && (
+                    {activeTab === SettingsPanelTab.HuggingFace && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
@@ -887,7 +930,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'firebase' && (
+                    {activeTab === SettingsPanelTab.Firebase && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
@@ -1008,7 +1051,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'storage' && (
+                    {activeTab === SettingsPanelTab.Storage && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
@@ -1052,7 +1095,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         </div>
                     )}
 
-                    {activeTab === 'prompts' && (
+                    {activeTab === SettingsPanelTab.Prompts && (
                         <div className="space-y-6">
                             <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
@@ -1222,15 +1265,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         <div className="space-y-1">
                                                             <label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label>
                                                             <select
-                                                                value={settings.autoRouteLlmProvider || 'gemini'}
-                                                                onChange={e => updateSetting('autoRouteLlmProvider', e.target.value as 'gemini' | 'external')}
+                                                                value={settings.autoRouteLlmProvider || ProviderType.Gemini}
+                                                                onChange={e => updateSetting('autoRouteLlmProvider', e.target.value as ProviderType)}
                                                                 className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-purple-500 outline-none"
                                                             >
-                                                                <option value="gemini">Gemini</option>
-                                                                <option value="external">External</option>
+                                                                <option value={ProviderType.Gemini}>Gemini</option>
+                                                                <option value={ProviderType.External}>External</option>
                                                             </select>
                                                         </div>
-                                                        {settings.autoRouteLlmProvider === 'external' && (
+                                                        {settings.autoRouteLlmProvider === ProviderType.External && (
                                                             <div className="space-y-1">
                                                                 <label className="text-[10px] text-slate-500 font-bold uppercase">Service</label>
                                                                 <select
@@ -1246,7 +1289,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     </div>
 
                                                     {/* External provider options */}
-                                                    {settings.autoRouteLlmProvider === 'external' && (
+                                                {settings.autoRouteLlmProvider === ProviderType.External && (
                                                         <>
                                                             <div className="space-y-1">
                                                                 <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
@@ -1268,7 +1311,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     placeholder="e.g., gpt-4o-mini, claude-3-haiku"
                                                                 />
                                                             </div>
-                                                            {settings.autoRouteLlmExternalProvider === 'other' && (
+                                                    {settings.autoRouteLlmExternalProvider === ExternalProvider.Other && (
                                                                 <div className="space-y-1">
                                                                     <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
                                                                     <input
@@ -1284,7 +1327,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     )}
 
                                                     {/* Gemini model option */}
-                                                    {settings.autoRouteLlmProvider !== 'external' && (
+                                                {settings.autoRouteLlmProvider !== ProviderType.External && (
                                                         <div className="space-y-1">
                                                             <label className="text-[10px] text-slate-500 font-bold uppercase">Model (optional)</label>
                                                             <input

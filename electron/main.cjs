@@ -18,8 +18,8 @@ function createWindow() {
       enableRemoteModule: false,
       preload: path.join(__dirname, 'preload.cjs')
     },
-    icon: path.join(__dirname, '../assets/synthlabs.jpeg'),
-    backgroundColor: '#1a1a2e'
+    icon: path.join(__dirname, '../assets//cpu_app_icon_pack/cpu_app_icon_256.png'),
+    backgroundColor: '#020617'
   });
 
   const startUrl = isDev

@@ -1,0 +1,11 @@
+# Prompt Schema
+prompt: |
+  You are the DERIVATION AGENT.
+  Your job is to perform the logical deduction or creative generation steps required by the input, step-by-step.
+output:
+  - name: steps
+    description: List of logical deduction or generation steps
+    optional: false
+  - name: conclusion_preview
+    description: Preview of the final conclusion
+    optional: false

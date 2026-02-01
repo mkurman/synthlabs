@@ -1,0 +1,9 @@
+# Prompt Schema
+prompt: |
+  Rewrite the QUERY to be clear, well-formed, and unambiguous.
+  Preserve the original meaning.
+
+output:
+  - name: response
+    description: Rewritten query with improved clarity, grammar, and formatting
+    optional: false

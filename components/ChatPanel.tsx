@@ -1,48 +1,35 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Bot, Sparkles,
-    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, Brain, RotateCcw, Sliders
+    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, Brain, RotateCcw
 } from 'lucide-react';
-import { GenerationParams } from '../types';
 import { ChatService } from '../services/chatService';
 import { ChatMessage } from '../types';
-import { ChatStorageService } from '../services/chatStorageService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
+import { PROVIDERS } from '../constants';
 import { ToolExecutor } from '../services/toolService';
 import { VerifierItem } from '../types';
+import { useChatSessions } from '../hooks/useChatSessions';
+import { useChatPersistence } from '../hooks/useChatPersistence';
+import { useChatScroll } from '../hooks/useChatScroll';
+import { ChatRole, ExternalProvider, ProviderType } from '../interfaces/enums';
 
-// Provider display names and descriptions
-const PROVIDER_INFO: Record<string, { name: string; description: string }> = {
-    'gemini': { name: 'Google Gemini', description: 'Primary provider' },
-    'openai': { name: 'OpenAI', description: 'GPT-4, GPT-3.5, etc.' },
-    'anthropic': { name: 'Anthropic', description: 'Claude models' },
-    'openrouter': { name: 'OpenRouter', description: 'Multi-model router' },
-    'together': { name: 'Together AI', description: 'Open-source models' },
-    'groq': { name: 'Groq', description: 'Ultra-fast inference' },
-    'cerebras': { name: 'Cerebras', description: 'High-performance AI' },
-    'featherless': { name: 'Featherless', description: 'Serverless inference' },
-    'qwen': { name: 'Qwen', description: 'Alibaba Qwen models' },
-    'qwen-deepinfra': { name: 'Qwen (DeepInfra)', description: 'Qwen via DeepInfra' },
-    'kimi': { name: 'Kimi (Moonshot)', description: 'Moonshot AI' },
-    'z.ai': { name: 'Z.AI', description: 'Z.AI platform' },
-    'ollama': { name: 'Ollama', description: 'Local models (no key needed)' },
-    'chutes': { name: 'Chutes', description: 'Chutes LLM API' },
-    'huggingface': { name: 'HuggingFace Inference', description: 'HF Inference API' },
-    'other': { name: 'Custom Endpoint', description: 'Your own OpenAI-compatible API' },
-};
+
 
 interface ChatPanelProps {
     data: VerifierItem[];
     setData: (data: VerifierItem[]) => void;
     modelConfig: {
-        provider: 'gemini' | 'external';
-        externalProvider: any; // Simplified for now to avoid import cycles or use explicit type
+        provider: ProviderType;
+        externalProvider: ExternalProvider;
         externalModel: string;
         apiKey: string;
         externalApiKey: string;
     };
     toolExecutor?: ToolExecutor;
 }
+
+type ChatProvider = ExternalProvider | ProviderType.Gemini;
 
 const copyToClipboard = async (text: string, setCopied: (v: boolean) => void) => {
     try {
@@ -149,25 +136,23 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     const [totalCost, setTotalCost] = useState(0);
 
     // Model Selection State
-    const [activeModel, setActiveModel] = useState({
-        provider: modelConfig.provider === 'external' ? modelConfig.externalProvider : 'gemini',
-        model: modelConfig.provider === 'external' ? modelConfig.externalModel : 'gemini-2.0-flash-20240905',
-        apiKey: modelConfig.provider === 'external' ? modelConfig.externalApiKey : modelConfig.apiKey,
+    const [activeModel, setActiveModel] = useState<{ provider: ChatProvider; model: string; apiKey: string; customBaseUrl: string }>({
+        provider: modelConfig.provider === ProviderType.External ? modelConfig.externalProvider : ProviderType.Gemini,
+        model: modelConfig.provider === ProviderType.External ? modelConfig.externalModel : 'gemini-2.0-flash-20240905',
+        apiKey: modelConfig.provider === ProviderType.External ? modelConfig.externalApiKey : modelConfig.apiKey,
         customBaseUrl: ''
     });
 
     const [showModelSelector, setShowModelSelector] = useState(false);
 
-    // Generation Params Override
-    const [generationParamsOverride, setGenerationParamsOverride] = useState<GenerationParams | null>(null);
-    const [showGenParams, setShowGenParams] = useState(false);
-    const allProviders = ['gemini', ...AVAILABLE_PROVIDERS];
+    const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];
 
     const handleProviderChange = (newProvider: string) => {
-        const defaultModel = SettingsService.getDefaultModel(newProvider);
+        const providerValue = newProvider as ChatProvider;
+        const defaultModel = SettingsService.getDefaultModel(providerValue);
         setActiveModel(prev => ({
             ...prev,
-            provider: newProvider,
+            provider: providerValue,
             model: defaultModel || '', // Auto-select default model if available
             apiKey: '' // Reset API key override on provider switch
         }));
@@ -179,33 +164,29 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    // Initialize session
-    useEffect(() => {
-        const initSession = async () => {
-            // Try to restore last session ID
-            const lastId = await ChatStorageService.getCurrentSessionId();
-            if (lastId) {
-                const session = await ChatStorageService.getSession(lastId);
-                if (session) {
-                    setCurrentSessionId(session.id);
-                    setMessages(session.messages);
-                    syncServiceHistory(session.messages);
-                    return;
-                }
-            }
-
-            // If no last session, create new
-            await handleNewChat();
-        };
-        initSession();
-    }, []);
-
-    const syncServiceHistory = (msgs: ChatMessage[]) => {
+    const syncServiceHistory = useCallback((msgs: ChatMessage[]) => {
         if (chatServiceRef.current) {
             chatServiceRef.current.clearHistory();
             msgs.forEach(m => (chatServiceRef.current as any).history.push(m));
         }
-    };
+    }, []);
+
+    const {
+        handleNewChat,
+        handleHistoryClick,
+        handleSessionSelect,
+        handleDeleteSession
+    } = useChatSessions({
+        chatServiceRef,
+        syncServiceHistory,
+        setCurrentSessionId,
+        setMessages,
+        setShowModelSelector,
+        showHistory,
+        setShowHistory,
+        setHistorySessions,
+        currentSessionId
+    });
 
     const dataRef = useRef(data);
     const setDataRef = useRef(setData);
@@ -227,141 +208,34 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             executor = toolExecutorRef.current;
         }
 
-        // Initialize ChatService
-        chatServiceRef.current = new ChatService(executor);
-
-        // Sync initial messages if present
-        if (messages.length > 0) {
-            syncServiceHistory(messages);
+        // Initialize ChatService only if not already initialized
+        if (!chatServiceRef.current) {
+            chatServiceRef.current = new ChatService(executor);
         }
+    }, [toolExecutor]);
 
-    }, [toolExecutor, messages.length === 0]); // Re-init if executor changes or on first load (messages check rough proxy for mount/session change)
-
-    // Persist messages to DB
-    useEffect(() => {
-        if (currentSessionId && messages.length > 0) {
-            // We need to fetch current session to update it? 
-            // Or just create object. ChatStorageService needs full object to save.
-            // We should prob cache the full session object in state or just construct it.
-            // Since we only change messages, we can get partial update or just refetch? 
-            // Updating DB on every message is fine for now but efficient?
-            // Let's rely on ChatStorageService.saveSession to accept partial? No, interface strict.
-            // Let's construct it. existing title?
-            // This is tricky without fetching. 
-            // Optimized: Create a 'updateSessionMessages' method?
-            // For now: Fetch-Update-Save is safest or just save directly if we trust we are the only writer.
-
-            // Let's do:
-            ChatStorageService.getSession(currentSessionId).then(session => {
-                if (session) {
-                    session.messages = messages as any;
-                    ChatStorageService.saveSession(session);
-                }
-            });
-        }
-    }, [messages, currentSessionId]);
-
-    const handleNewChat = async () => {
-        const session = await ChatStorageService.createSession();
-        setCurrentSessionId(session.id);
-        setMessages([]);
-        if (chatServiceRef.current) {
-            chatServiceRef.current.clearHistory();
-        }
-        setShowModelSelector(false); // Close other menus
-    };
-
-    const loadHistory = async () => {
-        const sessions = await ChatStorageService.getAllSessions();
-        setHistorySessions(sessions);
-    };
-
-    const handleHistoryClick = () => {
-        if (!showHistory) {
-            loadHistory();
-        }
-        setShowHistory(!showHistory);
-    };
-
-    const handleSessionSelect = async (sessionId: string) => {
-        try {
-            console.log(`Selecting session: ${sessionId}`);
-            const session = await ChatStorageService.getSession(sessionId);
-            console.log('Session loaded:', session);
-
-            if (session) {
-                console.log(`Updating state with ${session.messages.length} messages`);
-                setCurrentSessionId(session.id);
-                setMessages(session.messages);
-
-                // Ensure chat service is synced
-                if (chatServiceRef.current) {
-                    syncServiceHistory(session.messages);
-                }
-
-                await ChatStorageService.setCurrentSessionId(session.id);
-                setShowHistory(false);
-            } else {
-                console.error('Session not found in DB');
-            }
-        } catch (e) {
-            console.error('Error selecting session:', e);
-        }
-    };
-
-    const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
-        e.stopPropagation();
-        if (confirm('Delete this chat?')) {
-            await ChatStorageService.deleteSession(sessionId);
-            loadHistory(); // Refresh list
-            if (sessionId === currentSessionId) {
-                handleNewChat(); // Switch to new if deleted current
-            }
-        }
-    };
-
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
-
-    const handleScrollToBottom = () => {
-        scrollToBottom();
-        setAutoScroll(true);
-        setShowScrollButton(false);
-    };
-
-    const checkIfNearBottom = () => {
-        const container = messagesContainerRef.current;
-        if (!container) return true;
-
-        const threshold = 50;
-        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
-        return isNearBottom;
-    };
+    useChatPersistence({ currentSessionId: currentSessionId || '', messages });
+    const { handleScrollToBottom } = useChatScroll({
+        messages,
+        isStreaming,
+        lastMessageLength: messages.length > 0 ? (messages[messages.length - 1]?.content?.length || 0) : 0,
+        autoScroll,
+        messagesEndRef,
+        messagesContainerRef,
+        setAutoScroll,
+        setShowScrollButton
+    });
 
     useEffect(() => {
-        if (autoScroll) {
-            scrollToBottom();
+        // Never show scroll button during streaming
+        if (isStreaming) {
+            setShowScrollButton(false);
+            return;
         }
-    }, [messages]);
-
-    useEffect(() => {
-        const container = messagesContainerRef.current;
-        if (!container) return;
-
-        const handleScroll = () => {
-            const isNearBottom = checkIfNearBottom();
-            setAutoScroll(isNearBottom);
-        };
-
-        container.addEventListener('scroll', handleScroll);
-        return () => container.removeEventListener('scroll', handleScroll);
-    }, []);
-
-    useEffect(() => {
-        if (messages.length > 0 && !autoScroll && !isStreaming) {
+        // Only show after streaming completes if not near bottom
+        if (messages.length > 0 && !autoScroll) {
             setShowScrollButton(true);
-        } else if (autoScroll || isStreaming) {
+        } else if (autoScroll) {
             setShowScrollButton(false);
         }
     }, [messages.length, autoScroll, isStreaming]);
@@ -405,7 +279,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             await processTurn();
         } catch (e) {
             console.error(e);
-            setMessages(prev => [...prev, { role: 'model', content: "Error: " + String(e) } as ChatMessage]);
+            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(e) } as ChatMessage]);
         } finally {
             setIsStreaming(false);
             abortControllerRef.current = null;
@@ -426,7 +300,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         const continueMsg = 'continue';
         setIsStreaming(true);
 
-        const newHistory = [...messages, { role: 'user', content: continueMsg } as ChatMessage];
+        const newHistory = [...messages, { role: ChatRole.User, content: continueMsg } as ChatMessage];
         setMessages(newHistory);
         chatServiceRef.current.addUserMessage(continueMsg);
 
@@ -440,19 +314,20 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             await processTurn();
         } catch (e) {
             console.error(e);
-            setMessages(prev => [...prev, { role: 'model', content: "Error: " + String(e) } as ChatMessage]);
+            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(e) } as ChatMessage]);
         } finally {
             setIsStreaming(false);
             abortControllerRef.current = null;
         }
     };
 
+
     const processTurn = async () => {
         // Use prop executor or local ref
         const executor = toolExecutor || toolExecutorRef.current;
         if (!chatServiceRef.current || !executor) return;
 
-        let currentAssistantMessage: ChatMessage = { role: 'model', content: '' };
+        let currentAssistantMessage: ChatMessage = { role: ChatRole.Model, content: '' };
         setMessages(prev => [...prev, currentAssistantMessage]);
 
         let maxTurns = 5;
@@ -481,7 +356,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                     setMessages(prev => {
                         const next = [...prev];
                         next[next.length - 1] = {
-                            role: 'model',
+                            role: ChatRole.Model,
                             content: content,
                             reasoning: thinking,
                             toolCalls: toolCalls
@@ -495,7 +370,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             const { thinking: finalThink, content: finalContent, toolCalls } = ChatService.parseResponse(fullText);
 
             const modelMsgEntry: ChatMessage = {
-                role: 'model',
+                role: ChatRole.Model,
                 content: finalContent,
                 reasoning: finalThink || undefined,
                 toolCalls: toolCalls
@@ -507,7 +382,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                 for (const tc of toolCalls) {
                     // Add UI message for tool execution
                     setMessages(prev => [...prev, {
-                        role: 'tool',
+                        role: ChatRole.Tool,
                         content: tc.name === 'invalid_tool_call' ? 'Error parsing tool call...' : `Executing ${tc.name}...`,
                         toolCallId: tc.id
                     } as ChatMessage]);
@@ -535,7 +410,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                     setMessages(prev => {
                         const next = [...prev];
                         next[next.length - 1] = {
-                            role: 'tool',
+                            role: ChatRole.Tool,
                             content: resultStr,
                             toolCallId: tc.id
                         };
@@ -543,13 +418,13 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                     });
 
                     chatServiceRef.current.getHistory().push({
-                        role: 'tool',
+                        role: ChatRole.Tool,
                         content: resultStr,
                         toolCallId: tc.id
                     } as ChatMessage);
                 }
                 turnCount++;
-                setMessages(prev => [...prev, { role: 'model', content: '' }]);
+                setMessages(prev => [...prev, { role: ChatRole.Model, content: '' }]);
             } else {
                 break;
             }
@@ -558,10 +433,10 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
     // UI Helpers
     const renderMessage = (msg: ChatMessage, idx: number) => {
-        const isUser = msg.role === 'user';
-        const isTool = msg.role === 'tool';
-        const isModel = msg.role === 'model';
-        const isAssistant = msg.role === 'assistant';
+        const isUser = msg.role === ChatRole.User;
+        const isTool = msg.role === ChatRole.Tool;
+        const isModel = msg.role === ChatRole.Model;
+        const isAssistant = msg.role === ChatRole.Assistant;
         const isAssistantMessage = isModel || isAssistant;
 
         if (isTool) return null;
@@ -579,7 +454,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                         <div className="flex flex-col gap-1 mb-2 w-full max-w-xl">
                             {msg.toolCalls.map((tc: any, i: number) => {
                                 const toolResultMsg = messages.slice(idx + 1).find(
-                                    m => m.role === 'tool' && m.toolCallId === tc.id
+                                    m => m.role === ChatRole.Tool && m.toolCallId === tc.id
                                 );
                                 const result = toolResultMsg ? toolResultMsg.content : undefined;
 
@@ -619,7 +494,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                         <button
                                             onClick={() => {
                                                 const userMsgIndex = idx - 1;
-                                                if (userMsgIndex >= 0 && messages[userMsgIndex]?.role === 'user') {
+                                                if (userMsgIndex >= 0 && messages[userMsgIndex]?.role === ChatRole.User) {
                                                     const newMessages = messages.slice(0, idx);
                                                     setMessages(newMessages);
                                                     setInput('');
@@ -629,12 +504,12 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                     if (chatServiceRef.current) {
                                                         chatServiceRef.current.clearHistory();
                                                         newMessages.forEach(m => {
-                                                            if (m.role === 'user') {
+                                                            if (m.role === ChatRole.User) {
                                                                 chatServiceRef.current!.addUserMessage(m.content);
-                                                            } else if (m.role === 'tool') {
+                                                            } else if (m.role === ChatRole.Tool) {
                                                                 (chatServiceRef.current as any).history.push(m);
                                                             } else {
-                                                                (chatServiceRef.current as any).history.push({ ...m, role: 'model' });
+                                                                (chatServiceRef.current as any).history.push({ ...m, role: ChatRole.Model });
                                                             }
                                                         });
                                                         processTurn().then(() => {
@@ -742,14 +617,14 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar" ref={messagesContainerRef}>
                 {messages.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-0 animate-in fade-in zoom-in duration-500">
+                    <div className="h-full flex flex-col items-center justify-center text-center p-8 animate-in fade-in zoom-in duration-500">
                         <h2 className="text-3xl font-serif text-slate-200 mb-2">Hi, how are you?</h2>
                         <p className="text-slate-400">I can help you verify and clean your data.</p>
                     </div>
                 ) : (
                     messages.map((msg, idx) => {
                         // We skip rendering tool outputs directly as they are embedded in tool call view
-                        if (msg.role === 'tool') return null;
+                        if (msg.role === ChatRole.Tool) return null;
 
                         return (
                             <div key={idx} className="w-full">
@@ -845,7 +720,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                 >
                                                     {allProviders.map(p => (
                                                         <option key={p} value={p}>
-                                                            {PROVIDER_INFO[p]?.name || p}
+                                                            {PROVIDERS[p]?.name || p}
                                                         </option>
                                                     ))}
                                                 </select>
@@ -862,7 +737,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                 />
                                             </div>
 
-                                            {activeModel.provider !== 'gemini' && activeModel.provider !== 'ollama' && (
+                                            {activeModel.provider !== ProviderType.Gemini && activeModel.provider !== ExternalProvider.Ollama && (
                                                 <div className="space-y-1">
                                                     <label className="text-[10px] text-slate-400">API Key (Optional override)</label>
                                                     <input
@@ -875,7 +750,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                 </div>
                                             )}
 
-                                            {activeModel.provider === 'other' && (
+                                            {activeModel.provider === ExternalProvider.Other && (
                                                 <div className="space-y-1">
                                                     <label className="text-[10px] text-slate-400">Base URL (Optional override)</label>
                                                     <input

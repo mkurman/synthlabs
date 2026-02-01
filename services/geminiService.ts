@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GenerationParams } from "../types";
+import { ProviderType } from '../interfaces/enums';
 import { logger } from '../utils/logger';
 import { callExternalApi, ExternalApiConfig } from './externalApiService';
 
@@ -119,12 +120,12 @@ export const generateContentStream = async (
     });
 
     let accumulated = '';
-    for await (const chunk of result.stream) {
+    for await (const chunk of result) {
       if (abortSignal?.aborted) {
         throw new Error('Aborted by user');
       }
-      const text = chunk.text();
-      if (text) {
+      const text = chunk.text;
+      if (typeof text === 'string' && text) {
         accumulated += text;
         onChunk(text, accumulated);
       }
@@ -158,8 +159,9 @@ export const generateGeminiTopic = async (category: string, model?: string): Pro
   }
 };
 
+
 export interface OptimizePromptConfig {
-  provider: 'gemini' | 'external';
+  provider: ProviderType;
   externalProvider?: string;
   model?: string;
   customBaseUrl?: string;
@@ -185,7 +187,7 @@ export const optimizeSystemPrompt = async (
   
   Output ONLY refined prompt as a text.`;
 
-  if (config?.provider === 'external') {
+  if (config?.provider === ProviderType.External) {
     if (!config.externalProvider || !config.model || !config.apiKey) {
       throw new Error(`External provider config incomplete. Provider: ${config.externalProvider}, Model: ${config.model}, Has API Key: ${!!config.apiKey}`);
     }
@@ -301,6 +303,39 @@ export const generateReasoningTrace = async (
 
   } catch (error) {
     console.error("Reasoning Trace Gen Error", error);
+    throw error;
+  }
+};
+
+export const generateNativeText = async (
+  input: string,
+  systemPrompt: string,
+  retryOptions?: RetryOptions
+): Promise<string> => {
+  if (!API_KEY) throw new Error("Missing Gemini API Key in environment.");
+
+  const genConfig: any = {
+    systemInstruction: systemPrompt
+  };
+
+  if (retryOptions?.generationParams) {
+    if (retryOptions.generationParams.temperature !== undefined) genConfig.temperature = retryOptions.generationParams.temperature;
+    if (retryOptions.generationParams.topP !== undefined) genConfig.topP = retryOptions.generationParams.topP;
+    if (retryOptions.generationParams.topK !== undefined) genConfig.topK = retryOptions.generationParams.topK;
+    if (retryOptions.generationParams.presencePenalty !== undefined) genConfig.presencePenalty = retryOptions.generationParams.presencePenalty;
+    if (retryOptions.generationParams.frequencyPenalty !== undefined) genConfig.frequencyPenalty = retryOptions.generationParams.frequencyPenalty;
+  }
+
+  try {
+    const response = await callGeminiWithRetry(() => ai.models.generateContent({
+      model: retryOptions?.model || 'gemini-2.0-flash-exp',
+      contents: input,
+      config: genConfig
+    }), retryOptions);
+
+    return response.text?.trim() || '';
+  } catch (error) {
+    console.error("Native Text Gen Error", error);
     throw error;
   }
 };

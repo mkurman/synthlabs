@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import {
     Upload, Database, AlertTriangle, AlertCircle, Star, Trash2, CheckCircle2,
     GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
@@ -8,29 +8,41 @@ import {
     ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2, Save,
     Sparkles
 } from 'lucide-react';
-import { VerifierItem, ExternalProvider } from '../types';
+import { VerifierItem, ExternalProvider, ProviderType } from '../types';
+import { ChatRole, OutputFieldName, StreamingField, VerifierRewriteTarget } from '../interfaces/enums';
 import * as FirebaseService from '../services/firebaseService';
-import * as HuggingFaceService from '../services/huggingFaceService';
 import * as VerifierRewriterService from '../services/verifierRewriterService';
 import * as ExternalApiService from '../services/externalApiService';
 import * as GeminiService from '../services/geminiService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import ReasoningHighlighter from './ReasoningHighlighter';
+import { parseThinkTagsForDisplay } from '../utils/thinkTagParser';
 import ConversationView from './ConversationView';
 import ChatPanel from './ChatPanel';
-import { PromptService } from '../services/promptService';
 import { ToolExecutor } from '../services/toolService';
 import AutoResizeTextarea from './AutoResizeTextarea';
 import { AutoscoreConfig } from '../types';
 import { toast } from '../services/toastService';
+import { confirmService } from '../services/confirmService';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import GenerationParamsInput from './GenerationParamsInput';
+import { useVerifierToolExecutor } from '../hooks/useVerifierToolExecutor';
+import { useVerifierSessions } from '../hooks/useVerifierSessions';
+import { useVerifierOrphans } from '../hooks/useVerifierOrphans';
+import { useVerifierExportColumns } from '../hooks/useVerifierExportColumns';
+import { useVerifierImport } from '../hooks/useVerifierImport';
+import { useVerifierDbImport } from '../hooks/useVerifierDbImport';
+import { useVerifierPaginationReset } from '../hooks/useVerifierPaginationReset';
+import { useVerifierDeduplication } from '../hooks/useVerifierDeduplication';
+import { useVerifierReviewActions } from '../hooks/useVerifierReviewActions';
+import { useVerifierExportActions } from '../hooks/useVerifierExportActions';
+import { useVerifierDbActions } from '../hooks/useVerifierDbActions';
+import { useVerifierInlineEditing } from '../hooks/useVerifierInlineEditing';
 
 interface VerifierPanelProps {
-    onImportFromDb: () => Promise<void>;
     currentSessionUid: string;
     modelConfig: {
-        provider: 'gemini' | 'external';
+        provider: ProviderType;
         externalProvider: ExternalProvider;
         externalModel: string;
         apiKey: string;
@@ -38,7 +50,7 @@ interface VerifierPanelProps {
     };
 }
 
-export default function VerifierPanel({ onImportFromDb, currentSessionUid, modelConfig }: VerifierPanelProps) {
+export default function VerifierPanel({ currentSessionUid, modelConfig }: VerifierPanelProps) {
     const [data, setData] = useState<VerifierItem[]>([]);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [dataSource, setDataSource] = useState<'file' | 'db' | null>(null);
@@ -91,9 +103,9 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
     const [exportColumns, setExportColumns] = useState<Record<string, boolean>>({});
 
     // Inline Editing State
-    const [editingField, setEditingField] = useState<{ itemId: string; field: string; messageIndex?: number; originalValue: string } | null>(null);
+    const [editingField, setEditingField] = useState<{ itemId: string; field: OutputFieldName.Query | OutputFieldName.Reasoning | OutputFieldName.Answer | VerifierRewriteTarget.MessageAnswer; messageIndex?: number; originalValue: string } | null>(null);
     const [editValue, setEditValue] = useState('');
-    const [rewritingField, setRewritingField] = useState<{ itemId: string; field: string; messageIndex?: number } | null>(null);
+    const [rewritingField, setRewritingField] = useState<{ itemId: string; field: VerifierRewriteTarget; messageIndex?: number } | null>(null);
     const [streamingContent, setStreamingContent] = useState<string>('');  // Real-time streaming content
 
     // Regenerate Dropdown State
@@ -103,16 +115,16 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
     const [isRewriterPanelOpen, setIsRewriterPanelOpen] = useState(false);
     const [rewriterConfig, setRewriterConfig] = useState<VerifierRewriterService.RewriterConfig>(() => {
         const settings = SettingsService.getSettings();
-        const externalProvider = settings.defaultProvider || 'openrouter';
+        const externalProvider = settings.defaultProvider || ExternalProvider.OpenRouter;
         return {
-            provider: 'external',
-            externalProvider: externalProvider as any,
+            provider: ProviderType.External,
+            externalProvider: externalProvider as ExternalProvider,
             apiKey: '',
             model: SettingsService.getDefaultModel(externalProvider) || '',
             customBaseUrl: '',
             maxRetries: 3,
             retryDelay: 2000,
-            systemPrompt: PromptService.getPrompt('verifier', 'message_rewrite'),
+            promptCategory: 'verifier', promptRole: 'message_rewrite',
             concurrency: 1,
             delayMs: 0,
             generationParams: SettingsService.getDefaultGenerationParams()
@@ -136,12 +148,12 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
         const settings = SettingsService.getSettings();
         const gpModel = settings.generalPurposeModel;
         return {
-            provider: (gpModel?.provider === 'external' ? 'external' : 'gemini') as any,
+            provider: gpModel?.provider === ProviderType.External ? ProviderType.External : ProviderType.Gemini,
             externalProvider: (gpModel?.externalProvider || 'openrouter') as any,
             apiKey: '',
             model: gpModel?.model || 'gemini-1.5-pro',
             customBaseUrl: '',
-            systemPrompt: PromptService.getPrompt('verifier', 'autoscore'),
+            promptCategory: 'verifier', promptRole: 'autoscore',
             concurrency: 5,
             sleepTime: 0,
             maxRetries: 3,
@@ -154,636 +166,104 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const toolExecutorRef = useRef<ToolExecutor | null>(null);
-    const dataRef = useRef(data);
-    const setDataRef = useRef(setData);
-    const fetchMoreRef = useRef<any>(null);
 
-    // Sync refs
-    useEffect(() => {
-        dataRef.current = data;
-        setDataRef.current = setData;
-    }, [data]);
-
-    // Refs for ToolExecutor content access (must be declared at component level)
-    const autoSaveEnabledRef = useRef(autoSaveEnabled);
-    const handleDbUpdateRef = useRef<((item: VerifierItem) => Promise<void>) | null>(null);
-
-    // Sync refs on render
-    useEffect(() => {
-        fetchMoreRef.current = handleFetchMore;
-        autoSaveEnabledRef.current = autoSaveEnabled;
-        handleDbUpdateRef.current = handleDbUpdate;
+    const { analyzeDuplicates, handleReScan, toggleDuplicateStatus, autoResolveDuplicates } = useVerifierDeduplication({
+        data,
+        setData
     });
 
-    // Initialize ToolExecutor
-    useEffect(() => {
-        if (!toolExecutorRef.current) {
-            toolExecutorRef.current = new ToolExecutor(() => ({
-                data: dataRef.current,
-                setData: setDataRef.current,
-                autoSaveEnabled: autoSaveEnabledRef.current,
-                handleDbUpdate: handleDbUpdateRef.current,
-                fetchMoreFromDb: async (start: number, end: number) => {
-                    if (fetchMoreRef.current) {
-                        return fetchMoreRef.current(start, end);
-                    }
-                    throw new Error("Fetch handler not ready");
-                }
-            }));
-        }
-    }, []);
+    const { handleDbUpdate, handleDbRollback } = useVerifierDbActions({
+        setItemStates,
+        setData,
+        toast
+    });
 
-    // Load available sessions when Import tab is active
-    useEffect(() => {
-        if (activeTab === 'import' && FirebaseService.isFirebaseConfigured()) {
-            // Fetch saved sessions only - orphan check is now manual
-            FirebaseService.getSessionsFromFirebase()
-                .then(setAvailableSessions)
-                .catch(console.error);
-        }
-    }, [activeTab]);
+    const { handleJsonExport, handleDbSave, handleHfPush } = useVerifierExportActions({
+        data,
+        exportColumns,
+        setIsUploading,
+        hfToken,
+        hfRepo,
+        hfFormat,
+        toast
+    });
 
-    // Manual orphan check handler
-    const handleCheckOrphans = async () => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-        setIsCheckingOrphans(true);
-        setOrphanedLogsInfo(null);  // Clear previous result
-        try {
-            const result = await FirebaseService.getOrphanedLogsInfo();
-            setOrphanedLogsInfo(result);
-            if (!result.hasOrphanedLogs) {
-                toast.success("No orphaned logs found. All logs are synced!");
-            }
-        } catch (e: any) {
-            toast.error("Check failed: " + e.message);
-        } finally {
-            setIsCheckingOrphans(false);
-        }
-    };
+    const { startEditing, cancelEditing, saveEditing } = useVerifierInlineEditing({
+        editingField,
+        editValue,
+        setEditingField,
+        setEditValue,
+        setData,
+        autoSaveEnabled,
+        dataSource,
+        handleDbUpdate
+    });
+    const { handleDbImport, handleFetchMore } = useVerifierDbImport({
+        currentSessionUid,
+        selectedSessionFilter,
+        customSessionId,
+        isLimitEnabled,
+        importLimit,
+        data,
+        setIsImporting,
+        analyzeDuplicates,
+        setData,
+        setDataSource,
+        setActiveTab,
+        toast
+    });
 
-    // Reset pagination when filters or data change
-    useEffect(() => {
-        setCurrentPage(1);
-    }, [showDuplicatesOnly, filterScore, showUnsavedOnly, data.length]);
+    useVerifierToolExecutor({
+        data,
+        setData,
+        autoSaveEnabled,
+        handleFetchMore,
+        handleDbUpdate,
+        toolExecutorRef
+    });
 
-    // Dynamically discover columns from loaded data
-    useEffect(() => {
-        if (data.length === 0) return;
+    useVerifierSessions({
+        activeTab,
+        setAvailableSessions
+    });
 
-        // Collect all unique keys from all items
-        const allKeys = new Set<string>();
-        // Internal fields to exclude from export options
-        const excludeKeys = ['id', 'isDuplicate', 'duplicateGroupId', 'isDiscarded', 'verifiedTimestamp'];
-        // Priority fields that should be checked by default
-        const defaultChecked = ['query', 'reasoning', 'answer', 'full_seed', 'score', 'modelUsed', 'source', 'messages'];
+    const { handleCheckOrphans, handleSyncOrphanedLogs } = useVerifierOrphans({
+        setIsCheckingOrphans,
+        setOrphanedLogsInfo,
+        setIsSyncing,
+        setAvailableSessions
+    });
 
-        data.forEach(item => {
-            Object.keys(item).forEach(key => {
-                if (!excludeKeys.includes(key)) {
-                    allKeys.add(key);
-                }
-            });
-        });
+    useVerifierPaginationReset({
+        showDuplicatesOnly,
+        filterScore,
+        showUnsavedOnly,
+        dataLength: data.length,
+        setCurrentPage
+    });
 
-        // Build new export columns state
-        const newColumns: Record<string, boolean> = {};
-        allKeys.forEach(key => {
-            newColumns[key] = defaultChecked.includes(key);
-        });
+    useVerifierExportColumns({
+        data,
+        setExportColumns
+    });
 
-        setExportColumns(newColumns);
-    }, [data]);
+    const { handleFileUpload } = useVerifierImport({
+        setIsImporting,
+        analyzeDuplicates,
+        setData,
+        setDataSource,
+        setActiveTab,
+        toast
+    });
 
     // --- Logic: Import ---
 
-    const normalizeImportItem = (raw: any): VerifierItem => {
-        // 1. Query/Input Mapping
-        let query = raw.query || raw.instruction || raw.question || raw.prompt || raw.input || "";
-        if (!query && Array.isArray(raw.messages)) {
-            const lastUser = raw.messages.findLast((m: any) => m.role === 'user');
-            if (lastUser) query = lastUser.content;
-        }
+    // normalizeImportItem moved to verifierImportService
 
-        // 2. Answer/Output Mapping
-        let answer = raw.answer || raw.output || raw.response || raw.completion || "";
-        if (Array.isArray(raw.messages)) {
-            const lastAssistant = raw.messages.findLast((m: any) => m.role === 'assistant');
-            if (lastAssistant) answer = lastAssistant.content;
-        }
 
-        // 3. Reasoning Mapping (Added reasoning_trace)
-        const reasoning = raw.reasoning || raw.reasoning_trace || raw.thought || raw.thoughts || raw.scratchpad || raw.rationale || raw.trace || "";
-
-        // 4. Ensure strings
-        const ensureString = (val: any) => {
-            if (val === null || val === undefined) return "";
-            if (typeof val === 'string') return val;
-            return JSON.stringify(val);
-        };
-
-        // 5. Model Detection
-        // Checking raw.generator as requested
-        let modelUsed = raw.modelUsed || raw.model || raw.generator || 'Imported';
-
-        if (modelUsed === 'Imported' && raw.deepMetadata && raw.deepMetadata.writer) {
-            modelUsed = `DEEP: ${raw.deepMetadata.writer}`;
-        }
-
-        if (typeof modelUsed !== 'string') {
-            modelUsed = String(modelUsed);
-        }
-
-        return {
-            ...raw, // Keep original data fields
-            id: raw.id || crypto.randomUUID(),
-            query: ensureString(query),
-            answer: ensureString(answer),
-            reasoning: ensureString(reasoning),
-            // Preserve multi-turn conversation data
-            messages: Array.isArray(raw.messages) ? raw.messages : undefined,
-            isMultiTurn: Array.isArray(raw.messages) && raw.messages.length > 0,
-            // Defaults for VerifierItem
-            seed_preview: raw.seed_preview || ensureString(query).substring(0, 100),
-            full_seed: raw.full_seed || ensureString(query),
-            timestamp: raw.timestamp || new Date().toISOString(),
-            modelUsed: modelUsed,
-            score: raw.score || 0,
-            isDuplicate: false,
-            isDiscarded: false,
-            hasUnsavedChanges: false
-        };
-    };
-
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = e.target.files;
-        if (!files || files.length === 0) return;
-
-        setIsImporting(true);
-        const readers: Promise<VerifierItem[]>[] = [];
-
-        Array.from(files).forEach((file: File) => {
-            readers.push(new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    if (typeof event.target?.result === 'string') {
-                        let items: VerifierItem[] = [];
-                        try {
-                            const content = event.target.result.trim();
-                            if (content.startsWith('[') && content.endsWith(']')) {
-                                // JSON Array
-                                const parsed = JSON.parse(content);
-                                if (Array.isArray(parsed)) {
-                                    items = parsed.map(normalizeImportItem);
-                                }
-                            } else {
-                                // JSONL (Line-delimited JSON)
-                                const lines = content.split('\n');
-                                items = lines
-                                    .filter(line => line.trim().length > 0)
-                                    .map(line => {
-                                        try {
-                                            return normalizeImportItem(JSON.parse(line));
-                                        } catch (e) {
-                                            return null;
-                                        }
-                                    })
-                                    .filter((i): i is VerifierItem => i !== null);
-                            }
-                        } catch (err) {
-                            console.error("Failed to parse file", file.name, err);
-                        }
-                        resolve(items);
-                    } else {
-                        resolve([]);
-                    }
-                };
-                reader.readAsText(file);
-            }));
-        });
-
-        Promise.all(readers).then(results => {
-            const allItems = results.flat();
-            if (allItems.length > 0) {
-                analyzeDuplicates(allItems);
-                setData(allItems);
-                setDataSource('file');
-                setActiveTab('review');
-            } else {
-                toast.error("No valid data found in selected files. Please check the format (JSON Array or JSONL).");
-            }
-            setIsImporting(false);
-        });
-
-        e.target.value = '';
-    };
-
-    const handleDbImport = async () => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-        setIsImporting(true);
-        try {
-            // Determine parameters
-            const limitToUse = isLimitEnabled ? importLimit : undefined;
-            let sessionUidToUse: string | undefined = undefined;
-
-            if (selectedSessionFilter === 'current') {
-                sessionUidToUse = currentSessionUid;
-            } else if (selectedSessionFilter === 'custom') {
-                sessionUidToUse = customSessionId.trim();
-                if (!sessionUidToUse) {
-                    toast.info("Please enter a Session ID.");
-                    setIsImporting(false);
-                    return;
-                }
-            } else if (selectedSessionFilter !== 'all') {
-                sessionUidToUse = selectedSessionFilter;
-            }
-
-            const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUidToUse);
-            if (items.length === 0) {
-                toast.info("No items found matching criteria.");
-            } else {
-                analyzeDuplicates(items);
-                setData(items);
-                setDataSource('db');
-                setActiveTab('review');
-            }
-        } catch (e: any) {
-            toast.error("Import failed: " + e.message);
-        } finally {
-            setIsImporting(false);
-        }
-    };
-
-
-
-    const handleFetchMore = async (start: number, end: number) => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-
-        setIsImporting(true);
-        try {
-            // Find the last item to use as cursor
-            const lastItem = data[data.length - 1];
-            const lastDoc = lastItem?._doc;
-
-            let sessionUidToUse: string | undefined = undefined;
-            if (selectedSessionFilter === 'current') {
-                sessionUidToUse = currentSessionUid;
-            } else if (selectedSessionFilter === 'custom') {
-                sessionUidToUse = customSessionId.trim();
-            } else if (selectedSessionFilter !== 'all') {
-                sessionUidToUse = selectedSessionFilter;
-            }
-
-            // Calculate needed items
-            // If explicit start/end via tool, we might need logic, but for UI button we usually just fetch 'pageSize' more
-            // For tool compatibility: the tool is asking for index X to Y.
-            // If we have items up to index Z, and X > Z, we need to fetch.
-            // But we can only fetch APPENDING to the end. We cannot invoke random access startAt(X).
-            // So we just fetch next batch using fetchLogsAfter with lastDoc.
-
-            const limitToFetch = (end && start) ? (end - start) : (importLimit || 100);
-
-            const newItems = await FirebaseService.fetchLogsAfter({
-                limitCount: limitToFetch,
-                sessionUid: sessionUidToUse,
-                lastDoc: lastDoc
-            });
-
-            if (newItems.length === 0) {
-                toast.info("No more items to fetch.");
-                return;
-            }
-
-            // Append to data
-            setData(prev => {
-                const next = [...prev, ...newItems];
-                analyzeDuplicates(next); // Re-analyze duplicates with new data
-                return next;
-            });
-            toast.success(`Fetched ${newItems.length} more items.`);
-
-        } catch (e: any) {
-            toast.error("Fetch more failed: " + e.message);
-        } finally {
-            setIsImporting(false);
-        }
-    };
-
-    // --- Logic: Sync Orphaned Logs ---
-
-    const handleSyncOrphanedLogs = async () => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-        setIsSyncing(true);
-        try {
-            const result = await FirebaseService.syncOrphanedLogsToSessions();
-            if (result.sessionsCreated === 0) {
-                toast.info("No orphaned logs found. All logs are already connected to sessions.");
-            } else {
-                toast.success(`Created ${result.sessionsCreated} sessions for ${result.logsAssigned} orphaned logs.`);
-            }
-            // Refresh session data after sync
-            FirebaseService.getSessionsFromFirebase()
-                .then(setAvailableSessions)
-                .catch(console.error);
-            // Re-check for orphaned logs (should now be empty)
-            FirebaseService.getOrphanedLogsInfo()
-                .then(setOrphanedLogsInfo)
-                .catch(console.error);
-        } catch (e: any) {
-            toast.error("Sync failed: " + e.message);
-        } finally {
-            setIsSyncing(false);
-        }
-    };
-
-    // --- Logic: Deduplication ---
-
-    const analyzeDuplicates = (items: VerifierItem[]) => {
-        const map = new Map<string, string[]>(); // Hash -> ID[]
-
-        // Reset flags first
-        items.forEach(i => {
-            i.isDuplicate = false;
-            i.duplicateGroupId = undefined;
-        });
-
-        // Group by Input hash (simple string matching for now)
-        items.forEach(item => {
-            if (item.isDiscarded) return; // Skip discarded items from colliding
-
-            const key = (item.query || item.full_seed || '').trim().toLowerCase();
-            if (!map.has(key)) map.set(key, []);
-            map.get(key)?.push(item.id);
-        });
-
-        // Mark duplicates
-        map.forEach((ids, _key) => {
-            if (ids.length > 1) {
-                const groupId = crypto.randomUUID();
-                ids.forEach(id => {
-                    const item = items.find(i => i.id === id);
-                    if (item) {
-                        item.isDuplicate = true;
-                        item.duplicateGroupId = groupId;
-                    }
-                });
-            }
-        });
-    };
-
-    const handleReScan = () => {
-        setData((prev: VerifierItem[]) => {
-            const next = prev.map(i => ({ ...i })); // Shallow copy
-            analyzeDuplicates(next);
-
-            // Check for changes in duplicate status
-            if (next.length === prev.length) {
-                for (let i = 0; i < next.length; i++) {
-                    if (next[i].isDuplicate !== prev[i].isDuplicate || next[i].duplicateGroupId !== prev[i].duplicateGroupId) {
-                        next[i].hasUnsavedChanges = true;
-                    }
-                }
-            }
-
-            return next;
-        });
-    };
-
-    const toggleDuplicateStatus = (id: string) => {
-        setData((prev: VerifierItem[]) => prev.map(item => {
-            if (item.id === id) {
-                return { ...item, isDuplicate: !item.isDuplicate, hasUnsavedChanges: true };
-            }
-            return item;
-        }));
-    };
-
-    const autoResolveDuplicates = () => {
-        // For each duplicate group, keep the one with the highest score.
-        // If scores tied, keep the longest answer.
-        const groups = new Map<string, VerifierItem[]>();
-
-        data.filter((i: VerifierItem) => i.isDuplicate && !i.isDiscarded).forEach((i: VerifierItem) => {
-            if (i.duplicateGroupId) {
-                if (!groups.has(i.duplicateGroupId)) groups.set(i.duplicateGroupId, []);
-                groups.get(i.duplicateGroupId)?.push(i);
-            }
-        });
-
-        const idsToDiscard = new Set<string>();
-
-        groups.forEach((groupItems) => {
-            // Sort desc by score, then answer length
-            groupItems.sort((a, b) => {
-                if (b.score !== a.score) return b.score - a.score;
-                return (b.answer?.length || 0) - (a.answer?.length || 0);
-            });
-
-            // Keep [0], discard rest
-            for (let i = 1; i < groupItems.length; i++) {
-                idsToDiscard.add(groupItems[i].id);
-            }
-        });
-
-        setData((prev: VerifierItem[]) => prev.map(item =>
-            idsToDiscard.has(item.id)
-                ? { ...item, isDiscarded: true, hasUnsavedChanges: true }
-                : item
-        ));
-    };
-
-    // --- Logic: Review ---
-
-    const setScore = (id: string, score: number) => {
-        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, score, hasUnsavedChanges: true } : i));
-    };
-
-    const toggleDiscard = (id: string) => {
-        setData((prev: VerifierItem[]) => prev.map(i => i.id === id ? { ...i, isDiscarded: !i.isDiscarded, hasUnsavedChanges: true } : i));
-    };
-
-    // --- Logic: Export ---
-
-    const getExportData = () => {
-        return data.filter((i: VerifierItem) => !i.isDiscarded).map((item: VerifierItem) => {
-            const exportItem: any = {};
-            Object.keys(exportColumns).forEach(key => {
-                if (exportColumns[key]) {
-                    exportItem[key] = (item as any)[key];
-                }
-            });
-            return exportItem;
-        });
-    };
-
-    const handleJsonExport = () => {
-        const exportData = getExportData();
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `synth_verified_${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    };
-
-    const handleDbSave = async () => {
-        setIsUploading(true);
-        try {
-            const itemsToSave = data.filter((i: VerifierItem) => !i.isDiscarded);
-            const count = await FirebaseService.saveFinalDataset(itemsToSave, 'synth_verified');
-            toast.success(`Saved ${count} items to 'synth_verified' collection.`);
-        } catch (e: any) {
-            toast.error("DB Save Failed: " + e.message);
-        } finally {
-            setIsUploading(false);
-        }
-    };
-
-    const handleDbUpdate = async (item: VerifierItem) => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-
-        setItemStates(prev => ({ ...prev, [item.id]: 'saving' }));
-
-        try {
-            await FirebaseService.updateLogItem(item.id, {
-                query: item.query,
-                reasoning: item.reasoning,
-                answer: item.answer,
-                // Note: 'score' and 'isDiscarded' are verifier-only fields, not part of the raw synth_log schema
-            });
-            setData(prev => prev.map(i => i.id === item.id ? { ...i, hasUnsavedChanges: false } : i));
-            setItemStates(prev => ({ ...prev, [item.id]: 'saved' }));
-            setTimeout(() => {
-                setItemStates(prev => ({ ...prev, [item.id]: 'idle' }));
-            }, 10000);
-        } catch (e: any) {
-            console.error("Failed to update item:", e);
-            toast.error("Update failed: " + e.message);
-            setItemStates(prev => ({ ...prev, [item.id]: 'idle' }));
-        }
-    };
-
-    const handleDbRollback = async (item: VerifierItem) => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error("Firebase not configured.");
-            return;
-        }
-
-        toast.info("Rolling back from DB...");
-
-        try {
-            const freshItem = await FirebaseService.fetchLogItem(item.id);
-            if (freshItem) {
-                // Preserve local UI flags that aren't in DB
-                const restoredItem = {
-                    ...freshItem,
-                    isDuplicate: item.isDuplicate,        // Keep duplicate status (local analysis)
-                    duplicateGroupId: item.duplicateGroupId,
-                    hasUnsavedChanges: false
-                };
-
-                setData((prev: VerifierItem[]) => prev.map(i => i.id === item.id ? restoredItem : i));
-                toast.success("Changes reverted to DB version.");
-            } else {
-                toast.error("Item not found in DB.");
-            }
-        } catch (e: any) {
-            console.error("Failed to rollback item:", e);
-            toast.error("Rollback failed: " + e.message);
-        }
-    };
-
-    const handleHfPush = async () => {
-        if (!hfToken || !hfRepo) {
-            toast.info("Please provide HF Token and Repo ID.");
-            return;
-        }
-        setIsUploading(true);
-        try {
-            const itemsToSave = getExportData();
-            const filename = hfFormat === 'parquet' ? 'train.parquet' : 'data.jsonl';
-            const url = await HuggingFaceService.uploadToHuggingFace(hfToken, hfRepo, itemsToSave, filename, true, hfFormat);
-            toast.success("Successfully pushed to: " + url);
-        } catch (e: any) {
-            toast.error("HF Push Failed: " + e.message);
-        } finally {
-            setIsUploading(false);
-        }
-    };
-
-    // --- Inline Editing Handlers ---
-
-    const startEditing = (itemId: string, field: 'query' | 'reasoning' | 'answer', currentValue: string) => {
-        setEditingField({ itemId, field, originalValue: currentValue });
-        setEditValue(currentValue);
-    };
-
-    const cancelEditing = () => {
-        setEditingField(null);
-        setEditValue('');
-    };
-
-    const saveEditing = () => {
-        if (!editingField) return;
-
-        let updatedItem: VerifierItem | null = null;
-
-        setData((prev: VerifierItem[]) => prev.map(item => {
-            if (item.id === editingField.itemId) {
-                let newItem = { ...item };
-                if (editingField.field === 'message' && editingField.messageIndex !== undefined && item.messages) {
-                    const newMessages = [...item.messages];
-                    if (newMessages[editingField.messageIndex]) {
-                        // Parse <think> tags to update reasoning field as well
-                        const thinkMatch = editValue.match(/<think>([\s\S]*?)<\/think>/);
-                        const newReasoning = thinkMatch ? thinkMatch[1].trim() : undefined;
-
-                        newMessages[editingField.messageIndex] = {
-                            ...newMessages[editingField.messageIndex],
-                            content: editValue,
-                            // Update reasoning field to match <think> content, or clear it if no <think> tags
-                            reasoning: newReasoning
-                        };
-                    }
-                    newItem = { ...item, messages: newMessages };
-                } else if (['query', 'reasoning', 'answer'].includes(editingField.field)) {
-                    newItem = { ...item, [editingField.field]: editValue };
-                }
-
-                // Mark as unsaved
-                newItem.hasUnsavedChanges = true;
-
-                updatedItem = newItem;
-                return newItem;
-            }
-            return item;
-        }));
-
-        setEditingField(null);
-        setEditValue('');
-
-        if (autoSaveEnabled && dataSource === 'db' && updatedItem) {
-            handleDbUpdate(updatedItem);
-        }
-    };
+    const { setScore, toggleDiscard } = useVerifierReviewActions({
+        setData
+    });
 
     // Handler for rewriting user query messages with streaming
     const handleMessageQueryRewrite = async (itemId: string, messageIndex: number) => {
@@ -795,7 +275,7 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
         }
 
         const targetMessage = item.messages[messageIndex];
-        if (targetMessage.role !== 'user') {
+        if (targetMessage.role !== ChatRole.User) {
             console.log('Not a user message, skipping');
             return;
         }
@@ -805,17 +285,17 @@ export default function VerifierPanel({ onImportFromDb, currentSessionUid, model
             return;
         }
 
-        setRewritingField({ itemId, field: 'message_query', messageIndex });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageQuery, messageIndex });
         setStreamingContent('');
 
         try {
             console.log('Calling query rewrite streaming...');
-            const systemPrompt = rewriterConfig.systemPrompt || `You are an expert at improving and clarifying user queries. 
+            const userPrompt = `You are an expert at improving and clarifying user queries. 
 Given a user's question or request, rewrite it to be clearer, more specific, and better structured.
 Preserve the original intent while improving clarity.
-Return ONLY the improved query text.`;
+Return ONLY the improved query text.
 
-            const userPrompt = `Rewrite and improve this user query:
+Rewrite and improve this user query:
 
 ${targetMessage.content}
 
@@ -828,10 +308,9 @@ Expected Output Format:
 
             // Direct streaming call
             const newValue = await VerifierRewriterService.callRewriterAIStreaming(
-                systemPrompt,
                 userPrompt,
                 rewriterConfig,
-                (_chunk, accumulated) => {
+                (_chunk: string, accumulated: string) => {
                     // Try to extract from JSON if LLM returns JSON
                     const extracted = extractJsonFields(accumulated);
                     if (extracted.answer) {
@@ -892,7 +371,7 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: 'message', messageIndex });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageAnswer, messageIndex });
         setStreamingContent('');  // Clear previous streaming content
 
         try {
@@ -983,7 +462,7 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: 'message_reasoning', messageIndex });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageReasoning, messageIndex });
         setStreamingContent('');  // Clear previous streaming content
 
         try {
@@ -1066,7 +545,7 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: 'message_both', messageIndex });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageBoth, messageIndex });
         setStreamingContent('');  // Clear previous streaming content
 
         try {
@@ -1134,7 +613,10 @@ Expected Output Format:
         }
     };
 
-    const handleFieldRewrite = async (itemId: string, field: 'query' | 'reasoning' | 'answer') => {
+    const handleFieldRewrite = async (
+        itemId: string,
+        field: VerifierRewriteTarget.Query | VerifierRewriteTarget.Reasoning | VerifierRewriteTarget.Answer
+    ) => {
         const item = data.find(i => i.id === itemId);
         if (!item) return;
 
@@ -1154,10 +636,16 @@ Expected Output Format:
 
         try {
             // Use streaming variant for real-time display
+            const rewritableField = field === VerifierRewriteTarget.Query
+                ? OutputFieldName.Query
+                : field === VerifierRewriteTarget.Reasoning
+                    ? OutputFieldName.Reasoning
+                    : OutputFieldName.Answer;
+
             const newValue = await VerifierRewriterService.rewriteFieldStreaming(
                 {
                     item: itemForRewrite,
-                    field,
+                    field: rewritableField,
                     config: rewriterConfig,
                     promptSet: SettingsService.getSettings().promptSet
                 },
@@ -1166,11 +654,11 @@ Expected Output Format:
                     const extracted = extractJsonFields(accumulated);
 
                     // Display the extracted field content based on what we're rewriting
-                    if (field === 'reasoning') {
+                    if (field === VerifierRewriteTarget.Reasoning) {
                         setStreamingContent(extracted.reasoning || extracted.answer || accumulated);
-                    } else if (field === 'answer') {
+                    } else if (field === VerifierRewriteTarget.Answer) {
                         setStreamingContent(extracted.answer || extracted.reasoning || accumulated);
-                    } else if (field === 'query') {
+                    } else if (field === VerifierRewriteTarget.Query) {
                         setStreamingContent(extracted.answer || accumulated);
                     } else {
                         // Fallback: show raw content if can't extract field
@@ -1182,11 +670,11 @@ Expected Output Format:
             // After streaming completes, save the final value
             const extracted = extractJsonFields(newValue);
             let finalValue = newValue;
-            if (field === 'reasoning') {
+            if (field === VerifierRewriteTarget.Reasoning) {
                 finalValue = extracted.reasoning || extracted.answer || newValue;
-            } else if (field === 'answer') {
+            } else if (field === VerifierRewriteTarget.Answer) {
                 finalValue = extracted.answer || extracted.reasoning || newValue;
-            } else if (field === 'query') {
+            } else if (field === VerifierRewriteTarget.Query) {
                 finalValue = extracted.answer || newValue;
             }
 
@@ -1224,7 +712,7 @@ Expected Output Format:
             query: item.query || (item as any).QUERY || item.full_seed || ''
         };
 
-        setRewritingField({ itemId, field: 'both' });
+        setRewritingField({ itemId, field: VerifierRewriteTarget.Both });
         setStreamingContent('');  // Clear previous streaming content
 
         try {
@@ -1232,7 +720,7 @@ Expected Output Format:
             const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
                 {
                     item: itemForRewrite,
-                    field: 'reasoning',  // Start with reasoning field prompt
+                    field: OutputFieldName.Reasoning,  // Start with reasoning field prompt
                     config: rewriterConfig,
                     promptSet: SettingsService.getSettings().promptSet
                 },
@@ -1282,10 +770,12 @@ Expected Output Format:
     // --- Logic: Autoscore ---
 
     const autoscoreSingleItem = async (item: VerifierItem, signal?: AbortSignal): Promise<number> => {
-        const { provider, externalProvider, apiKey, model, customBaseUrl, systemPrompt, maxRetries, retryDelay, generationParams } = autoscoreConfig;
+        const { provider, externalProvider, apiKey, model, customBaseUrl, maxRetries, retryDelay, generationParams } = autoscoreConfig;
 
-        const effectiveApiKey = apiKey || SettingsService.getApiKey(provider === 'external' ? externalProvider : 'gemini');
+        const effectiveApiKey = apiKey || SettingsService.getApiKey(provider === ProviderType.External ? externalProvider : ProviderType.Gemini);
         const effectiveBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
+
+        const systemPrompt = `You are an expert evaluator. Score the quality of the reasoning and answer on a scale of 1-5, where 1 is poor and 5 is excellent.`;
 
         const userPrompt = `## ITEM TO SCORE
 Query: ${item.query || (item as any).QUERY || item.full_seed || ''}
@@ -1297,7 +787,7 @@ Based on the criteria above, provide a 1-5 score.`;
 
         let rawResult: string = '';
 
-        if (provider === 'gemini') {
+        if (provider === ProviderType.Gemini) {
             const result = await GeminiService.generateReasoningTrace(userPrompt, systemPrompt, {
                 maxRetries: maxRetries,
                 retryDelay: retryDelay,
@@ -1310,8 +800,7 @@ Based on the criteria above, provide a 1-5 score.`;
                 apiKey: effectiveApiKey,
                 model: model,
                 customBaseUrl: effectiveBaseUrl,
-                systemPrompt,
-                userPrompt,
+                userPrompt: systemPrompt + "\n\n" + userPrompt,
                 signal,
                 maxRetries: maxRetries,
                 retryDelay: retryDelay,
@@ -1352,7 +841,7 @@ Based on the criteria above, provide a 1-5 score.`;
         return filteredData.filter(i => selectedItemIds.has(i.id));
     };
 
-    const handleBulkRewrite = async (mode: 'query' | 'reasoning' | 'answer' | 'both') => {
+    const handleBulkRewrite = async (mode: VerifierRewriteTarget.Query | VerifierRewriteTarget.Reasoning | VerifierRewriteTarget.Answer | VerifierRewriteTarget.Both) => {
         const itemsToProcess = getSelectedItems();
         if (itemsToProcess.length === 0) {
             toast.info("No items selected.");
@@ -1364,7 +853,14 @@ Based on the criteria above, provide a 1-5 score.`;
             return;
         }
 
-        if (!confirm(`Rewrite ${mode.toUpperCase()} for ${itemsToProcess.length} SELECTED items using ${rewriterConfig.model}? This cannot be undone.`)) return;
+        const confirmRewrite = await confirmService.confirm({
+            title: 'Confirm rewrite?',
+            message: `Rewrite ${mode.toUpperCase()} for ${itemsToProcess.length} SELECTED items using ${rewriterConfig.model}? This cannot be undone.`,
+            confirmLabel: 'Rewrite',
+            cancelLabel: 'Cancel',
+            variant: 'warning'
+        });
+        if (!confirmRewrite) return;
 
         setIsRewritingAll(true);
         setRewriteProgress({ current: 0, total: itemsToProcess.length });
@@ -1386,12 +882,12 @@ Based on the criteria above, provide a 1-5 score.`;
                 };
 
                 try {
-                    if (mode === 'both') {
+                    if (mode === VerifierRewriteTarget.Both) {
                         // Both: Use the same strategy as handleBothRewrite (request reasoning, expect both)
                         const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
                             {
                                 item: itemForRewrite,
-                                field: 'reasoning',
+                                field: OutputFieldName.Reasoning,
                                 config: rewriterConfig,
                                 promptSet: SettingsService.getSettings().promptSet
                             },
@@ -1407,10 +903,16 @@ Based on the criteria above, provide a 1-5 score.`;
                         ));
                     } else {
                         // Single field: Reasoning or Answer
+                        const rewritableField = mode === VerifierRewriteTarget.Query
+                            ? OutputFieldName.Query
+                            : mode === VerifierRewriteTarget.Reasoning
+                                ? OutputFieldName.Reasoning
+                                : OutputFieldName.Answer;
+
                         const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
                             {
                                 item: itemForRewrite,
-                                field: mode,
+                                field: rewritableField,
                                 config: rewriterConfig,
                                 promptSet: SettingsService.getSettings().promptSet
                             },
@@ -1419,11 +921,11 @@ Based on the criteria above, provide a 1-5 score.`;
 
                         const extracted = extractJsonFields(rawResult);
                         let finalValue = rawResult;
-                        if (mode === 'reasoning') {
+                        if (mode === VerifierRewriteTarget.Reasoning) {
                             finalValue = extracted.reasoning || extracted.answer || rawResult;
-                        } else if (mode === 'answer') {
+                        } else if (mode === VerifierRewriteTarget.Answer) {
                             finalValue = extracted.answer || extracted.reasoning || rawResult;
-                        } else if (mode === 'query') {
+                        } else if (mode === VerifierRewriteTarget.Query) {
                             // extractJsonFields maps 'response'/'query' keys to 'answer' property
                             finalValue = extracted.answer || rawResult;
                         }
@@ -1474,7 +976,14 @@ Based on the criteria above, provide a 1-5 score.`;
             return;
         }
 
-        if (!confirm(`Autoscore ${itemsToScore.length} unrated items from selection using ${autoscoreConfig.model}?`)) return;
+        const confirmAutoscore = await confirmService.confirm({
+            title: 'Confirm autoscore?',
+            message: `Autoscore ${itemsToScore.length} unrated items from selection using ${autoscoreConfig.model}?`,
+            confirmLabel: 'Autoscore',
+            cancelLabel: 'Cancel',
+            variant: 'warning'
+        });
+        if (!confirmAutoscore) return;
 
         setIsAutoscoring(true);
         setAutoscoreProgress({ current: 0, total: itemsToScore.length });
@@ -1524,7 +1033,14 @@ Based on the criteria above, provide a 1-5 score.`;
             return;
         }
 
-        if (!confirm(`Update ${itemsToUpdate.length} items in DB?`)) return;
+        const confirmUpdate = await confirmService.confirm({
+            title: 'Update database?',
+            message: `Update ${itemsToUpdate.length} items in DB?`,
+            confirmLabel: 'Update',
+            cancelLabel: 'Cancel',
+            variant: 'warning'
+        });
+        if (!confirmUpdate) return;
 
         setIsBulkUpdating(true);
         let successCount = 0;
@@ -1586,7 +1102,11 @@ Based on the criteria above, provide a 1-5 score.`;
             setItemsToDelete([]);
         } catch (e) {
             console.error("Failed to delete items", e);
-            alert("Failed to delete items. See console for details.");
+            await confirmService.alert({
+                title: 'Delete failed',
+                message: 'Failed to delete items. See console for details.',
+                variant: 'danger'
+            });
         } finally {
             setIsDeleting(false);
         }
@@ -1893,24 +1413,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                         />
                                     </div>
                                 </div>
-                                <div className="col-span-1 md:col-span-4">
-                                    <details className="group">
-                                        <summary className="flex items-center gap-2 cursor-pointer list-none text-[10px] text-slate-500 font-bold uppercase mb-1 select-none">
-                                            <span>System Prompt (optional)</span>
-                                            <span className="text-slate-600 group-open:rotate-90 transition-transform">▶</span>
-                                        </summary>
-                                        <textarea
-                                            value={rewriterConfig.systemPrompt || ''}
-                                            onChange={e => setRewriterConfig(prev => ({ ...prev, systemPrompt: e.target.value }))}
-                                            placeholder="Leave empty to use default prompt from selected prompt set..."
-                                            className="w-full h-32 bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300 rounded px-2 py-1.5 outline-none focus:border-teal-500 resize-y mt-1"
-                                            spellCheck={false}
-                                        />
-                                        <p className="text-[9px] text-slate-600 mt-1">
-                                            Custom prompt overrides the verifier rewrite prompts from PromptService
-                                        </p>
-                                    </details>
-                                </div>
+
                             </div>
                         )}
                     </div>
@@ -1932,19 +1435,19 @@ Based on the criteria above, provide a 1-5 score.`;
                                 <div>
                                     <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Provider</label>
                                     <select
-                                        value={autoscoreConfig.provider === 'external' ? autoscoreConfig.externalProvider : 'gemini'}
+                                        value={autoscoreConfig.provider === ProviderType.External ? autoscoreConfig.externalProvider : ProviderType.Gemini}
                                         onChange={e => {
                                             const val = e.target.value;
-                                            const isExt = val !== 'gemini';
+                                            const isExt = val !== ProviderType.Gemini;
                                             setAutoscoreConfig(prev => ({
                                                 ...prev,
-                                                provider: isExt ? 'external' : 'gemini',
+                                                provider: isExt ? ProviderType.External : ProviderType.Gemini,
                                                 externalProvider: isExt ? val as ExternalProvider : prev.externalProvider
                                             }));
                                         }}
                                         className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
                                     >
-                                        <option value="gemini">Gemini</option>
+                                        <option value={ProviderType.Gemini}>Gemini</option>
                                         {AVAILABLE_PROVIDERS.map(p => (
                                             <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
                                         ))}
@@ -2003,18 +1506,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                     </div>
                                 </div>
                                 <div className="col-span-1 md:col-span-4">
-                                    <details className="group">
-                                        <summary className="flex items-center gap-2 cursor-pointer list-none text-[10px] text-slate-500 font-bold uppercase mb-1 select-none">
-                                            <span>Scoring Prompt</span>
-                                            <span className="text-slate-600 group-open:rotate-90 transition-transform">▶</span>
-                                        </summary>
-                                        <textarea
-                                            value={autoscoreConfig.systemPrompt}
-                                            onChange={e => setAutoscoreConfig(prev => ({ ...prev, systemPrompt: e.target.value }))}
-                                            className="w-full h-32 bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300 rounded px-2 py-1.5 outline-none focus:border-emerald-500 resize-y mt-1"
-                                            spellCheck={false}
-                                        />
-                                    </details>
+
                                 </div>
                                 <div className="col-span-1 md:col-span-4 border-t border-slate-800 pt-4">
                                     <GenerationParamsInput
@@ -2081,17 +1573,17 @@ Based on the criteria above, provide a 1-5 score.`;
                                 {!isRewritingAll && selectedItemIds.size > 0 && (
                                     <div className="hidden group-hover:block absolute top-full left-0 pt-1 w-48 z-50">
                                         <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2">
-                                            <button onClick={() => handleBulkRewrite('query')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                            <button onClick={() => handleBulkRewrite(VerifierRewriteTarget.Query)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
                                                 Query Only
                                             </button>
-                                            <button onClick={() => handleBulkRewrite('reasoning')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                            <button onClick={() => handleBulkRewrite(VerifierRewriteTarget.Reasoning)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
                                                 Reasoning Only
                                             </button>
-                                            <button onClick={() => handleBulkRewrite('answer')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                                            <button onClick={() => handleBulkRewrite(VerifierRewriteTarget.Answer)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
                                                 Answer Only
                                             </button>
                                             <div className="h-px bg-slate-800 my-1"></div>
-                                            <button onClick={() => handleBulkRewrite('both')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-teal-400 hover:text-teal-300 font-bold transition-colors">
+                                            <button onClick={() => handleBulkRewrite(VerifierRewriteTarget.Both)} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-800 text-teal-400 hover:text-teal-300 font-bold transition-colors">
                                                 Rewrite Both
                                             </button>
                                         </div>
@@ -2205,7 +1697,12 @@ Based on the criteria above, provide a 1-5 score.`;
                         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                             <div className={`flex-1 overflow-y-auto pr-2 grid gap-4 ${viewMode === 'grid' ? 'grid-cols-2 lg:grid-cols-3 content-start' : 'grid-cols-1 content-start'}`}>
 
-                                {currentItems.map(item => (
+                                {currentItems.map(item => {
+                                    const parsedAnswer = parseThinkTagsForDisplay(item.answer || '');
+                                    const displayReasoning = item.reasoning || parsedAnswer.reasoning || '';
+                                    const displayAnswer = parsedAnswer.hasThinkTags ? parsedAnswer.answer : item.answer;
+
+                                    return (
                                     <div key={item.id} className={`bg-slate-900 border relative group transition-all rounded-xl p-4 flex flex-col gap-3 ${item.hasUnsavedChanges
                                         ? 'border-orange-500/80 shadow-[0_0_15px_-3px_rgba(249,115,22,0.3)]'
                                         : item.isDuplicate
@@ -2283,7 +1780,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     {item.isMultiTurn && <MessageCircle className="w-3 h-3 text-cyan-400" />}
                                                 </h4>
                                                 <div className="flex items-center gap-1">
-                                                    {editingField?.itemId === item.id && editingField.field === 'query' ? (
+                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Query ? (
                                                         <>
                                                             <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
                                                                 <Check className="w-3 h-3" />
@@ -2294,16 +1791,16 @@ Based on the criteria above, provide a 1-5 score.`;
                                                         </>
                                                     ) : (
                                                         <>
-                                                            <button onClick={() => startEditing(item.id, 'query', item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                            <button onClick={() => startEditing(item.id, OutputFieldName.Query, item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
                                                                 <Edit3 className="w-3 h-3" />
                                                             </button>
                                                             <button
-                                                                onClick={() => handleFieldRewrite(item.id, 'query')}
-                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === 'query'}
+                                                                onClick={() => handleFieldRewrite(item.id, VerifierRewriteTarget.Query)}
+                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Query}
                                                                 className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
                                                                 title="AI Rewrite"
                                                             >
-                                                                {rewritingField?.itemId === item.id && rewritingField.field === 'query' ? (
+                                                                {rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Query ? (
                                                                     <Loader2 className="w-3 h-3 animate-spin" />
                                                                 ) : (
                                                                     <RotateCcw className="w-3 h-3" />
@@ -2316,7 +1813,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     )}
                                                 </div>
                                             </div>
-                                            {editingField?.itemId === item.id && editingField.field === 'query' ? (
+                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Query ? (
                                                 <AutoResizeTextarea
                                                     value={editValue}
                                                     onChange={e => setEditValue(e.target.value)}
@@ -2351,7 +1848,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     <ConversationView
                                                         messages={item.messages}
                                                         onEditStart={(idx, content) => {
-                                                            setEditingField({ itemId: item.id, field: 'message', messageIndex: idx, originalValue: content });
+                                                            setEditingField({ itemId: item.id, field: VerifierRewriteTarget.MessageAnswer, messageIndex: idx, originalValue: content });
                                                             setEditValue(content);
                                                         }}
                                                         onEditSave={saveEditing}
@@ -2361,20 +1858,20 @@ Based on the criteria above, provide a 1-5 score.`;
                                                         onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
                                                         onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
                                                         onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
-                                                        editingIndex={editingField?.itemId === item.id && editingField.field === 'message' ? editingField.messageIndex : undefined}
+                                                        editingIndex={editingField?.itemId === item.id && editingField.field === VerifierRewriteTarget.MessageAnswer ? editingField.messageIndex : undefined}
                                                         editValue={editValue}
                                                         rewritingIndex={
                                                             rewritingField?.itemId === item.id &&
-                                                                (rewritingField.field === 'message' || rewritingField.field === 'message_reasoning' || rewritingField.field === 'message_both' || rewritingField.field === 'message_query')
+                                                                (rewritingField.field === VerifierRewriteTarget.MessageAnswer || rewritingField.field === VerifierRewriteTarget.MessageReasoning || rewritingField.field === VerifierRewriteTarget.MessageBoth || rewritingField.field === VerifierRewriteTarget.MessageQuery)
                                                                 ? rewritingField.messageIndex
                                                                 : undefined
                                                         }
                                                         streamingContent={rewritingField?.itemId === item.id ? streamingContent : undefined}
                                                         streamingField={
-                                                            rewritingField?.field === 'message_reasoning' ? 'reasoning' :
-                                                                rewritingField?.field === 'message' ? 'answer' :
-                                                                    rewritingField?.field === 'message_both' ? 'both' :
-                                                                        rewritingField?.field === 'message_query' ? 'query' : undefined
+                                                            rewritingField?.field === VerifierRewriteTarget.MessageReasoning ? StreamingField.Reasoning :
+                                                                rewritingField?.field === VerifierRewriteTarget.MessageAnswer ? StreamingField.Answer :
+                                                                    rewritingField?.field === VerifierRewriteTarget.MessageBoth ? StreamingField.Both :
+                                                                        rewritingField?.field === VerifierRewriteTarget.MessageQuery ? StreamingField.Query : undefined
                                                         }
                                                     />
                                                 </div>
@@ -2386,7 +1883,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     <div className="flex items-center justify-between mb-1">
                                                         <h4 className="text-[10px] uppercase font-bold text-slate-500">Reasoning Trace</h4>
                                                         <div className="flex items-center gap-1 relative">
-                                                            {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Reasoning ? (
                                                                 <>
                                                                     <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
                                                                         <Check className="w-3 h-3" />
@@ -2397,7 +1894,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                                 </>
                                                             ) : (
                                                                 <>
-                                                                    <button onClick={() => startEditing(item.id, 'reasoning', item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                    <button onClick={() => startEditing(item.id, OutputFieldName.Reasoning, item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
                                                                         <Edit3 className="w-3 h-3" />
                                                                     </button>
                                                                     <div className="relative">
@@ -2419,13 +1916,13 @@ Based on the criteria above, provide a 1-5 score.`;
                                                                                 onClick={(e) => e.stopPropagation()}
                                                                             >
                                                                                 <button
-                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'reasoning'); }}
+                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, VerifierRewriteTarget.Reasoning); }}
                                                                                     className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
                                                                                 >
                                                                                     <RotateCcw className="w-3 h-3" /> Reasoning Only
                                                                                 </button>
                                                                                 <button
-                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, 'answer'); }}
+                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, VerifierRewriteTarget.Answer); }}
                                                                                     className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
                                                                                 >
                                                                                     <RotateCcw className="w-3 h-3" /> Answer Only
@@ -2446,7 +1943,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             )}
                                                         </div>
                                                     </div>
-                                                    {editingField?.itemId === item.id && editingField.field === 'reasoning' ? (
+                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Reasoning ? (
                                                         <AutoResizeTextarea
                                                             value={editValue}
                                                             onChange={e => setEditValue(e.target.value)}
@@ -2454,14 +1951,14 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             autoFocus
                                                             className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[100px] font-mono text-xs"
                                                         />
-                                                    ) : (rewritingField?.itemId === item.id && rewritingField.field === 'reasoning' && streamingContent ? (
+                                                    ) : (rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Reasoning && streamingContent ? (
                                                         <div className="max-h-32 overflow-y-auto text-[10px] text-teal-300 font-mono animate-pulse">
                                                             {streamingContent}
                                                             <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
                                                         </div>
                                                     ) : (
                                                         <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
-                                                            <ReasoningHighlighter text={item.reasoning} />
+                                                            <ReasoningHighlighter text={displayReasoning} />
                                                         </div>
                                                     ))}
                                                 </div>
@@ -2471,7 +1968,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     <div className="flex items-center justify-between mb-1">
                                                         <h4 className="text-[10px] uppercase font-bold text-slate-500">Answer Preview</h4>
                                                         <div className="flex items-center gap-1">
-                                                            {editingField?.itemId === item.id && editingField.field === 'answer' ? (
+                                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Answer ? (
                                                                 <>
                                                                     <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
                                                                         <Check className="w-3 h-3" />
@@ -2481,13 +1978,13 @@ Based on the criteria above, provide a 1-5 score.`;
                                                                     </button>
                                                                 </>
                                                             ) : (
-                                                                <button onClick={() => startEditing(item.id, 'answer', item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                <button onClick={() => startEditing(item.id, OutputFieldName.Answer, item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
                                                                     <Edit3 className="w-3 h-3" />
                                                                 </button>
                                                             )}
                                                         </div>
                                                     </div>
-                                                    {editingField?.itemId === item.id && editingField.field === 'answer' ? (
+                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Answer ? (
                                                         <AutoResizeTextarea
                                                             value={editValue}
                                                             onChange={e => setEditValue(e.target.value)}
@@ -2495,7 +1992,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             autoFocus
                                                             className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[80px]"
                                                         />
-                                                    ) : rewritingField?.itemId === item.id && rewritingField.field === 'answer' && streamingContent ? (
+                                                    ) : rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Answer && streamingContent ? (
                                                         <div className="max-h-32 overflow-y-auto">
                                                             <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
                                                                 {streamingContent}
@@ -2504,7 +2001,7 @@ Based on the criteria above, provide a 1-5 score.`;
                                                         </div>
                                                     ) : (
                                                         <div className="max-h-32 overflow-y-auto">
-                                                            <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{item.answer}</p>
+                                                            <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{displayAnswer}</p>
                                                         </div>
                                                     )}
                                                 </div>
@@ -2516,7 +2013,8 @@ Based on the criteria above, provide a 1-5 score.`;
                                             {item.deepMetadata && <span className="bg-teal-900/20 text-teal-400 px-1.5 py-0.5 rounded">Deep</span>}
                                         </div>
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
 
 

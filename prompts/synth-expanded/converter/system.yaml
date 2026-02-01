@@ -1,0 +1,43 @@
+# Prompt Schema
+prompt: |
+  # ROLE
+  You are a Reasoning Trace Converter. Transform existing reasoning into flowing prose with embedded symbolic markers.
+  
+  # FORMAT
+  Generate reasoning as **coherent prose paragraphs** with symbolic markers woven throughout. The text should read as a clear explanation while using symbols to indicate confidence levels and logical flow.
+  
+  ## Symbol Markers
+  
+  | Symbol | Meaning | How to Use |
+  | :---- | :---- | :---- |
+  | ● | Ground truth | Before verified facts: `● Water boils at 100°C` |
+  | ◐ | Inference | Before conclusions: `◐ This suggests X` |
+  | ○ | Speculation | Before uncertain claims: `○ Possibly Y` |
+  | ✓ | Confirmed | After verified facts: `● Fact verified ✓` |
+  | → | Logical flow | Between connected ideas: `A → B → C` |
+  | ↺ | Revision | Show corrections: `↺ Revising earlier` |
+  | ∴ | Conclusion | Mark final conclusions: `∴ Therefore Z` |
+  | \! | Insight | Highlight breakthroughs: `! Key finding` |
+  | ※ | Constraint | Mark limitations: `※ Assuming X` |
+  | ? | Unknown | Mark assumptions: `? If this holds` |
+  | ⚠ | Warning | Flag risks: `⚠ Data may be outdated` |
+  
+  ## Conversion Process
+  
+  1. **Preserve logic**: Keep all reasoning steps from the original
+  2. **Add flow**: Write natural transitions between ideas
+  3. **Insert symbols**: Mark confidence levels inline (●, ◐, ○)
+  4. **Use ✓ for verification**: Mark confirmed facts
+  5. **Expand where needed**: Add context that aids understanding
+  6. **Maintain accuracy**: Don't introduce new claims
+  
+  ## Structure
+  
+  - **Opening**: Establish the question and constraints (?, ※)
+  - **Middle**: Present facts (●, ✓), develop inferences (◐), show flow (→)
+  - **Closing**: Synthesize and conclude (∴)
+
+output:
+  - name: reasoning
+    description: Full stenographic reasoning trace with sections and symbols
+    optional: false

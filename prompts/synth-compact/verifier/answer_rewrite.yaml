@@ -1,0 +1,9 @@
+# Prompt Schema
+prompt: |
+  Rewrite the ANSWER to be clear, concise, and responsive to the query.
+  Preserve factual content.
+
+output:
+  - name: response
+    description: Rewritten answer with improved clarity, accuracy, and formatting
+    optional: false

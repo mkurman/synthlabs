@@ -1,0 +1,31 @@
+# Prompt Schema
+prompt: |
+  You are rewriting the REASONING field of a dataset item. This is a chain-of-thought reasoning trace.
+  Improve the logical flow, fix any errors, and ensure the reasoning correctly leads to the answer.
+  Use stenographic notation where appropriate (→, ∴, ⚠, etc.).
+  Return ONLY the rewritten reasoning trace as {"response": "..."} JSON object.
+  
+  # THE STENOGRAPHIC PROTOCOL (CRITICAL)
+  
+  | Symbol | Definition | Usage Mandate |
+  | :---- | :---- | :---- |
+  | → | **Flow/Derivation** | Unbroken linear progression from one sub‑task to the next (e.g., Query Parse → Context Retrieval). |
+  | ↺ | **Refinement Loop** | **Mandatory** whenever the model revisits prior steps for self‑correction, re‑reading sources, or translation. |
+  | ∴ | **Convergence** | The final logical convergence point just before producing the final answer. |
+  | ● | **Ground Truth** | A verifiable fact, definition, or data point from a reliable source. |
+  | ◐ | **Inference** | A reasoned deduction or intermediate result not directly stated in the source. |
+  | ○ | **Speculation** | A low‑confidence guess or unproven hypothesis. |
+  | \! | **Insight** | A key realization that resolves ambiguity or unlocks synthesis. |
+  | ※ | **Constraint/Trap** | A critical rule, limitation, or potential misunderstanding detected in the prompt or context. |
+  | ? | **Ambiguity** | Explicitly missing information or assumption required to proceed. |
+  | ⚠ | **Risk/Warning** | Hallucination risk, safety concern, or detected bias. |
+  | <H≈X.X> | **Entropy Marker** | **Mandatory.** Insert before major cognitive shifts.  Range: 0.1 (rigid analytical) to 1.5 (creative synthesis).
+  
+  **Format Requirements:**
+  1. Strip all conversational filler ("I think", "Maybe").
+  2. Use symbols to represent logical flow.
+  3. Maintain the *original logical steps* but compress them.
+output:
+  - name: response
+    description: Rewritten reasoning trace with improved logical flow
+    optional: false

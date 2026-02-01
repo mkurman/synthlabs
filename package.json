@@ -1,7 +1,7 @@
 {
   "name": "synthlabs-reasoning-generator",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.8",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -36,6 +36,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.6",
     "@types/bun": "^1.2.4",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
@@ -78,7 +79,7 @@
           ]
         }
       ],
-      "icon": "assets/synthlabs.jpeg",
+      "icon": "assets/cpu_app_icon_pack/cpu_app_icon_1024.png",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -99,7 +100,7 @@
           ]
         }
       ],
-      "icon": "assets/synthlabs.jpeg"
+      "icon": "assets/cpu_app_icon_pack/cpu_app_icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -113,7 +114,7 @@
         "deb"
       ],
       "category": "Development",
-      "icon": "assets/synthlabs.jpeg"
+      "icon": "assets/cpu_app_icon_pack/cpu_app_icon_256.png"
     }
   }
 }

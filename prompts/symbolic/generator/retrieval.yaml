@@ -1,0 +1,19 @@
+# Prompt Schema
+prompt: |
+  You are the ARCHIVIST (Retrieval Agent).
+  Your task is to identify the Hard Constraints and Immutable Facts from the Ether (Input).
+  
+  Extract:
+  1.  **Immutable Facts [T:1]**: Constants, definitions, numbers.
+  2.  **Boundaries [◊]**: Limits like time, physics, word count.
+  3.  **Entities [Ω]**: Key actors or objects.
+output:
+  - name: facts
+    description: List of strict facts extracted from the input
+    optional: false
+  - name: constraints
+    description: List of numerical constraints and physical limitations
+    optional: false
+  - name: entities
+    description: List of key entities mentioned in the input
+    optional: false

@@ -1,15 +1,10 @@
-import { ExternalProvider } from '../types';
+import { ExternalProvider, ChatMessage, ApiType, ProviderType } from '../types';
 import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 import { ToolExecutor } from './toolService';
+import { ChatRole } from '../interfaces/enums';
 
-export interface ChatMessage {
-    role: 'user' | 'model' | 'tool' | 'assistant' | 'system';
-    content: string;
-    toolCallId?: string; // For tool results
-    reasoning?: string;  // Parsed <think> content
-    toolCalls?: ToolCall[]; // Parsed tool calls
-}
+export type { ChatMessage };
 
 export interface ToolCall {
     id: string;
@@ -20,6 +15,7 @@ export interface ToolCall {
 export class ChatService {
     private toolExecutor: ToolExecutor;
     private history: ChatMessage[] = [];
+    private readonly maxHistory = 200;
 
     constructor(toolExecutor: ToolExecutor) {
         this.toolExecutor = toolExecutor;
@@ -33,13 +29,20 @@ export class ChatService {
         this.history = [];
     }
 
+    private pushMessage(message: ChatMessage) {
+        this.history.push(message);
+        if (this.history.length > this.maxHistory) {
+            this.history.splice(0, this.history.length - this.maxHistory);
+        }
+    }
+
     public addUserMessage(content: string) {
-        this.history.push({ role: 'user', content });
+        this.pushMessage({ role: ChatRole.User, content });
     }
 
     public addToolResult(toolCallId: string, result: string) {
-        this.history.push({
-            role: 'tool',
+        this.pushMessage({
+            role: ChatRole.Tool,
             toolCallId: toolCallId,
             content: result
         });
@@ -182,7 +185,7 @@ ${JSON.stringify(definitions, null, 2)}
 
     // Call the AI model (using GeminiService as the backend for now, flexible to others)
     public async streamResponse(
-        modelConfig: { provider: string, model: string, apiKey?: string, customBaseUrl?: string },
+        modelConfig: { provider: ExternalProvider | ProviderType.Gemini, model: string, apiKey?: string, customBaseUrl?: string, apiType?: ApiType },
         includeTools: boolean,
         onChunk: (chunk: string, accumulated: string, usage?: any) => void,
         abortSignal?: AbortSignal
@@ -192,9 +195,9 @@ ${JSON.stringify(definitions, null, 2)}
         // Flatten history into the "User Prompt" for now
         let conversationText = "";
         this.history.forEach(msg => {
-            if (msg.role === 'tool') {
+            if (msg.role === ChatRole.Tool) {
                 conversationText += `<tool_response>\n${msg.content}\n</tool_response>\n`;
-            } else if (msg.role === 'model') {
+            } else if (msg.role === ChatRole.Model) {
                 if (msg.reasoning) conversationText += `<think>${msg.reasoning}</think>\n`;
                 if (msg.toolCalls && msg.toolCalls.length > 0) {
                     msg.toolCalls.forEach(tc => {
@@ -213,12 +216,13 @@ ${JSON.stringify(definitions, null, 2)}
         conversationText += `\nAssistant:`;
 
         const config = {
-            provider: modelConfig.provider || 'openrouter',
+            provider: modelConfig.provider || ExternalProvider.OpenRouter,
             model: modelConfig.model,
-            apiKey: modelConfig.apiKey || SettingsService.getApiKey(modelConfig.provider)
+            apiKey: modelConfig.apiKey || SettingsService.getApiKey(modelConfig.provider),
+            apiType: modelConfig.apiType || ApiType.Chat // Pass API type (defaults to 'chat')
         };
 
-        if (config.provider === 'gemini') {
+        if (config.provider === ProviderType.Gemini) {
             // Legacy/Gemini path: use manual XML tools for now (or refactor GeminiService later)
             // If includeTools is true, we need to append the manual prompt
             const manualTools = includeTools ? this.buildManualToolPrompt() : '';
@@ -231,9 +235,9 @@ ${JSON.stringify(definitions, null, 2)}
                 { role: 'system', content: systemPrompt },
                 ...this.history.map(msg => {
                     // Map internal roles to OpenAI roles and fields
-                    if (msg.role === 'user') return { role: 'user', content: msg.content };
-                    if (msg.role === 'tool') return { role: 'tool', tool_call_id: msg.toolCallId || 'unknown', content: msg.content };
-                    if (msg.role === 'model') {
+                    if (msg.role === ChatRole.User) return { role: 'user', content: msg.content };
+                    if (msg.role === ChatRole.Tool) return { role: 'tool', tool_call_id: msg.toolCallId || 'unknown', content: msg.content };
+                    if (msg.role === ChatRole.Model) {
                         return {
                             role: 'assistant',
                             content: msg.content || null,
@@ -262,6 +266,7 @@ ${JSON.stringify(definitions, null, 2)}
                 provider: config.provider as ExternalProvider,
                 model: config.model,
                 apiKey: config.apiKey,
+                apiType: config.apiType, // Pass API type
                 customBaseUrl: customEndpoint,
                 systemPrompt: systemPrompt,
                 userPrompt: '', // We pass full messages array now
