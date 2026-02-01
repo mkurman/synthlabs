@@ -75,47 +75,6 @@ export default function App() {
     const [externalApiKey, setExternalApiKey] = useState('');
     const [externalModel, setExternalModel] = useState('anthropic/claude-3.5-sonnet');
     const [customBaseUrl, setCustomBaseUrl] = useState('');
-    
-    // --- State: Ollama Integration ---
-    const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-    const [ollamaLoading, setOllamaLoading] = useState(false);
-
-    // Fetch Ollama models
-    const refreshOllamaModels = useCallback(async () => {
-        setOllamaLoading(true);
-        setOllamaStatus('checking');
-        try {
-            const isOnline = await checkOllamaStatus();
-            if (isOnline) {
-                setOllamaStatus('online');
-                const models = await fetchOllamaModels();
-                setOllamaModels(models);
-                // If no (valid) model selected for Ollama and models available, select first one
-                if (
-                    models.length > 0 &&
-                    externalProvider === 'ollama' &&
-                    (!externalModel || externalModel.includes('/'))
-                ) {
-                    setExternalModel(models[0].name);
-                }
-            } else {
-                setOllamaStatus('offline');
-                setOllamaModels([]);
-            }
-        } catch {
-            setOllamaStatus('offline');
-            setOllamaModels([]);
-        }
-        setOllamaLoading(false);
-    }, [externalProvider, externalModel]);
-
-    // Auto-fetch Ollama models when Ollama provider is selected
-    useEffect(() => {
-        if (externalProvider === 'ollama') {
-            refreshOllamaModels();
-        }
-    }, [externalProvider]);
 
     const {
         ollamaModels,
@@ -329,11 +288,11 @@ export default function App() {
         // This handles both initial setup and when user checks/unchecks fields
         const currentSelected = generationParams.selectedFields || [];
         const newSelected = fieldSelection.selectedFields;
-        
+
         // Only update if arrays are different
         const hasChanged = currentSelected.length !== newSelected.length ||
             !currentSelected.every((field, idx) => field === newSelected[idx]);
-        
+
         if (hasChanged) {
             setGenerationParams(prev => ({
                 ...prev,
