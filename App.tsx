@@ -83,6 +83,13 @@ export default function App() {
         refreshOllamaModels
     } = useOllama({ externalProvider, externalModel, setExternalModel });
 
+    const {
+        ollamaModels,
+        ollamaStatus,
+        ollamaLoading,
+        refreshOllamaModels
+    } = useOllama({ externalProvider, externalModel, setExternalModel });
+
     // --- State: Generation Params ---
     const [generationParams, setGenerationParams] = useState<GenerationParams>({});
 
