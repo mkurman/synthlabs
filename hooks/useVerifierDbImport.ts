@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import * as FirebaseService from '../services/firebaseService';
 import { resolveSessionFilter } from '../services/verifierSessionFilterService';
 import type { VerifierItem } from '../types';
+import { VerifierPanelTab } from '../interfaces/enums/VerifierPanelTab';
 
 interface UseVerifierDbImportOptions {
     currentSessionUid: string;
@@ -15,7 +16,7 @@ interface UseVerifierDbImportOptions {
     analyzeDuplicates: (items: VerifierItem[]) => void;
     setData: (items: VerifierItem[]) => void;
     setDataSource: (source: 'file' | 'db' | null) => void;
-    setActiveTab: (tab: 'import' | 'review' | 'export') => void;
+    setActiveTab: (tab: VerifierPanelTab) => void;
     toast: { error: (message: string) => void; info: (message: string) => void };
 }
 
@@ -59,7 +60,7 @@ export function useVerifierDbImport({
                 analyzeDuplicates(items);
                 setData(items);
                 setDataSource('db');
-                setActiveTab('review');
+                setActiveTab(VerifierPanelTab.Review);
             }
         } catch (e: any) {
             toast.error('Import failed: ' + e.message);

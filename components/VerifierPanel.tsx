@@ -1,15 +1,17 @@
 
 import { useState, useRef, useMemo } from 'react';
 import {
-    Upload, Database, AlertTriangle, AlertCircle, Star, Trash2, CheckCircle2,
-    GitBranch, Download, RefreshCcw, Filter, FileJson, ArrowRight,
-    ShieldCheck, LayoutGrid, List, Search, Server, Plus,
-    ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileType, MessageCircle,
+    Upload, AlertTriangle, AlertCircle, Star, Trash2,
+    GitBranch, Download, RefreshCcw, Filter,
+    ShieldCheck, LayoutGrid, List, Search,
+    ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, MessageCircle,
     ChevronUp, ChevronDown, Maximize2, Minimize2, Edit3, RotateCcw, Check, X, Loader2, Settings2, Save,
     Sparkles
 } from 'lucide-react';
 import { VerifierItem, ExternalProvider, ProviderType } from '../types';
 import { ChatRole, OutputFieldName, StreamingField, VerifierRewriteTarget } from '../interfaces/enums';
+import { VerifierPanelTab } from '../interfaces/enums/VerifierPanelTab';
+import { VerifierViewMode } from '../interfaces/enums/VerifierViewMode';
 import * as FirebaseService from '../services/firebaseService';
 import * as VerifierRewriterService from '../services/verifierRewriterService';
 import * as ExternalApiService from '../services/externalApiService';
@@ -38,6 +40,8 @@ import { useVerifierReviewActions } from '../hooks/useVerifierReviewActions';
 import { useVerifierExportActions } from '../hooks/useVerifierExportActions';
 import { useVerifierDbActions } from '../hooks/useVerifierDbActions';
 import { useVerifierInlineEditing } from '../hooks/useVerifierInlineEditing';
+import ImportTab from './verifier/ImportTab';
+import ExportTab from './verifier/ExportTab';
 
 interface VerifierPanelProps {
     currentSessionUid: string;
@@ -52,9 +56,9 @@ interface VerifierPanelProps {
 
 export default function VerifierPanel({ currentSessionUid, modelConfig }: VerifierPanelProps) {
     const [data, setData] = useState<VerifierItem[]>([]);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+    const [viewMode, setViewMode] = useState<VerifierViewMode>(VerifierViewMode.List);
     const [dataSource, setDataSource] = useState<'file' | 'db' | null>(null);
-    const [activeTab, setActiveTab] = useState<'import' | 'review' | 'export'>('import');
+    const [activeTab, setActiveTab] = useState<VerifierPanelTab>(VerifierPanelTab.Import);
 
     // Import State
     const [importLimit, setImportLimit] = useState<number>(100);
@@ -1137,15 +1141,15 @@ Based on the criteria above, provide a 1-5 score.`;
             {/* Header Tabs */}
             <div className="flex justify-center mb-8">
                 <div className="bg-slate-950 p-1 rounded-lg border border-slate-800 flex gap-1">
-                    {['import', 'review', 'export'].map((tab) => (
+                    {[VerifierPanelTab.Import, VerifierPanelTab.Review, VerifierPanelTab.Export].map((tab) => (
                         <button
                             key={tab}
-                            onClick={() => setActiveTab(tab as any)}
+                            onClick={() => setActiveTab(tab)}
                             className={`px-6 py-2 rounded-md text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all ${activeTab === tab ? 'bg-teal-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
                         >
-                            {tab === 'import' && <Upload className="w-4 h-4" />}
-                            {tab === 'review' && <ShieldCheck className="w-4 h-4" />}
-                            {tab === 'export' && <Download className="w-4 h-4" />}
+                            {tab === VerifierPanelTab.Import && <Upload className="w-4 h-4" />}
+                            {tab === VerifierPanelTab.Review && <ShieldCheck className="w-4 h-4" />}
+                            {tab === VerifierPanelTab.Export && <Download className="w-4 h-4" />}
                             {tab}
                         </button>
                     ))}
@@ -1153,153 +1157,27 @@ Based on the criteria above, provide a 1-5 score.`;
             </div>
 
             {/* IMPORT TAB */}
-            {activeTab === 'import' && (
-                <div className="flex-1 flex flex-col items-center justify-center gap-6 animate-in fade-in slide-in-from-bottom-4">
-                    <div className="text-center">
-                        <h2 className="text-2xl font-bold text-white mb-2">Import Data for Verification</h2>
-                        <p className="text-slate-400 max-w-md mx-auto">Load raw synthetic logs from local JSON/JSONL files or fetch directly from the generated database.</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl mt-4">
-                        <button onClick={() => fileInputRef.current?.click()} className="group flex flex-col items-center gap-4 p-8 rounded-xl border-2 border-dashed border-slate-700 hover:border-teal-500 hover:bg-slate-800/50 transition-all cursor-pointer relative overflow-hidden">
-                            <div className="absolute inset-0 bg-teal-900/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                            <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center group-hover:scale-110 transition-transform relative z-10">
-                                <FileJson className="w-8 h-8 text-teal-400" />
-                            </div>
-                            <div className="text-center relative z-10">
-                                <h3 className="text-white font-bold">Load Files</h3>
-                                <p className="text-xs text-slate-500 mt-1">.json or .jsonl arrays</p>
-                                <div className="mt-2 text-[10px] text-teal-400 font-medium bg-teal-900/30 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                                    <Plus className="w-3 h-3" /> Multi-select Supported
-                                </div>
-                            </div>
-                            <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".json,.jsonl" multiple />
-                        </button>
-
-                        <div className="group flex flex-col items-center gap-4 p-8 rounded-xl border-2 border-dashed border-slate-700 hover:border-pink-500 hover:bg-slate-800/50 transition-all relative">
-                            <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-2">
-                                <Database className="w-8 h-8 text-pink-400" />
-                            </div>
-                            <div className="text-center w-full space-y-3">
-                                <h3 className="text-white font-bold">Fetch DB</h3>
-
-                                {/* Session Selector */}
-                                <div className="w-full text-left">
-                                    <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Source Session</label>
-                                    <select
-                                        value={selectedSessionFilter}
-                                        onChange={e => setSelectedSessionFilter(e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-pink-500 outline-none mb-2"
-                                    >
-                                        <option value="all">All Sessions</option>
-                                        <option value="current">Current Session</option>
-                                        <option value="custom">Specific Session ID...</option>
-                                        {availableSessions.length > 0 && <optgroup label="💾 Saved Cloud Sessions">
-                                            {availableSessions.map((s: FirebaseService.SavedSession) => (
-                                                <option key={s.id} value={s.id}>{s.name} ({s.logCount !== undefined ? `${s.logCount} items` : new Date(s.createdAt).toLocaleDateString()})</option>
-                                            ))}
-                                        </optgroup>}
-                                    </select>
-
-                                    {selectedSessionFilter === 'custom' && (
-                                        <div className="animate-in fade-in slide-in-from-top-1">
-                                            <input
-                                                type="text"
-                                                value={customSessionId}
-                                                onChange={e => setCustomSessionId(e.target.value)}
-                                                placeholder="Paste Session UID..."
-                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-300 focus:border-pink-500 outline-none"
-                                            />
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Limit Controls */}
-                                <div className="flex items-center justify-between gap-4 w-full bg-slate-900/50 p-2 rounded border border-slate-800">
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="checkbox"
-                                            checked={isLimitEnabled}
-                                            onChange={e => setIsLimitEnabled(e.target.checked)}
-                                            className="accent-pink-500"
-                                            id="limitToggle"
-                                        />
-                                        <label htmlFor="limitToggle" className="text-xs text-slate-300 cursor-pointer">Limit Rows</label>
-                                    </div>
-
-                                    <input
-                                        type="number"
-                                        value={importLimit}
-                                        onChange={e => setImportLimit(Number(e.target.value))}
-                                        disabled={!isLimitEnabled}
-                                        className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white text-right focus:border-pink-500 outline-none disabled:opacity-50"
-                                    />
-                                </div>
-
-                                <button
-                                    onClick={handleDbImport}
-                                    disabled={isImporting}
-                                    className="w-full mt-2 bg-pink-600 hover:bg-pink-500 text-white py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                                >
-                                    {isImporting ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                                    Fetch Data
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Orphaned Logs Section - Manual check button or results */}
-                    <div className="mt-8 text-center">
-                        {!isCheckingOrphans && !orphanedLogsInfo?.hasOrphanedLogs && (
-                            <div className="animate-in fade-in">
-                                <p className="text-xs text-slate-500 mb-3">Check if there are any logs without matching sessions.</p>
-                                <button
-                                    onClick={handleCheckOrphans}
-                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-all border border-slate-700"
-                                >
-                                    <Search className="w-3.5 h-3.5" />
-                                    Check for Orphaned Logs
-                                </button>
-                            </div>
-                        )}
-                        {isCheckingOrphans && (
-                            <div className="animate-in fade-in">
-                                <div className="max-w-md mx-auto bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-                                    <div className="flex items-center justify-center gap-3">
-                                        <RefreshCcw className="w-5 h-5 text-slate-400 animate-spin" />
-                                        <span className="text-xs text-slate-400">Checking for orphaned logs...</span>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                        {!isCheckingOrphans && orphanedLogsInfo?.hasOrphanedLogs && (
-                            <div className="animate-in fade-in slide-in-from-bottom-2">
-                                <div className="max-w-md mx-auto bg-amber-900/20 border border-amber-600/40 rounded-xl p-4">
-                                    <div className="flex items-start gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-amber-600/20 flex items-center justify-center flex-shrink-0">
-                                            <AlertTriangle className="w-5 h-5 text-amber-400" />
-                                        </div>
-                                        <div className="flex-1 text-left">
-                                            <h4 className="text-amber-300 font-bold text-sm mb-1">Unsynced Logs Detected</h4>
-                                            <p className="text-xs text-amber-200/70 mb-3">
-                                                Found <span className="font-bold text-amber-300">{orphanedLogsInfo.totalOrphanedLogs} logs</span> across{' '}
-                                                <span className="font-bold text-amber-300">{orphanedLogsInfo.orphanedSessionCount} sessions</span> without matching session records.
-                                            </p>
-                                            <button
-                                                onClick={handleSyncOrphanedLogs}
-                                                disabled={isSyncing}
-                                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-all disabled:opacity-50"
-                                            >
-                                                {isSyncing ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5" />}
-                                                Sync Now
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
+            {activeTab === VerifierPanelTab.Import && (
+                <ImportTab
+                    fileInputRef={fileInputRef}
+                    handleFileUpload={handleFileUpload}
+                    selectedSessionFilter={selectedSessionFilter}
+                    setSelectedSessionFilter={setSelectedSessionFilter}
+                    availableSessions={availableSessions}
+                    customSessionId={customSessionId}
+                    setCustomSessionId={setCustomSessionId}
+                    isLimitEnabled={isLimitEnabled}
+                    setIsLimitEnabled={setIsLimitEnabled}
+                    importLimit={importLimit}
+                    setImportLimit={setImportLimit}
+                    handleDbImport={handleDbImport}
+                    isImporting={isImporting}
+                    isCheckingOrphans={isCheckingOrphans}
+                    orphanedLogsInfo={orphanedLogsInfo}
+                    handleCheckOrphans={handleCheckOrphans}
+                    handleSyncOrphanedLogs={handleSyncOrphanedLogs}
+                    isSyncing={isSyncing}
+                />
             )}
 
             {/* REVIEW TAB */}
@@ -1686,8 +1564,8 @@ Based on the criteria above, provide a 1-5 score.`;
                                 <Sparkles className="w-4 h-4" />
                             </button>
                             <div className="h-4 w-px bg-slate-800 mx-2"></div>
-                            <button onClick={() => setViewMode('list')} className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-teal-600 text-white' : 'text-slate-500'}`}><List className="w-4 h-4" /></button>
-                            <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-teal-600 text-white' : 'text-slate-500'}`}><LayoutGrid className="w-4 h-4" /></button>
+                            <button onClick={() => setViewMode(VerifierViewMode.List)} className={`p-1.5 rounded ${viewMode === VerifierViewMode.List ? 'bg-teal-600 text-white' : 'text-slate-500'}`}><List className="w-4 h-4" /></button>
+                            <button onClick={() => setViewMode(VerifierViewMode.Grid)} className={`p-1.5 rounded ${viewMode === VerifierViewMode.Grid ? 'bg-teal-600 text-white' : 'text-slate-500'}`}><LayoutGrid className="w-4 h-4" /></button>
                         </div>
                     </div>
 
@@ -2085,69 +1963,21 @@ Based on the criteria above, provide a 1-5 score.`;
             )}
 
             {/* EXPORT TAB */}
-            {activeTab === 'export' && (
-                <div className="flex-1 flex flex-col gap-8 animate-in fade-in max-w-4xl mx-auto w-full">
-                    <div className="bg-slate-950 p-6 rounded-xl border border-slate-800">
-                        <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-teal-400" /> 1. Select Columns</h3>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            {Object.keys(exportColumns).map(col => (
-                                <label key={col} className="flex items-center gap-2 cursor-pointer group">
-                                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${exportColumns[col] ? 'bg-teal-600 border-teal-600' : 'bg-slate-900 border-slate-700 group-hover:border-slate-500'}`}>
-                                        {exportColumns[col] && <ArrowRight className="w-3 h-3 text-white" />}
-                                    </div>
-                                    <input type="checkbox" checked={exportColumns[col]} onChange={e => setExportColumns(prev => ({ ...prev, [col]: e.target.checked }))} className="hidden" />
-                                    <span className="text-xs text-slate-300 font-mono">{col}</span>
-                                </label>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Local/DB Actions */}
-                        <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 flex flex-col justify-between">
-                            <div>
-                                <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2"><Database className="w-4 h-4 text-pink-400" /> 2. Save / Download</h3>
-                                <p className="text-xs text-slate-500 mb-6">Save the curated dataset to the 'synth_final' collection or download as JSON.</p>
-                            </div>
-                            <div className="flex flex-col gap-3">
-                                <button onClick={handleDbSave} disabled={isUploading} className="bg-pink-600/10 hover:bg-pink-600/20 border border-pink-600/20 text-pink-400 py-2.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2">
-                                    {isUploading ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
-                                    Save to 'synth_verified'
-                                </button>
-                                <button onClick={handleJsonExport} className="bg-slate-800 hover:bg-slate-700 text-white py-2.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2">
-                                    <FileJson className="w-3.5 h-3.5" />
-                                    Download JSON
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* HF Actions */}
-                        <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 flex flex-col justify-between">
-                            <div>
-                                <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2"><Server className="w-4 h-4 text-amber-400" /> 3. Push to HuggingFace</h3>
-                                <div className="space-y-3 mt-4">
-                                    <input type="text" value={hfRepo} onChange={e => setHfRepo(e.target.value)} placeholder="Repo ID (e.g. user/my-dataset)" className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-amber-500 outline-none" />
-                                    <input type="password" value={hfToken} onChange={e => setHfToken(e.target.value)} placeholder="HF Token (Write Access)" className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-amber-500 outline-none" />
-
-                                    <div className="pt-2">
-                                        <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Format</label>
-                                        <div className="flex bg-slate-900 border border-slate-700 rounded overflow-hidden">
-                                            <button onClick={() => setHfFormat('jsonl')} className={`flex-1 py-1.5 text-[10px] font-bold ${hfFormat === 'jsonl' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>JSONL</button>
-                                            <div className="w-px bg-slate-700"></div>
-                                            <button onClick={() => setHfFormat('parquet')} className={`flex-1 py-1.5 text-[10px] font-bold flex items-center justify-center gap-1 ${hfFormat === 'parquet' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>
-                                                <FileType className="w-3 h-3" /> Parquet
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <button onClick={handleHfPush} disabled={isUploading} className="mt-4 bg-amber-600/10 hover:bg-amber-600/20 border border-amber-600/20 text-amber-400 py-2.5 rounded-lg font-bold text-xs transition-all flex items-center justify-center gap-2">
-                                {isUploading ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                                Push to Hub
-                            </button>
-                        </div>
-                    </div>
-                </div>
+            {activeTab === VerifierPanelTab.Export && (
+                <ExportTab
+                    exportColumns={exportColumns}
+                    setExportColumns={setExportColumns}
+                    handleDbSave={handleDbSave}
+                    handleJsonExport={handleJsonExport}
+                    handleHfPush={handleHfPush}
+                    isUploading={isUploading}
+                    hfRepo={hfRepo}
+                    setHfRepo={setHfRepo}
+                    hfToken={hfToken}
+                    setHfToken={setHfToken}
+                    hfFormat={hfFormat}
+                    setHfFormat={setHfFormat}
+                />
             )}
 
             {/* Delete Confirmation Modal */}
