@@ -178,3 +178,37 @@ declare global {
     electronAPI?: ElectronAPI;
   }
 }
+
+// Session Management Interfaces
+export interface SessionAnalytics {
+  totalItems: number;
+  completedItems: number;
+  errorCount: number;
+  totalTokens: number;
+  totalCost: number;
+  avgResponseTime: number;
+  successRate: number;
+  lastUpdated: number; // timestamp
+}
+
+export interface SessionData {
+  id: string;
+  name: string;
+  mode: import('./interfaces/enums').AppView;
+  status: import('./interfaces/enums/SessionStatus').SessionStatus;
+  storageMode: import('./interfaces/enums/StorageMode').StorageMode;
+  createdAt: number; // timestamp
+  updatedAt: number; // timestamp
+  itemCount: number;
+  analytics?: SessionAnalytics;
+  settings?: Record<string, any>; // Mode-specific settings
+  dataset?: string;
+}
+
+export interface PaginatedItems<T> {
+  items: T[];
+  totalCount: number;
+  currentPage: number;
+  pageSize: number;
+  hasMore: boolean;
+}

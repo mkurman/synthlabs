@@ -46,8 +46,18 @@ import { useSyncedRef } from './hooks/useSyncedRef';
 import { useFieldSelection } from './hooks/useFieldSelection';
 import AppOverlays from './components/layout/AppOverlays';
 import AppMainContent from './components/layout/AppMainContent';
-import AppHeader from './components/layout/AppHeader';
 import { useAppViewProps } from './hooks/useAppViewProps';
+
+// Session Management
+import { useSessionManager } from './hooks/useSessionManager';
+import { useSessionAutoSave } from './hooks/useSessionAutoSave';
+import { useSessionAnalytics } from './hooks/useSessionAnalytics';
+import SessionSidebar from './components/layout/SessionSidebar';
+import MainContent from './components/layout/MainContent';
+import ControlPanel from './components/layout/ControlPanel';
+import { ControlAction } from './interfaces/enums/ControlAction';
+import { SessionStatus } from './interfaces/enums/SessionStatus';
+import { MainViewMode } from './interfaces/enums/MainViewMode';
 
 export default function App() {
     // --- State: Modes ---
@@ -326,6 +336,33 @@ export default function App() {
         setFilteredLogCount,
         setLogsTrigger
     } = logManagement;
+
+    // Session Management
+    const sessionManager = useSessionManager({
+        environment,
+        onSessionChange: (session) => {
+            if (session) {
+                setSessionUid(session.id);
+                setSessionName(session.name);
+            }
+        }
+    });
+
+    // Auto-save current session
+    useSessionAutoSave({
+        session: sessionManager.currentSession,
+        enabled: true,
+        debounceMs: 2000
+    });
+
+    // Track session analytics
+    const sessionAnalytics = useSessionAnalytics({
+        session: sessionManager.currentSession,
+        items: visibleLogs,
+        enabled: true,
+        cacheTTL: 5 * 60 * 1000, // 5 minutes
+        autoUpdate: true
+    });
 
     const invalidLogCount = useMemo(() => {
         return visibleLogs.filter((log: SynthLogItem) => isInvalidLog(log)).length;
@@ -849,7 +886,7 @@ export default function App() {
     });
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
+        <div className="h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden">
             <AppOverlays
                 showCloudLoadModal={showCloudLoadModal}
                 cloudSessions={cloudSessions}
@@ -883,22 +920,140 @@ export default function App() {
                 }}
             />
 
-            <AppHeader
-                appView={appView}
-                environment={environment}
-                totalLogCount={totalLogCount}
-                onViewChange={setAppView}
-                onEnvironmentChange={setEnvironment}
-                onExport={exportJsonl}
-                onSettingsOpen={() => setShowSettings(true)}
-            />
+            {/* Three-column session-aware layout */}
+            <div className="flex h-screen">
+                {/* Left Sidebar - Sessions */}
+                <SessionSidebar
+                    sessions={sessionManager.sessions}
+                    currentSessionId={sessionManager.currentSession?.id || null}
+                    currentMode={appView}
+                    onSessionSelect={(id) => sessionManager.selectSession(id)}
+                    onNewSession={async (mode) => {
+                        await sessionManager.createSession(
+                            mode,
+                            undefined, // dataset
+                            {
+                                provider: externalProvider,
+                                model: externalModel,
+                                apiKey: externalApiKey,
+                                customBaseUrl,
+                                generationParams
+                            }
+                        );
+                        setAppView(mode);
+                    }}
+                    onModeChange={setAppView}
+                    onRename={(id, name) => sessionManager.renameSession(id, name)}
+                    sortBy={sessionManager.sortBy}
+                    onSortChange={(sort) => sessionManager.setSortBy(sort)}
+                />
 
-            <AppMainContent
-                appView={appView}
-                verifierProps={verifierProps}
-                sidebarProps={sidebarProps}
-                feedProps={feedProps}
-            />
+                {/* Main Content Area */}
+                <MainContent
+                    viewMode={viewMode === ViewMode.Feed ? MainViewMode.Feed : MainViewMode.Analytics}
+                    onViewModeChange={(mode) => setViewMode(mode === MainViewMode.Feed ? ViewMode.Feed : ViewMode.Analytics)}
+                    mobileControls={
+                        // Controls shown on tablet/mobile
+                        <ControlPanel
+                            currentSession={sessionManager.currentSession}
+                            isGenerating={isRunning}
+                            onAction={async (action) => {
+                                const session = sessionManager.currentSession;
+                                if (!session) return;
+
+                                switch (action) {
+                                    case ControlAction.Start:
+                                        await sessionManager.updateSessionStatus(session.id, SessionStatus.Active);
+                                        startGeneration(false);
+                                        break;
+                                    case ControlAction.Pause:
+                                        await sessionManager.updateSessionStatus(session.id, SessionStatus.Paused);
+                                        stopGeneration();
+                                        break;
+                                    case ControlAction.Stop:
+                                        await sessionManager.updateSessionStatus(session.id, SessionStatus.Completed);
+                                        stopGeneration();
+                                        break;
+                                    case ControlAction.Clear:
+                                        await logManagement.refreshLogs();
+                                        break;
+                                }
+                            }}
+                        >
+                            {/* Settings panel placeholder - integrate existing settings */}
+                            <div className="p-4 text-sm text-slate-400">
+                                <button
+                                    onClick={() => setShowSettings(true)}
+                                    className="w-full px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition-colors"
+                                >
+                                    Open Settings
+                                </button>
+                            </div>
+                        </ControlPanel>
+                    }
+                >
+                    <AppMainContent
+                        appView={appView}
+                        verifierProps={verifierProps}
+                        sidebarProps={sidebarProps}
+                        feedProps={feedProps}
+                    />
+                </MainContent>
+
+                {/* Right Sidebar - Controls (desktop only) */}
+                <div className="hidden xl:block">
+                    <ControlPanel
+                        currentSession={sessionManager.currentSession}
+                        isGenerating={isRunning}
+                        onAction={async (action) => {
+                            const session = sessionManager.currentSession;
+                            if (!session) return;
+
+                            switch (action) {
+                                case ControlAction.Start:
+                                    await sessionManager.updateSessionStatus(session.id, SessionStatus.Active);
+                                    startGeneration(false);
+                                    break;
+                                case ControlAction.Pause:
+                                    await sessionManager.updateSessionStatus(session.id, SessionStatus.Paused);
+                                    stopGeneration();
+                                    break;
+                                case ControlAction.Stop:
+                                    await sessionManager.updateSessionStatus(session.id, SessionStatus.Completed);
+                                    stopGeneration();
+                                    break;
+                                case ControlAction.Clear:
+                                    await logManagement.refreshLogs();
+                                    break;
+                            }
+                        }}
+                    >
+                        {/* Settings panel placeholder */}
+                        <div className="p-4 text-sm text-slate-400">
+                            <button
+                                onClick={() => setShowSettings(true)}
+                                className="w-full px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition-colors"
+                            >
+                                Open Settings
+                            </button>
+                            <div className="mt-4 space-y-2">
+                                <button
+                                    onClick={exportJsonl}
+                                    className="w-full px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition-colors text-xs"
+                                >
+                                    Export JSONL
+                                </button>
+                                <div className="text-xs text-slate-500 mt-2">
+                                    Environment: {environment}
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                    Logs: {totalLogCount}
+                                </div>
+                            </div>
+                        </div>
+                    </ControlPanel>
+                </div>
+            </div>
 
         </div>
     );
