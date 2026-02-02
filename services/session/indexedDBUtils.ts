@@ -1,10 +1,10 @@
-import { SessionData, SessionAnalytics } from '../../types';
-import { AppView } from '../../interfaces/enums';
+import { SessionData, SessionAnalytics, SessionDataSource } from '../../interfaces/services/SessionConfig';
 import { SessionStatus } from '../../interfaces/enums/SessionStatus';
 import { StorageMode } from '../../interfaces/enums/StorageMode';
+import { CreatorMode, EngineMode, Environment } from '../../interfaces/enums';
 
 const DB_NAME = 'SynthLabsDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Bump version to force store creation if missing
 const SESSIONS_STORE = 'sessions';
 const ITEMS_STORE = 'items';
 
@@ -61,6 +61,7 @@ export async function openSessionDatabase(): Promise<IDBDatabase> {
  * Save session to IndexedDB
  */
 export async function saveSession(session: SessionData): Promise<void> {
+    if (!session || !session.id) return; // Prevent saving invalid sessions
     const db = await openSessionDatabase();
 
     return new Promise((resolve, reject) => {
@@ -80,6 +81,7 @@ export async function saveSession(session: SessionData): Promise<void> {
  * Load session from IndexedDB
  */
 export async function loadSession(sessionId: string): Promise<SessionData | null> {
+    if (!sessionId) return null;
     const db = await openSessionDatabase();
 
     return new Promise((resolve, reject) => {
@@ -122,6 +124,7 @@ export async function loadAllSessions(): Promise<SessionData[]> {
  * Delete session from IndexedDB
  */
 export async function deleteSession(sessionId: string): Promise<void> {
+    if (!sessionId) return;
     const db = await openSessionDatabase();
 
     return new Promise((resolve, reject) => {
@@ -250,22 +253,27 @@ export async function updateSessionAnalytics(
  */
 export function createNewSession(
     name: string,
-    mode: AppView,
     storageMode: StorageMode,
-    dataset?: string
+    dataset?: SessionDataSource
 ): SessionData {
     const now = Date.now();
 
     return {
         id: `session_${now}_${Math.random().toString(36).substr(2, 9)}`,
+        sessionUid: `uid_${now}_${Math.random().toString(36).substr(2, 9)}`,
+        version: 1,
         name,
-        mode,
-        status: SessionStatus.Active,
+        status: SessionStatus.Idle,
         storageMode,
-        createdAt: now,
+        createdAt: now.toLocaleString(),
         updatedAt: now,
         itemCount: 0,
         dataset,
+        config: {
+            appMode: CreatorMode.Generator,
+            engineMode: EngineMode.Regular,
+            environment: Environment.Development,
+        },
         analytics: {
             totalItems: 0,
             completedItems: 0,

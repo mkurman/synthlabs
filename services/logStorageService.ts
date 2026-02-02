@@ -2,7 +2,7 @@ import { SynthLogItem } from '../types';
 import { LogFilter, LogItemStatus } from '../interfaces/enums';
 
 const DB_NAME = 'SynthLabsDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const LOGS_STORE = 'logs';
 const INDEX_STORE = 'indices';
 

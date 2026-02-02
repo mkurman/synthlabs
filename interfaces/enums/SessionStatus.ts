@@ -1,6 +1,7 @@
 export enum SessionStatus {
-    Active = 'active',
+    Idle = 'idle',
+    Running = 'running',
     Paused = 'paused',
-    Completed = 'completed',
-    Archived = 'archived'
+    Stopped = 'stopped',
+    Error = 'error'
 }

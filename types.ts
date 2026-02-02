@@ -3,7 +3,7 @@ import type { StreamingPhase } from './interfaces/enums/StreamingPhase';
 // Enums
 export { LogItemStatus } from './interfaces/enums';
 export { DataSource } from './interfaces/enums';
-export { AppMode } from './interfaces/enums';
+export { CreatorMode as AppMode } from './interfaces/enums';
 export { EngineMode } from './interfaces/enums';
 export { Environment } from './interfaces/enums';
 export { ProviderType } from './interfaces/enums';
@@ -177,32 +177,6 @@ declare global {
   interface Window {
     electronAPI?: ElectronAPI;
   }
-}
-
-// Session Management Interfaces
-export interface SessionAnalytics {
-  totalItems: number;
-  completedItems: number;
-  errorCount: number;
-  totalTokens: number;
-  totalCost: number;
-  avgResponseTime: number;
-  successRate: number;
-  lastUpdated: number; // timestamp
-}
-
-export interface SessionData {
-  id: string;
-  name: string;
-  mode: import('./interfaces/enums').AppView;
-  status: import('./interfaces/enums/SessionStatus').SessionStatus;
-  storageMode: import('./interfaces/enums/StorageMode').StorageMode;
-  createdAt: number; // timestamp
-  updatedAt: number; // timestamp
-  itemCount: number;
-  analytics?: SessionAnalytics;
-  settings?: Record<string, any>; // Mode-specific settings
-  dataset?: string;
 }
 
 export interface PaginatedItems<T> {

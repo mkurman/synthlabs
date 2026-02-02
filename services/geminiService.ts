@@ -3,6 +3,7 @@ import { GenerationParams } from "../types";
 import { ProviderType } from '../interfaces/enums';
 import { logger } from '../utils/logger';
 import { callExternalApi, ExternalApiConfig } from './externalApiService';
+import { cleanGenerationParamsForGemini } from '../utils/generationParamsUtils';
 
 // Ensure API Key exists
 const API_KEY = process.env.API_KEY || '';
@@ -279,13 +280,8 @@ export const generateReasoningTrace = async (
     }
   };
 
-  if (retryOptions?.generationParams) {
-    if (retryOptions.generationParams.temperature !== undefined) genConfig.temperature = retryOptions.generationParams.temperature;
-    if (retryOptions.generationParams.topP !== undefined) genConfig.topP = retryOptions.generationParams.topP;
-    if (retryOptions.generationParams.topK !== undefined) genConfig.topK = retryOptions.generationParams.topK;
-    if (retryOptions.generationParams.presencePenalty !== undefined) genConfig.presencePenalty = retryOptions.generationParams.presencePenalty;
-    if (retryOptions.generationParams.frequencyPenalty !== undefined) genConfig.frequencyPenalty = retryOptions.generationParams.frequencyPenalty;
-  }
+  const cleanedGenParams = cleanGenerationParamsForGemini(retryOptions?.generationParams);
+  Object.assign(genConfig, cleanedGenParams);
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
@@ -318,13 +314,8 @@ export const generateNativeText = async (
     systemInstruction: systemPrompt
   };
 
-  if (retryOptions?.generationParams) {
-    if (retryOptions.generationParams.temperature !== undefined) genConfig.temperature = retryOptions.generationParams.temperature;
-    if (retryOptions.generationParams.topP !== undefined) genConfig.topP = retryOptions.generationParams.topP;
-    if (retryOptions.generationParams.topK !== undefined) genConfig.topK = retryOptions.generationParams.topK;
-    if (retryOptions.generationParams.presencePenalty !== undefined) genConfig.presencePenalty = retryOptions.generationParams.presencePenalty;
-    if (retryOptions.generationParams.frequencyPenalty !== undefined) genConfig.frequencyPenalty = retryOptions.generationParams.frequencyPenalty;
-  }
+  const cleanedGenParams = cleanGenerationParamsForGemini(retryOptions?.generationParams);
+  Object.assign(genConfig, cleanedGenParams);
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
@@ -352,13 +343,8 @@ export const generateGenericJSON = async (
     responseMimeType: 'application/json'
   };
 
-  if (retryOptions?.generationParams) {
-    if (retryOptions.generationParams.temperature !== undefined) genConfig.temperature = retryOptions.generationParams.temperature;
-    if (retryOptions.generationParams.topP !== undefined) genConfig.topP = retryOptions.generationParams.topP;
-    if (retryOptions.generationParams.topK !== undefined) genConfig.topK = retryOptions.generationParams.topK;
-    if (retryOptions.generationParams.presencePenalty !== undefined) genConfig.presencePenalty = retryOptions.generationParams.presencePenalty;
-    if (retryOptions.generationParams.frequencyPenalty !== undefined) genConfig.frequencyPenalty = retryOptions.generationParams.frequencyPenalty;
-  }
+  const cleanedGenParams = cleanGenerationParamsForGemini(retryOptions?.generationParams);
+  Object.assign(genConfig, cleanedGenParams);
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({
@@ -397,13 +383,8 @@ export const convertReasoningTrace = async (
     }
   };
 
-  if (retryOptions?.generationParams) {
-    if (retryOptions.generationParams.temperature !== undefined) genConfig.temperature = retryOptions.generationParams.temperature;
-    if (retryOptions.generationParams.topP !== undefined) genConfig.topP = retryOptions.generationParams.topP;
-    if (retryOptions.generationParams.topK !== undefined) genConfig.topK = retryOptions.generationParams.topK;
-    if (retryOptions.generationParams.presencePenalty !== undefined) genConfig.presencePenalty = retryOptions.generationParams.presencePenalty;
-    if (retryOptions.generationParams.frequencyPenalty !== undefined) genConfig.frequencyPenalty = retryOptions.generationParams.frequencyPenalty;
-  }
+  const cleanedGenParams = cleanGenerationParamsForGemini(retryOptions?.generationParams);
+  Object.assign(genConfig, cleanedGenParams);
 
   try {
     const response = await callGeminiWithRetry(() => ai.models.generateContent({

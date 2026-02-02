@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrainCircuit, Database, Dice5, FileText, Info, Layers, List, MessageSquare, RefreshCcw, Search, Server, Table, Upload } from 'lucide-react';
+import { BrainCircuit, Dice5, FileText, Info, Layers, List, MessageSquare, RefreshCcw, Search, Server, Table, Upload } from 'lucide-react';
 import { CATEGORIES, DetectedColumns, HuggingFaceConfig } from '../../types';
 import { DataSource, OutputFieldName } from '../../interfaces/enums';
 import { DEFAULT_HF_PREFETCH_CONFIG } from '../../types';
@@ -84,12 +84,7 @@ export default function DataSourcePanel({
     onLoadSourceFile
 }: DataSourcePanelProps) {
     return (
-        <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5 space-y-4">
-            <div className="flex justify-between items-center mb-2">
-                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                    <Database className="w-4 h-4 text-slate-400" /> SOURCE
-                </h3>
-            </div>
+        <div className="space-y-4">
             <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
                 <button onClick={() => onDataSourceModeChange(DataSource.Synthetic)} className={`flex-1 py-2 text-[10px] font-bold rounded flex flex-col items-center justify-center gap-1 transition-all uppercase tracking-wide ${dataSourceMode === DataSource.Synthetic ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}><BrainCircuit className="w-3.5 h-3.5" /> Synthetic</button>
                 <button onClick={() => onDataSourceModeChange(DataSource.HuggingFace)} className={`flex-1 py-2 text-[10px] font-bold rounded flex flex-col items-center justify-center gap-1 transition-all uppercase tracking-wide ${dataSourceMode === DataSource.HuggingFace ? 'bg-amber-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}><Server className="w-3.5 h-3.5" /> HuggingFace</button>

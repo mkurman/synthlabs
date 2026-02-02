@@ -15,7 +15,7 @@ import { PromptService } from '../promptService';
 import { DEFAULT_HF_PREFETCH_CONFIG } from '../../types';
 import { extractInputContent } from '../../utils/contentExtractor';
 import { parseThinkTagsForDisplay, parseNativeOutput } from '../../utils/thinkTagParser';
-import { DataSource, EngineMode, AppMode, Environment, ProviderType, ExternalProvider, ApiType, ChatRole, ResponderPhase, LogItemStatus, PromptCategory, PromptRole, StreamingPhase, OutputFieldName, SynthLogFieldName, ResponsesSchemaName } from '../../interfaces/enums';
+import { DataSource, EngineMode, CreatorMode, Environment, ProviderType, ExternalProvider, ApiType, ChatRole, ResponderPhase, LogItemStatus, PromptCategory, PromptRole, StreamingPhase, OutputFieldName, SynthLogFieldName, ResponsesSchemaName } from '../../interfaces/enums';
 import { ExtractContentFormat } from '../../interfaces/services/DataTransformConfig';
 import type { CompleteGenerationConfig as GenerationConfig, RuntimePromptConfig, WorkItem } from '../../interfaces';
 import { mergeWithExistingFields } from '../fieldSelectionService';
@@ -127,7 +127,7 @@ export class GenerationService {
 
         if (config.environment === Environment.Production && FirebaseService.isFirebaseConfigured() && !isCurrentSessionFirebase) {
             try {
-                const sessionName = `${config.appMode === AppMode.Generator ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
+                const sessionName = `${config.appMode === CreatorMode.Generator ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
                 const sessionConfig = config.getSessionData();
                 newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel, sessionConfig);
                 logger.log(`Created Firebase session: ${newUid}`);
@@ -728,17 +728,17 @@ export class GenerationService {
                 const effectiveSystemPrompt = runtimeConfig?.systemPrompt ?? config.systemPrompt;
                 const effectiveConverterPrompt = runtimeConfig?.converterPrompt ?? config.converterPrompt;
                 const effectiveDeepConfig = runtimeConfig?.deepConfig ?? config.deepConfig;
-                const activePrompt = config.appMode === AppMode.Generator ? effectiveSystemPrompt : effectiveConverterPrompt;
+                const activePrompt = config.appMode === CreatorMode.Generator ? effectiveSystemPrompt : effectiveConverterPrompt;
                 const genParams = config.generationParams;
                 const useNativeOutput = genParams?.useNativeOutput ?? false;
                 const retryConfig = { maxRetries: config.maxRetries, retryDelay: config.retryDelay, generationParams: genParams };
 
                 // Get prompt schema for field selection
-                const promptCategory = config.appMode === AppMode.Generator ? PromptCategory.Generator : PromptCategory.Converter;
+                const promptCategory = config.appMode === CreatorMode.Generator ? PromptCategory.Generator : PromptCategory.Converter;
                 const promptRole = PromptRole.System;
                 const promptSchema = PromptService.getPromptSchema(promptCategory, promptRole, config.sessionPromptSet || undefined);
                 const selectedFields = genParams?.selectedFields;
-                
+
                 logger.log('[Non-Conversation Mode] Field selection debug:', {
                     selectedFields,
                     hasPromptSchema: !!promptSchema,
@@ -846,7 +846,7 @@ export class GenerationService {
                                 const roleStr = m.role || (m.from === 'human' ? 'user' : m.from === 'gpt' ? 'assistant' : m.from);
                                 // Map string role to ChatRole enum
                                 let role: ChatRole;
-                                switch(roleStr) {
+                                switch (roleStr) {
                                     case 'user': role = ChatRole.User; break;
                                     case 'assistant': role = ChatRole.Assistant; break;
                                     case 'system': role = ChatRole.System; break;
@@ -975,7 +975,7 @@ export class GenerationService {
                 // Regular generation mode
                 if (config.engineMode === EngineMode.Regular) {
                     let promptInput = "";
-                    if (config.appMode === AppMode.Generator) {
+                    if (config.appMode === CreatorMode.Generator) {
                         promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
                     } else {
                         const contentToConvert = extractInputContent(safeInput);
@@ -990,7 +990,7 @@ export class GenerationService {
                     if (config.provider === ProviderType.Gemini) {
                         if (useNativeOutput) {
                             result = await GeminiService.generateNativeText(promptInput, enhancedPrompt, { ...retryConfig, model: config.externalModel });
-                        } else if (config.appMode === AppMode.Generator) {
+                        } else if (config.appMode === CreatorMode.Generator) {
                             result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, { ...retryConfig, model: config.externalModel });
                         } else {
                             const contentToConvert = extractInputContent(safeInput);
@@ -1037,7 +1037,7 @@ export class GenerationService {
                     // Get the schema for this prompt to know all available fields
                     const promptSetId = runtimeConfig?.promptSet || config.sessionPromptSet || SettingsService.getSettings().promptSet || 'default';
                     const schema = PromptService.getPromptSchema(
-                        config.appMode === AppMode.Generator ? PromptCategory.Generator : PromptCategory.Converter,
+                        config.appMode === CreatorMode.Generator ? PromptCategory.Generator : PromptCategory.Converter,
                         PromptRole.System,
                         promptSetId
                     );
@@ -1091,8 +1091,8 @@ export class GenerationService {
                         }
                     }
                     // If field selection is enabled and answer was not selected, use original answer
-                    const finalAnswer = (originalAnswer && hasFieldSelection && !selectedFields?.includes(OutputFieldName.Answer)) 
-                        ? originalAnswer 
+                    const finalAnswer = (originalAnswer && hasFieldSelection && !selectedFields?.includes(OutputFieldName.Answer))
+                        ? originalAnswer
                         : answer;
 
                     return {
@@ -1101,7 +1101,7 @@ export class GenerationService {
                         source: source,
                         seed_preview: safeInput.substring(0, 150) + "...",
                         full_seed: safeInput,
-                        query: originalQuestion || (config.appMode === AppMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
+                        query: originalQuestion || (config.appMode === CreatorMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
                         reasoning: reasoning,
                         reasoning_content: reasoningContent,
                         [SynthLogFieldName.OriginalReasoning]: originalReasoning,
@@ -1117,11 +1117,11 @@ export class GenerationService {
                 } else {
                     // Deep mode
                     let inputPayload = safeInput;
-                    if (config.appMode === AppMode.Converter) {
+                    if (config.appMode === CreatorMode.Converter) {
                         inputPayload = extractInputContent(safeInput);
                     }
 
-                    if (config.appMode === AppMode.Generator && originalAnswer && originalAnswer.trim().length > 0) {
+                    if (config.appMode === CreatorMode.Generator && originalAnswer && originalAnswer.trim().length > 0) {
                         inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${originalAnswer.trim()}`;
                     }
 
@@ -1133,7 +1133,7 @@ export class GenerationService {
 
                     const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                         input: inputPayload,
-                        originalQuery: originalQuestion || (config.appMode === AppMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
+                        originalQuery: originalQuestion || (config.appMode === CreatorMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
                         expectedAnswer: originalAnswer,
                         config: runtimeDeepConfig,
                         signal: itemAbortController.signal,

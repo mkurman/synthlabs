@@ -1,10 +1,10 @@
-import { AppView, ExternalProvider, ApiType } from '../../interfaces/enums';
+import { AppView, ExternalProvider, ApiType, CreatorMode } from '../../interfaces/enums';
 import { GenerationParams } from '../../interfaces/config/GenerationParams';
 import { callExternalApi } from '../externalApiService';
 
 interface SessionNamingContext {
     dataset?: string;
-    mode: AppView;
+    mode: CreatorMode;
     itemCount?: number;
 }
 
@@ -91,7 +91,7 @@ async function generateAISessionName(
 function buildSessionNamingPrompt(context: SessionNamingContext): string {
     return `Generate a concise, descriptive name for a synthetic data generation session with the following details:
 - Dataset: ${context.dataset || 'Custom'}
-- Mode: ${context.mode === AppView.Creator ? 'Creator (generating new data)' : 'Verifier (reviewing/validating data)'}
+- Mode: ${context.mode}
 ${context.itemCount ? `- Items: ${context.itemCount}` : ''}
 
 Requirements:
@@ -129,7 +129,7 @@ function parseAISessionName(response: string): SessionNamingResult | null {
  */
 function generateTemplateSessionName(context: SessionNamingContext): SessionNamingResult {
     const dataset = context.dataset || 'Custom Dataset';
-    const mode = context.mode === AppView.Creator ? 'Creator' : 'Verifier';
+    const mode = context.mode;
 
     return {
         header: `${dataset} - ${mode}`,

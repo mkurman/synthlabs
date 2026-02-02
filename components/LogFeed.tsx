@@ -1,11 +1,14 @@
 
-import React, { useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2, Loader2, ChevronDown, Edit3, Check, X, RotateCcw, Brain } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import { parseThinkTagsForDisplay } from '../utils/thinkTagParser';
 import ConversationView from './ConversationView';
 import StreamingConversationCard from './StreamingConversationCard';
+import AutoResizeTextarea from './AutoResizeTextarea';
+import CollapsibleThinkContent from './CollapsibleThinkContent';
 import { SynthLogItem, StreamingConversationState } from '../types';
+import { FeedDisplayMode, LogFeedRewriteTarget } from '../interfaces/enums';
 
 interface LogFeedProps {
   logs: SynthLogItem[];
@@ -26,13 +29,42 @@ interface LogFeedProps {
   streamingVersion?: number;
   showLatestOnly?: boolean;
   onShowLatestOnlyChange?: (value: boolean) => void;
+  isLoading?: boolean;
+  displayMode?: FeedDisplayMode;
+  // Inline editing props
+  editingField?: { itemId: string; field: LogFeedRewriteTarget; originalValue: string } | null;
+  editValue?: string;
+  onStartEditing?: (itemId: string, field: LogFeedRewriteTarget, currentValue: string) => void;
+  onSaveEditing?: () => void;
+  onCancelEditing?: () => void;
+  onEditValueChange?: (value: string) => void;
+  // Rewriting props
+  rewritingField?: { itemId: string; field: LogFeedRewriteTarget } | null;
+  streamingContent?: string;
+  onRewrite?: (itemId: string, field: LogFeedRewriteTarget) => void;
 }
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
   onRetry, onRetrySave, onSaveToDb, onDelete, onHalt, retryingIds, savingIds, isProdMode,
-  streamingConversations, streamingVersion, showLatestOnly = false
+  streamingConversations, streamingVersion, showLatestOnly = false, isLoading = false,
+  displayMode = FeedDisplayMode.Default,
+  editingField, editValue = '', onStartEditing, onSaveEditing, onCancelEditing, onEditValueChange,
+  rewritingField, streamingContent, onRewrite
 }) => {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   // Reset to page 1 if pageSize changes (handled by parent mostly, but safety check)
   useEffect(() => {
@@ -83,6 +115,16 @@ const LogFeed: React.FC<LogFeedProps> = ({
     ? logs
     : logs.slice(0, remainingSlots);
 
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/30">
+        <Loader2 className="w-12 h-12 text-teal-500 mb-4 animate-spin" />
+        <p className="text-slate-400 font-medium">Loading logs...</p>
+      </div>
+    );
+  }
+
   // Show empty state only if no logs AND no active streaming
   if (totalLogCount === 0 && logs.length === 0 && !hasActiveStreams) {
     return (
@@ -131,7 +173,189 @@ const LogFeed: React.FC<LogFeedProps> = ({
         </div>
       )}
 
-      {visibleLogs.map((item) => {
+      {/* List View - Compact expandable rows */}
+      {displayMode === FeedDisplayMode.List && (
+        <div className="bg-slate-900/50 rounded-xl border border-slate-800 overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-slate-950/50 border-b border-slate-800">
+                <th className="w-8 p-2"></th>
+                <th className="text-left text-[10px] font-bold text-slate-500 uppercase p-2">Query</th>
+                <th className="text-left text-[10px] font-bold text-slate-500 uppercase p-2 w-32">Model</th>
+                <th className="text-left text-[10px] font-bold text-slate-500 uppercase p-2 w-24">Time</th>
+                <th className="text-right text-[10px] font-bold text-slate-500 uppercase p-2 w-20">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleLogs.map((item) => {
+                const isInvalid = isInvalidLog(item);
+                const isExpanded = expandedIds.has(item.id);
+                const { displayReasoning, displayAnswer } = getDisplayFields(item.answer || '', item.reasoning || '');
+                return (
+                  <React.Fragment key={item.id}>
+                    <tr
+                      className={`border-b border-slate-800/50 hover:bg-slate-800/30 cursor-pointer transition-colors ${isInvalid ? 'bg-red-950/10' : ''}`}
+                      onClick={() => toggleExpand(item.id)}
+                    >
+                      <td className="p-2 text-center">
+                        <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      </td>
+                      <td className="p-2">
+                        <span className="text-sm text-slate-300 line-clamp-1">{renderSafeContent(item.query)}</span>
+                      </td>
+                      <td className="p-2">
+                        <span className="text-[10px] text-slate-400">{item.modelUsed}</span>
+                      </td>
+                      <td className="p-2">
+                        <span className="text-[10px] font-mono text-slate-500">
+                          {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                        </span>
+                      </td>
+                      <td className="p-2 text-right" onClick={(e) => e.stopPropagation()}>
+                        {onDelete && (
+                          <button
+                            onClick={() => window.confirm("Delete?") && onDelete(item.id)}
+                            className="p-1 hover:bg-red-950/30 rounded text-slate-500 hover:text-red-400"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="bg-slate-950/30">
+                        <td colSpan={5} className="p-4">
+                          {item.isMultiTurn && item.messages ? (
+                            <div className="space-y-2 max-h-60 overflow-y-auto">
+                              <h5 className="text-[10px] uppercase text-slate-500 font-bold mb-2 flex items-center gap-1">
+                                <MessageCircle className="w-3 h-3" />
+                                {item.messages.length} messages
+                              </h5>
+                              {item.messages.map((msg, idx) => (
+                                <div key={idx} className={`text-xs p-2 rounded ${msg.role === 'user' ? 'bg-slate-800/50 text-slate-300' : 'bg-slate-900/50 text-slate-400'}`}>
+                                  <span className={`text-[9px] font-bold uppercase ${msg.role === 'user' ? 'text-cyan-400' : 'text-emerald-400'}`}>
+                                    {msg.role}
+                                  </span>
+                                  <CollapsibleThinkContent content={msg.content} className="mt-1" />
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="grid md:grid-cols-2 gap-4">
+                              <div>
+                                <h5 className="text-[10px] uppercase text-slate-500 font-bold mb-2 flex items-start gap-1"><Brain className="w-3 h-3" /><span className="font-medium">Thoughts</span></h5>
+                                <p className="text-xs text-slate-400 whitespace-pre-wrap max-h-40 overflow-y-auto">{displayReasoning || 'N/A'}</p>
+                              </div>
+                              <div>
+                                <h5 className="text-[10px] uppercase text-slate-500 font-bold mb-2">Answer</h5>
+                                <p className="text-xs text-slate-300 whitespace-pre-wrap max-h-40 overflow-y-auto">{renderSafeContent(displayAnswer) || 'N/A'}</p>
+                              </div>
+                            </div>
+                          )}
+                          {isInvalid && (
+                            <div className="mt-2 p-2 bg-red-500/10 rounded text-xs text-red-400">
+                              Error: {item.error || 'Unknown error'}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Cards View - Grid of full cards */}
+      {displayMode === FeedDisplayMode.Cards && (
+        <div className="grid grid-cols-auto gap-4">
+          {visibleLogs.map((item) => {
+            const isInvalid = isInvalidLog(item);
+            const isTimeout = item.status === 'TIMEOUT';
+            const { displayReasoning, displayAnswer } = getDisplayFields(item.answer || '', item.reasoning || '');
+
+            return (
+              <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg">
+                {/* Card Header */}
+                <div className="bg-slate-950/50 p-2.5 border-b border-slate-800 flex justify-between items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-slate-200 line-clamp-2 font-sans">
+                      {renderSafeContent(item.query)}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[9px] text-slate-500">
+                      {item.modelUsed.length > 15 ? item.modelUsed.slice(0, 15) + '...' : item.modelUsed}
+                    </span>
+                    <span className="text-[9px] font-mono text-slate-600">
+                      {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                    </span>
+                    {onDelete && (
+                      <button
+                        onClick={() => window.confirm("Delete?") && onDelete(item.id)}
+                        className="p-1 hover:bg-red-950/30 rounded text-slate-500 hover:text-red-400"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Content Area */}
+                {item.isMultiTurn && item.messages ? (
+                  <div className="p-3 bg-slate-950/20 max-h-64 overflow-y-auto">
+                    <h4 className="text-[9px] uppercase tracking-wider text-slate-500 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
+                      <MessageCircle className="w-3 h-3" />
+                      {item.messages.length} messages
+                    </h4>
+                    <div className="space-y-2">
+                      {item.messages.map((msg, idx) => (
+                        <div key={idx} className={`text-[11px] p-2 rounded ${msg.role === 'user' ? 'bg-slate-800/50 text-slate-300' : 'bg-slate-900/50 text-slate-400'}`}>
+                          <span className={`text-[9px] font-bold uppercase ${msg.role === 'user' ? 'text-cyan-400' : 'text-emerald-400'}`}>
+                            {msg.role}
+                          </span>
+                          <CollapsibleThinkContent content={msg.content} className="mt-1" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 divide-x divide-slate-800">
+                    {/* Reasoning */}
+                    <div className="p-3 py-0 bg-slate-950/20 max-h-64 overflow-y-auto">
+                      <h4 className="text-[9px] uppercase tracking-wider text-slate-500 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
+                        <Brain className="w-3 h-3" />Thoughts
+                      </h4>
+                      <p className="text-[11px] text-slate-400 whitespace-pre-wrap">{displayReasoning || 'N/A'}</p>
+                    </div>
+
+                    {/* Answer */}
+                    <div className="p-3 py-0 bg-slate-950/10 max-h-64 overflow-y-auto">
+                      <h4 className="text-[9px] uppercase tracking-wider text-slate-500 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
+                        Answer
+                      </h4>
+                      <p className="text-[11px] text-slate-300 whitespace-pre-wrap">{renderSafeContent(displayAnswer) || 'N/A'}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error Footer */}
+                {isInvalid && (
+                  <div className="p-2 bg-red-500/10 border-t border-red-500/20 text-[10px] text-red-400 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {isTimeout ? 'Timeout' : 'Error'}: {item.error || 'Unknown'}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Default View - Full stacked cards */}
+      {displayMode === FeedDisplayMode.Default && visibleLogs.map((item) => {
         const isInvalid = isInvalidLog(item);
         const isTimeout = item.status === 'TIMEOUT';
 
@@ -141,12 +365,60 @@ const LogFeed: React.FC<LogFeedProps> = ({
             {/* Card Header */}
             <div className="bg-slate-950/50 p-3 border-b border-slate-800 flex justify-between items-start gap-4">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Query</span>
+                  <div className="flex items-center gap-1">
+                    {editingField?.itemId === item.id && editingField.field === LogFeedRewriteTarget.Query ? (
+                      <>
+                        <button onClick={onSaveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                          <Check className="w-3 h-3" />
+                        </button>
+                        <button onClick={onCancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {onStartEditing && (
+                          <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Query, item.query || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                        )}
+                        {onRewrite && (
+                          <button
+                            onClick={() => onRewrite(item.id, LogFeedRewriteTarget.Query)}
+                            disabled={rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Query}
+                            className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                            title="AI Rewrite"
+                          >
+                            {rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Query ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <RotateCcw className="w-3 h-3" />
+                            )}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="text-sm font-medium text-slate-200 truncate font-sans">
-                  {renderSafeContent(item.query)}
-                </div>
+                {editingField?.itemId === item.id && editingField.field === LogFeedRewriteTarget.Query ? (
+                  <AutoResizeTextarea
+                    value={editValue}
+                    onChange={e => onEditValueChange?.(e.target.value)}
+                    autoFocus
+                    className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-sm text-slate-200 outline-none min-h-[40px]"
+                    placeholder="Enter query..."
+                  />
+                ) : rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Query ? (
+                  <div className="text-sm font-medium text-teal-300 font-sans animate-pulse">
+                    {streamingContent || 'Rewriting...'}
+                  </div>
+                ) : (
+                  <div className="text-sm font-medium text-slate-200 truncate font-sans">
+                    {renderSafeContent(item.query)}
+                  </div>
+                )}
               </div>
               <div className="flex flex-col items-end gap-1">
                 <div className="flex items-center gap-2 shrink-0">
@@ -274,23 +546,121 @@ const LogFeed: React.FC<LogFeedProps> = ({
                   <div className="grid lg:grid-cols-2">
                     {/* Left: Reasoning Trace */}
                     <div className="p-4 border-r border-slate-800 bg-slate-950/20">
-                      <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                        Stenographic Trace
-                      </h4>
-                      <ReasoningHighlighter text={displayReasoning} />
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-2">
+                          <Brain className="w-3 h-3" /><span className="font-medium">Thoughts</span>
+                        </h4>
+                        <div className="flex items-center gap-1">
+                          {editingField?.itemId === item.id && editingField.field === LogFeedRewriteTarget.Reasoning ? (
+                            <>
+                              <button onClick={onSaveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                <Check className="w-3 h-3" />
+                              </button>
+                              <button onClick={onCancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {onStartEditing && (
+                                <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Reasoning, item.reasoning || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                  <Edit3 className="w-3 h-3" />
+                                </button>
+                              )}
+                              {onRewrite && (
+                                <button
+                                  onClick={() => onRewrite(item.id, LogFeedRewriteTarget.Reasoning)}
+                                  disabled={rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Reasoning}
+                                  className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                  title="AI Rewrite"
+                                >
+                                  {rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Reasoning ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3 h-3" />
+                                  )}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {editingField?.itemId === item.id && editingField.field === LogFeedRewriteTarget.Reasoning ? (
+                        <AutoResizeTextarea
+                          value={editValue}
+                          onChange={e => onEditValueChange?.(e.target.value)}
+                          autoFocus
+                          className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-sm text-slate-300 outline-none min-h-[100px]"
+                          placeholder="Enter reasoning..."
+                        />
+                      ) : rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Reasoning ? (
+                        <div className="text-sm text-teal-300 whitespace-pre-wrap animate-pulse">
+                          {streamingContent || 'Rewriting...'}
+                        </div>
+                      ) : (
+                        <ReasoningHighlighter text={displayReasoning} />
+                      )}
                     </div>
 
                     {/* Right: Final Answer & Seed */}
                     <div className="flex flex-col">
                       <div className="p-4 flex-1">
-                        <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                          Final Output
-                        </h4>
-                        <p className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
-                          {renderSafeContent(displayAnswer)}
-                        </p>
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-2">
+                            Answer
+                          </h4>
+                          <div className="flex items-center gap-1">
+                            {editingField?.itemId === item.id && editingField.field === LogFeedRewriteTarget.Answer ? (
+                              <>
+                                <button onClick={onSaveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                  <Check className="w-3 h-3" />
+                                </button>
+                                <button onClick={onCancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                {onStartEditing && (
+                                  <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Answer, item.answer || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                    <Edit3 className="w-3 h-3" />
+                                  </button>
+                                )}
+                                {onRewrite && (
+                                  <button
+                                    onClick={() => onRewrite(item.id, LogFeedRewriteTarget.Answer)}
+                                    disabled={rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Answer}
+                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                    title="AI Rewrite"
+                                  >
+                                    {rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Answer ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <RotateCcw className="w-3 h-3" />
+                                    )}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        {editingField?.itemId === item.id && editingField.field === LogFeedRewriteTarget.Answer ? (
+                          <AutoResizeTextarea
+                            value={editValue}
+                            onChange={e => onEditValueChange?.(e.target.value)}
+                            autoFocus
+                            className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-sm text-slate-300 outline-none min-h-[100px]"
+                            placeholder="Enter answer..."
+                          />
+                        ) : rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Answer ? (
+                          <div className="text-sm text-teal-300 whitespace-pre-wrap animate-pulse">
+                            {streamingContent || 'Rewriting...'}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+                            {renderSafeContent(displayAnswer)}
+                          </p>
+                        )}
                       </div>
 
                       <div className="p-3 bg-slate-950/50 border-t border-slate-800">

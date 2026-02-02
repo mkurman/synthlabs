@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layers, RefreshCw, Settings, Upload, Save, Wand2 } from 'lucide-react';
-import { AppMode, DataSource } from '../../interfaces/enums';
+import { CreatorMode, DataSource } from '../../interfaces/enums';
 import { HuggingFaceConfig, GenerationParams } from '../../types';
 import { OutputField } from '../../interfaces/types/PromptSchema';
 import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
@@ -10,7 +10,7 @@ import FieldSelectionPanel from './FieldSelectionPanel';
 interface GenerationPromptPanelProps {
     generationParams: GenerationParams;
     onGenerationParamsChange: (params: GenerationParams) => void;
-    appMode: AppMode;
+    appMode: CreatorMode;
     systemPrompt: string;
     converterPrompt: string;
     onSystemPromptChange: (value: string) => void;
@@ -87,11 +87,11 @@ export default function GenerationPromptPanel({
                     </div>
                 </div>
                 <textarea
-                    value={appMode === AppMode.Generator ? systemPrompt : converterPrompt}
-                    onChange={e => appMode === AppMode.Generator ? onSystemPromptChange(e.target.value) : onConverterPromptChange(e.target.value)}
+                    value={appMode === CreatorMode.Generator ? systemPrompt : converterPrompt}
+                    onChange={e => appMode === CreatorMode.Generator ? onSystemPromptChange(e.target.value) : onConverterPromptChange(e.target.value)}
                     className="w-full h-40 bg-slate-950 border border-slate-700 rounded-lg p-2 text-[9px] font-mono text-slate-400 focus:border-indigo-500 outline-none resize-y leading-relaxed"
                     spellCheck={false}
-                    placeholder={appMode === AppMode.Generator ? "# ROLE..." : "# CONVERTER ROLE..."}
+                    placeholder={appMode === CreatorMode.Generator ? "# ROLE..." : "# CONVERTER ROLE..."}
                 />
 
                 {outputFields.length > 0 && onFieldToggle && (
@@ -99,9 +99,9 @@ export default function GenerationPromptPanel({
                         outputFields={outputFields}
                         selectedFields={generationParams.selectedFields || []}
                         onFieldToggle={onFieldToggle}
-                        onResetToDefault={onResetFieldSelection || (() => {})}
-                        onSelectAll={onSelectAllFields || (() => {})}
-                        onDeselectAll={onDeselectAllFields || (() => {})}
+                        onResetToDefault={onResetFieldSelection || (() => { })}
+                        onSelectAll={onSelectAllFields || (() => { })}
+                        onDeselectAll={onDeselectAllFields || (() => { })}
                         showNativeToggle={outputFields.some(field => field.name === OutputFieldName.Reasoning)}
                         useNativeOutput={useNativeOutput}
                         onToggleNativeOutput={onToggleNativeOutput}

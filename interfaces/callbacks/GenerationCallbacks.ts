@@ -21,11 +21,11 @@ export interface GenerationCallbacks {
     setDeepConfig: (config: DeepConfig) => void;
     refreshLogs: () => void;
     updateDbStats: () => void;
-    
+
     // Streaming UI callbacks
     scheduleStreamingUpdate: () => void;
     bumpStreamingConversations: () => void;
-    
+
     // Logs trigger for UI updates
     setLogsTrigger: (fn: (prev: number) => number) => void;
 }

@@ -19,7 +19,8 @@ interface UseLogManagementReturn {
   logFilter: LogFilter;
   showLatestOnly: boolean;
   feedPageSize: number;
-  
+  isLoading: boolean;
+
   // Actions
   setCurrentPage: (page: number) => void;
   setLogFilter: (filter: LogFilter) => void;
@@ -32,6 +33,7 @@ interface UseLogManagementReturn {
   refreshLogs: () => Promise<void>;
   handlePageChange: (page: number) => void;
   handleDeleteLog: (id: string) => Promise<void>;
+  updateLog: (id: string, updates: Partial<SynthLogItem>) => void;
   isInvalidLog: (log: SynthLogItem) => boolean;
   getUnsavedCount: () => number;
   triggerRefresh: () => void;
@@ -48,6 +50,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
   const [showLatestOnly, setShowLatestOnly] = useState(false);
   const [feedPageSize, setFeedPageSize] = useState<number>(25);
   const [logsTrigger, setLogsTrigger] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
   
   // Refs
   const sessionUidRef = useRef(sessionUid);
@@ -70,64 +73,137 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
     return log.status === LogItemStatus.TIMEOUT || log.status === LogItemStatus.ERROR || !!log.isError;
   }, []);
   
-  // Refresh logs from storage
+  // Fetch logs from Firebase with pagination support
+  const fetchLogsFromFirebase = useCallback(async (
+    sessionId: string,
+    page: number,
+    pageSize: number,
+    filter: LogFilter
+  ): Promise<{ logs: SynthLogItem[]; totalCount: number; filteredCount: number }> => {
+    if (!FirebaseService.isFirebaseConfigured()) {
+      return { logs: [], totalCount: 0, filteredCount: 0 };
+    }
+
+    try {
+      // Fetch logs from Firebase - note: fetchLogsAfter returns all logs for now
+      // We'll do client-side pagination for simplicity
+      const allLogs = await FirebaseService.fetchAllLogs(undefined, sessionId);
+
+      // Filter by status
+      const isInvalid = (log: SynthLogItem) =>
+        log.status === LogItemStatus.TIMEOUT || log.status === LogItemStatus.ERROR || (log as any).isError;
+      const filteredLogs = filter === LogFilter.Invalid
+        ? allLogs.filter(isInvalid)
+        : allLogs.filter(l => !isInvalid(l));
+
+      // Sort by timestamp desc (newest first)
+      filteredLogs.sort((a, b) =>
+        new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
+      );
+
+      // Paginate
+      const start = (page - 1) * pageSize;
+      const paginatedLogs = filteredLogs.slice(start, start + pageSize);
+
+      // Mark all logs fetched from Firebase as already saved (they came from cloud)
+      const logsWithSavedFlag = paginatedLogs.map(log => ({
+        ...log,
+        savedToDb: true
+      }));
+
+      return {
+        logs: logsWithSavedFlag as SynthLogItem[],
+        totalCount: allLogs.length,
+        filteredCount: filteredLogs.length
+      };
+    } catch (e) {
+      console.error('Failed to fetch logs from Firebase:', e);
+      return { logs: [], totalCount: 0, filteredCount: 0 };
+    }
+  }, []);
+
+  // Refresh logs from storage (environment-aware)
   const refreshLogs = useCallback(async () => {
     const currentSessionId = sessionUidRef.current;
     const effectivePageSize = feedPageSize === -1 ? Number.MAX_SAFE_INTEGER : feedPageSize;
     const prefetched = prefetchedPageRef.current;
-    
+
     const shouldUsePrefetch = prefetched
       && prefetched.page === currentPage
       && prefetched.sessionUid === currentSessionId
       && prefetched.filter === logFilter
       && prefetched.pageSize === effectivePageSize;
-    
-    const result = shouldUsePrefetch
-      ? { logs: prefetched.logs, totalCount: totalLogCount, filteredCount: prefetched.filteredCount }
-      : await LogStorageService.getLogsPage(
+
+    // Only show loading spinner if not using prefetch cache
+    if (!shouldUsePrefetch) {
+      setIsLoading(true);
+    }
+
+    try {
+      let result: { logs: SynthLogItem[]; totalCount: number; filteredCount: number };
+
+      if (shouldUsePrefetch) {
+        result = { logs: prefetched.logs, totalCount: totalLogCount, filteredCount: prefetched.filteredCount };
+      } else if (environment === Environment.Production && FirebaseService.isFirebaseConfigured()) {
+        // Production: Fetch from Firebase
+        result = await fetchLogsFromFirebase(currentSessionId, currentPage, effectivePageSize, logFilter);
+      } else {
+        // Development: Fetch from local IndexedDB
+        result = await LogStorageService.getLogsPage(
           currentSessionId,
           currentPage,
           effectivePageSize,
           logFilter
         );
-    
-    setVisibleLogs(result.logs);
-    const nextTotal = shouldUsePrefetch
-      ? (totalLogCount || result.totalCount)
-      : result.totalCount;
-    setTotalLogCount(nextTotal);
-    setFilteredLogCount(result.filteredCount);
-    
-    // Check if there are any invalid logs
-    const invalidResult = await LogStorageService.getLogsPage(
-      currentSessionId,
-      1,
-      1,
-      LogFilter.Invalid
-    );
-    setHasInvalidLogs(invalidResult.filteredCount > 0);
-    
-    // Prefetch next page
-    if (feedPageSize !== -1 && !showLatestOnly) {
-      const nextPage = currentPage + 1;
-      LogStorageService.getLogsPage(currentSessionId, nextPage, effectivePageSize, logFilter)
-        .then(nextResult => {
-          prefetchedPageRef.current = {
-            page: nextPage,
-            sessionUid: currentSessionId,
-            filter: logFilter,
-            pageSize: effectivePageSize,
-            logs: nextResult.logs,
-            filteredCount: nextResult.filteredCount
-          };
-        })
-        .catch(() => {
-          prefetchedPageRef.current = null;
-        });
-    } else {
-      prefetchedPageRef.current = null;
+      }
+
+      setVisibleLogs(result.logs);
+      const nextTotal = shouldUsePrefetch
+        ? (totalLogCount || result.totalCount)
+        : result.totalCount;
+      setTotalLogCount(nextTotal);
+      setFilteredLogCount(result.filteredCount);
+
+      // Check if there are any invalid logs
+      let hasInvalid = false;
+      if (environment === Environment.Production && FirebaseService.isFirebaseConfigured()) {
+        const invalidResult = await fetchLogsFromFirebase(currentSessionId, 1, 1, LogFilter.Invalid);
+        hasInvalid = invalidResult.filteredCount > 0;
+      } else {
+        const invalidResult = await LogStorageService.getLogsPage(
+          currentSessionId,
+          1,
+          1,
+          LogFilter.Invalid
+        );
+        hasInvalid = invalidResult.filteredCount > 0;
+      }
+      setHasInvalidLogs(hasInvalid);
+
+      // Prefetch next page (only for local storage to avoid excessive Firebase reads)
+      if (feedPageSize !== -1 && !showLatestOnly && environment === Environment.Development) {
+        const nextPage = currentPage + 1;
+        LogStorageService.getLogsPage(currentSessionId, nextPage, effectivePageSize, logFilter)
+          .then(nextResult => {
+            prefetchedPageRef.current = {
+              page: nextPage,
+              sessionUid: currentSessionId,
+              filter: logFilter,
+              pageSize: effectivePageSize,
+              logs: nextResult.logs,
+              filteredCount: nextResult.filteredCount
+            };
+          })
+          .catch(() => {
+            prefetchedPageRef.current = null;
+          });
+      } else {
+        prefetchedPageRef.current = null;
+      }
+    } finally {
+      setIsLoading(false);
     }
-  }, [currentPage, feedPageSize, logFilter, logsTrigger, totalLogCount, isInvalidLog, showLatestOnly]);
+  }, [currentPage, feedPageSize, logFilter, logsTrigger, totalLogCount, isInvalidLog, showLatestOnly, environment, fetchLogsFromFirebase, sessionUid]);
   
   // Initial load and refresh trigger
   useEffect(() => {
@@ -147,7 +223,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
   // Clear prefetch cache when relevant params change
   useEffect(() => {
     prefetchedPageRef.current = null;
-  }, [sessionUid, logFilter, feedPageSize, showLatestOnly]);
+  }, [sessionUid, logFilter, feedPageSize, showLatestOnly, environment]);
   
   // Handle page change
   const handlePageChange = useCallback((page: number) => {
@@ -177,6 +253,13 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
     }
   }, [visibleLogs, sessionUid, environment]);
   
+  // Update a specific log
+  const updateLog = useCallback((id: string, updates: Partial<SynthLogItem>) => {
+    setVisibleLogs(prev => prev.map(log =>
+      log.id === id ? { ...log, ...updates } : log
+    ));
+  }, []);
+
   // Get count of unsaved items
   const getUnsavedCount = useCallback(() => {
     return visibleLogs.filter((l: SynthLogItem) => !l.savedToDb && !isInvalidLog(l)).length;
@@ -196,6 +279,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
     logFilter,
     showLatestOnly,
     feedPageSize,
+    isLoading,
     setCurrentPage,
     setLogFilter,
     setShowLatestOnly,
@@ -207,6 +291,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
     refreshLogs,
     handlePageChange,
     handleDeleteLog,
+    updateLog,
     isInvalidLog,
     getUnsavedCount,
     triggerRefresh

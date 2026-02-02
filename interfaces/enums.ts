@@ -13,7 +13,7 @@ export enum DataSource {
   Synthetic = 'synthetic'
 }
 
-export enum AppMode {
+export enum CreatorMode {
   Generator = 'generator',
   Converter = 'converter'
 }
@@ -103,3 +103,12 @@ export { ExportColumnName } from './enums/ExportColumnName';
 
 // Task type enum
 export { TaskType } from './enums/TaskType';
+
+// Feed display mode enum
+export { FeedDisplayMode } from './enums/FeedDisplayMode';
+
+// Log feed rewrite target enum
+export { LogFeedRewriteTarget } from './enums/LogFeedRewriteTarget';
+
+// Creator controls tab enum
+export { CreatorControlsTab } from './enums/CreatorControlsTab';

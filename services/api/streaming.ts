@@ -141,7 +141,6 @@ export async function processStreamResponse(
 
             if (chunk || usageData) {
               if (chunk) accumulated += chunk;
-              console.log('externalApiService: calling onChunk with chunk length:', chunk?.length || 0, 'usage:', usageData);
               onChunk(chunk, accumulated, usageData);
             }
           } catch (e) {

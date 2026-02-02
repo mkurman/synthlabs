@@ -6,9 +6,9 @@
  */
 
 import { logger } from '../utils/logger';
-import { 
-    FileFormat, 
-    FileType, 
+import {
+    FileFormat,
+    FileType,
     ExportMethod,
     LoadRubricConfig,
     SaveRubricConfig,
@@ -18,7 +18,7 @@ import {
     ExportResult,
     FileValidationResult
 } from '../interfaces/services/FileServiceConfig';
-import { AppMode } from '../interfaces/enums';
+import { CreatorMode } from '../interfaces/enums';
 import { DetectedColumns } from '../types';
 
 /**
@@ -40,11 +40,11 @@ export const FileService = {
     async loadRubric(file: File, config: LoadRubricConfig): Promise<void> {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            
+
             reader.onload = (event) => {
                 if (typeof event.target?.result === 'string') {
                     const content = event.target.result;
-                    if (config.appMode === AppMode.Generator) {
+                    if (config.appMode === CreatorMode.Generator) {
                         config.setSystemPrompt(content);
                     } else {
                         config.setConverterPrompt(content);
@@ -54,11 +54,11 @@ export const FileService = {
                     reject(new Error('Failed to read file content'));
                 }
             };
-            
+
             reader.onerror = () => {
                 reject(new Error('Failed to read file'));
             };
-            
+
             reader.readAsText(file);
         });
     },
@@ -69,13 +69,13 @@ export const FileService = {
      * @param config - Configuration with app mode and prompt content
      */
     saveRubric(config: SaveRubricConfig): void {
-        const content = config.appMode === AppMode.Generator 
-            ? config.systemPrompt 
+        const content = config.appMode === CreatorMode.Generator
+            ? config.systemPrompt
             : config.converterPrompt;
-        
-        const modeLabel = config.appMode === AppMode.Generator ? 'generator' : 'converter';
+
+        const modeLabel = config.appMode === CreatorMode.Generator ? 'generator' : 'converter';
         const fileName = `${modeLabel}_rubric_${new Date().toISOString().slice(0, 10)}.txt`;
-        
+
         this.downloadFile(content, fileName, 'text/plain');
     },
 
@@ -90,10 +90,10 @@ export const FileService = {
     async loadSourceFile(file: File, config: LoadSourceFileConfig): Promise<ParsedSourceFile> {
         // Store the file name
         config.setManualFileName(file.name);
-        
+
         const content = await this.readFileAsText(file);
         config.setConverterInputText(content);
-        
+
         // Detect columns from JSON data
         const trimmedText = content.trim();
         let detectedCols: string[] = [];
@@ -118,7 +118,7 @@ export const FileService = {
         if (detectedCols.length === 0) {
             const lines = content.split('\n').filter(l => l.trim());
             let validJsonlRows = 0;
-            
+
             for (const line of lines) {
                 try {
                     const obj = JSON.parse(line);
@@ -133,7 +133,7 @@ export const FileService = {
                     logger.warn(`Skipping invalid JSONL line: "${line.substring(0, 50)}..."`, error);
                 }
             }
-            
+
             // Use validated JSONL row count if we found valid rows
             if (validJsonlRows > 0) {
                 rowCount = validJsonlRows;
@@ -155,14 +155,14 @@ export const FileService = {
             config.setAvailableColumns(detectedCols);
             detectedColumnResult = config.detectColumns(detectedCols);
             config.setDetectedColumns(detectedColumnResult);
-            
+
             // Auto-select first detected input column if none selected
             if ((!config.hfConfig.inputColumns || config.hfConfig.inputColumns.length === 0) && detectedColumnResult.input.length > 0) {
                 config.setHfConfig((prev: any) => ({ ...prev, inputColumns: detectedColumnResult.input.slice(0, 1) }));
             }
-            
+
             // Auto-select detected reasoning columns if none selected
-            if ((!config.hfConfig.reasoningColumns || config.hfConfig.reasoningColumns.length === 0) 
+            if ((!config.hfConfig.reasoningColumns || config.hfConfig.reasoningColumns.length === 0)
                 && detectedColumnResult.reasoning.length > 0) {
                 config.setHfConfig((prev: any) => ({ ...prev, reasoningColumns: detectedColumnResult.reasoning }));
             }
@@ -270,7 +270,7 @@ export const FileService = {
     async readFileAsText(file: File): Promise<string> {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            
+
             reader.onload = (event) => {
                 if (typeof event.target?.result === 'string') {
                     resolve(event.target.result);
@@ -278,11 +278,11 @@ export const FileService = {
                     reject(new Error('Failed to read file content'));
                 }
             };
-            
+
             reader.onerror = () => {
                 reject(new Error('Failed to read file'));
             };
-            
+
             reader.readAsText(file);
         });
     },
@@ -315,7 +315,7 @@ export const FileService = {
      */
     validateFile(file: File, allowedTypes: FileType[]): FileValidationResult {
         const extension = file.name.split('.').pop()?.toLowerCase() || '';
-        
+
         const formatMap: Record<string, FileFormat> = {
             'json': FileFormat.Json,
             'jsonl': FileFormat.Jsonl,
@@ -324,7 +324,7 @@ export const FileService = {
         };
 
         const format = formatMap[extension];
-        
+
         if (!format) {
             return { valid: false, format: FileFormat.Txt, error: `Unsupported file format: .${extension}` };
         }
@@ -354,7 +354,7 @@ export const FileService = {
      */
     detectFormat(content: string): FileFormat {
         const trimmed = content.trim();
-        
+
         // Check for JSON array
         if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
             try {
@@ -364,7 +364,7 @@ export const FileService = {
                 // Not valid JSON, continue checking
             }
         }
-        
+
         // Check for JSONL (first line is JSON object)
         const firstLine = trimmed.split('\n')[0];
         if (firstLine) {
@@ -377,7 +377,7 @@ export const FileService = {
                 // Not valid JSONL, continue checking
             }
         }
-        
+
         // Default to plain text
         return FileFormat.Txt;
     }

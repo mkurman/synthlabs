@@ -67,7 +67,9 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
         } else {
             setIsFullscreen(false);
         }
-    }, [isOpen, loadSettings, setAvailablePromptSets, setPromptMetadata, refreshOllamaModels, setIsFullscreen]);
+        // ESLint disable: we only want this to run when isOpen changes, not when function references change
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     // All providers including Gemini for unified dropdowns (Gemini first)
     const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];

@@ -3,5 +3,5 @@ export enum ControlAction {
     Pause = 'pause',
     Resume = 'resume',
     Stop = 'stop',
-    Clear = 'clear'
+    Export = 'export'
 }

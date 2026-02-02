@@ -5,6 +5,7 @@ import { SettingsService } from '../settingsService';
 import { ExternalApiConfig, RESPONSES_API_SCHEMAS, sleep, generateJsonSchemaForPrompt, ResponsesSchemaName } from './schemas';
 import { processStreamResponse } from './streaming';
 import { parseJsonContent, MissingFieldsError } from './jsonParser';
+import { cleanGenerationParamsForApi } from '../../utils/generationParamsUtils';
 
 export type { ExternalApiConfig } from './schemas';
 
@@ -103,14 +104,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     headers['Authorization'] = `Bearer ${safeApiKey}`;
   }
 
-  const cleanGenParams: Record<string, any> = {};
-  if (generationParams) {
-    if (generationParams.temperature !== undefined) cleanGenParams.temperature = generationParams.temperature;
-    if (generationParams.topP !== undefined) cleanGenParams.top_p = generationParams.topP;
-    if (generationParams.topK !== undefined) cleanGenParams.top_k = generationParams.topK;
-    if (generationParams.frequencyPenalty !== undefined) cleanGenParams.frequency_penalty = generationParams.frequencyPenalty;
-    if (generationParams.presencePenalty !== undefined) cleanGenParams.presence_penalty = generationParams.presencePenalty;
-  }
+  const cleanGenParams = cleanGenerationParamsForApi(generationParams);
 
   let url = '';
   let payload: any = {};

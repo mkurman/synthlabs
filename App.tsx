@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 
 import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider, ApiType,
@@ -8,7 +8,6 @@ import {
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
 import { PromptService } from './services/promptService';
-import * as FirebaseService from './services/firebaseService';
 import { LogStorageService } from './services/logStorageService';
 import { SettingsService } from './services/settingsService';
 import { TaskType } from './interfaces/enums';
@@ -18,8 +17,9 @@ import { DataTransformService } from './services/dataTransformService';
 import { SessionService } from './services/sessionService';
 import { FileService } from './services/fileService';
 import { useLogManagement } from './hooks/useLogManagement';
-import { DataSource, Environment, ProviderType as ProviderTypeEnum, ExternalProvider as ExternalProviderEnum, ApiType as ApiTypeEnum, AppView, ViewMode, DeepPhase, ResponderPhase, PromptCategory, PromptRole } from './interfaces/enums';
-import type { CompleteGenerationConfig } from './interfaces';
+import { DataSource, Environment, ProviderType as ProviderTypeEnum, ExternalProvider as ExternalProviderEnum, ApiType as ApiTypeEnum, AppView, ViewMode, DeepPhase, ResponderPhase, PromptCategory, PromptRole, FeedDisplayMode } from './interfaces/enums';
+import type { CompleteGenerationConfig, SessionData } from './interfaces';
+import { SessionStatus, StorageMode } from './interfaces';
 import { toast } from './services/toastService';
 import { confirmService } from './services/confirmService';
 import { useHuggingFace } from './hooks/useHuggingFace';
@@ -44,20 +44,24 @@ import { useSparklineHistory } from './hooks/useSparklineHistory';
 import { useRowContent } from './hooks/useRowContent';
 import { useSyncedRef } from './hooks/useSyncedRef';
 import { useFieldSelection } from './hooks/useFieldSelection';
+import { useLogFeedRewriter } from './hooks/useLogFeedRewriter';
 import AppOverlays from './components/layout/AppOverlays';
-import AppMainContent from './components/layout/AppMainContent';
+import FeedAnalyticsPanel from './components/layout/FeedAnalyticsPanel';
+import VerifierPanel from './components/VerifierPanel';
 import { useAppViewProps } from './hooks/useAppViewProps';
+
+// New Layout Components
+import LayoutContainer from './components/LayoutContainer';
+import LeftSidebar from './components/LeftSidebar';
+import RightSidebar from './components/RightSidebar';
+import ModeNavbar from './components/ModeNavbar';
+import CreatorControls from './components/creator/CreatorControls';
+import { sessionLoadService, SessionSummary } from './services/sessionLoadService';
 
 // Session Management
 import { useSessionManager } from './hooks/useSessionManager';
 import { useSessionAutoSave } from './hooks/useSessionAutoSave';
 import { useSessionAnalytics } from './hooks/useSessionAnalytics';
-import SessionSidebar from './components/layout/SessionSidebar';
-import MainContent from './components/layout/MainContent';
-import ControlPanel from './components/layout/ControlPanel';
-import { ControlAction } from './interfaces/enums/ControlAction';
-import { SessionStatus } from './interfaces/enums/SessionStatus';
-import { MainViewMode } from './interfaces/enums/MainViewMode';
 
 export default function App() {
     // --- State: Modes ---
@@ -66,10 +70,26 @@ export default function App() {
     const [engineMode, setEngineMode] = useState<EngineMode>(EngineMode.Regular);
     const [environment, setEnvironment] = useState<Environment>(Environment.Development);
     const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.Feed);
+    const [feedDisplayMode, setFeedDisplayMode] = useState<FeedDisplayMode>(FeedDisplayMode.Default);
 
     // --- State: Session & DB ---
     const [sessionUid, setSessionUid] = useState<string>(crypto.randomUUID());
     const sessionUidRef = useSyncedRef(sessionUid);
+
+    // --- State: Layout & Sessions ---
+    const [isLeftSidebarOpen, setLeftSidebarOpen] = useState(true);
+    const [isRightSidebarOpen, setRightSidebarOpen] = useState(true);
+    const [sessionsList, setSessionsList] = useState<SessionData[]>([]);
+
+    useEffect(() => {
+        const loadSessions = async () => {
+            // Clear cache to ensure fresh data when environment changes
+            sessionLoadService.clearCache();
+            const list = await sessionLoadService.loadSessionList(true, environment);
+            setSessionsList(list);
+        };
+        loadSessions();
+    }, [environment]); // Only reload when environment changes, not on session switch
 
     const [sessionName, setSessionName] = useState<string | null>(null);
     const sessionNameRef = useSyncedRef(sessionName);
@@ -147,7 +167,7 @@ export default function App() {
 
 
     // --- State: Data Source ---
-    const [dataSourceMode, setDataSourceMode] = useState<DataSource>(DataSource.Synthetic);
+    const [dataSourceMode, setDataSourceMode] = useState<DataSource>(DataSource.HuggingFace);
 
     // 1. Synthetic
     const [geminiTopic, setGeminiTopic] = useState('Advanced Quantum Mechanics');
@@ -177,7 +197,7 @@ export default function App() {
 
     // --- State: Cloud Session Management ---
     const [showCloudLoadModal, setShowCloudLoadModal] = useState(false);
-    const [cloudSessions, setCloudSessions] = useState<FirebaseService.SavedSession[]>([]);
+    const [cloudSessions, setCloudSessions] = useState<SessionData[]>([]);
     const [isCloudLoading, setIsCloudLoading] = useState(false);
 
     // --- State: Task Classification / Auto-routing ---
@@ -323,12 +343,14 @@ export default function App() {
         logFilter,
         showLatestOnly,
         feedPageSize,
+        isLoading: isLoadingLogs,
         setLogFilter,
         setShowLatestOnly,
         setFeedPageSize,
         refreshLogs,
         handlePageChange,
         handleDeleteLog: handleDeleteLogFromLogs,
+        updateLog,
         isInvalidLog,
         getUnsavedCount,
         setVisibleLogs,
@@ -336,6 +358,9 @@ export default function App() {
         setFilteredLogCount,
         setLogsTrigger
     } = logManagement;
+
+    // Feed Rewriter Hook
+    const feedRewriter = useLogFeedRewriter({ onUpdateLog: updateLog });
 
     // Session Management
     const sessionManager = useSessionManager({
@@ -348,15 +373,116 @@ export default function App() {
         }
     });
 
+    // Live session data for auto-save
+    const currentFullSession = useMemo(() => {
+        const config = SessionService.buildSessionConfig({
+            appMode,
+            engineMode,
+            environment,
+            provider,
+            externalProvider,
+            externalApiKey,
+            externalModel,
+            customBaseUrl,
+            deepConfig,
+            userAgentConfig,
+            concurrency,
+            rowsToFetch,
+            skipRows,
+            sleepTime,
+            maxRetries,
+            retryDelay,
+            feedPageSize,
+            dataSourceMode,
+            hfConfig,
+            geminiTopic,
+            topicCategory,
+            systemPrompt,
+            converterPrompt,
+            conversationRewriteMode,
+            converterInputText,
+            generationParams
+        });
+        return SessionService.getSessionData(config, sessionUid);
+    }, [
+        appMode, engineMode, environment, provider, externalProvider, externalApiKey, externalModel, customBaseUrl,
+        deepConfig, userAgentConfig, concurrency, rowsToFetch, skipRows, sleepTime, maxRetries, retryDelay,
+        feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt,
+        conversationRewriteMode, converterInputText, generationParams, sessionUid
+    ]);
+
+    // Memoized auto-save callback to prevent timeout cancellation from re-renders
+    const handleAutoSave = useCallback(async (savedSession: SessionData) => {
+        // Build the complete SessionData object with correct id and metadata
+        const existingSession = environment === Environment.Development
+            ? await import('./services/session/indexedDBUtils').then(m => m.loadSession(sessionUid)).catch(() => null)
+            : null;
+
+        // Create full SessionData with consistent id (sessionUid is the storage key)
+        const fullSessionData: SessionData = {
+            ...savedSession,
+            id: sessionUid, // Use sessionUid as the storage key
+            sessionUid: sessionUid,
+            name: sessionName || savedSession.name || 'Untitled Session',
+            updatedAt: Date.now(),
+            createdAt: existingSession?.createdAt || savedSession.createdAt || new Date().toISOString(),
+            itemCount: existingSession?.itemCount || savedSession.itemCount || 0,
+            analytics: existingSession?.analytics || savedSession.analytics || {
+                totalItems: 0,
+                completedItems: 0,
+                errorCount: 0,
+                totalTokens: 0,
+                totalCost: 0,
+                avgResponseTime: 0,
+                successRate: 0,
+                lastUpdated: Date.now()
+            },
+            dataset: savedSession.dataset || (hfConfig?.dataset ? {
+                type: dataSourceMode,
+                hfConfig: hfConfig
+            } : undefined),
+            storageMode: environment === Environment.Production ? StorageMode.Cloud : StorageMode.Local,
+            status: savedSession.status || SessionStatus.Idle,
+            version: savedSession.version || 2
+        };
+
+        // Handle cloud save or local save
+        if (environment === Environment.Production && SessionService.isCloudAvailable()) {
+            try {
+                await SessionService.saveToCloud(fullSessionData, fullSessionData.name);
+            } catch (e) {
+                console.error("Auto-save to cloud failed", e);
+            }
+        } else {
+            // Handle local save via IndexedDBUtils - save full SessionData directly
+            try {
+                const IndexedDBUtils = await import('./services/session/indexedDBUtils');
+                await IndexedDBUtils.saveSession(fullSessionData);
+            } catch (e) {
+                console.error("Auto-save to local DB failed", e);
+            }
+        }
+
+        // Refresh session list to show updated timestamp/name
+        try {
+            const list = await sessionLoadService.loadSessionList(true, environment);
+            setSessionsList(list);
+        } catch (e) {
+            console.error("Failed to refresh session list", e);
+        }
+    }, [environment, sessionUid, sessionName, appMode, hfConfig]);
+
     // Auto-save current session
     useSessionAutoSave({
-        session: sessionManager.currentSession,
+        session: currentFullSession as any, // Cast to avoid legacy type conflict if any
         enabled: true,
-        debounceMs: 2000
+        debounceMs: 2000,
+        disableDefaultPersistence: true,
+        onSave: handleAutoSave
     });
 
-    // Track session analytics
-    const sessionAnalytics = useSessionAnalytics({
+    // --- Session Analytics ---
+    useSessionAnalytics({
         session: sessionManager.currentSession,
         items: visibleLogs,
         enabled: true,
@@ -726,7 +852,10 @@ export default function App() {
 
     useSettingsInit({ refreshPrompts });
 
-    const { sidebarProps, feedProps, verifierProps } = useAppViewProps({
+    const {
+        sidebarProps,
+        feedProps
+    } = useAppViewProps({
         sessionName,
         environment,
         onLoadSession: handleLoadSession,
@@ -865,10 +994,12 @@ export default function App() {
         hasInvalidLogs,
         showLatestOnly,
         feedPageSize,
+        feedDisplayMode,
         onViewModeChange: setViewMode,
         onLogFilterChange: setLogFilter,
         onShowLatestOnlyChange: setShowLatestOnly,
         onFeedPageSizeChange: setFeedPageSize,
+        onFeedDisplayModeChange: setFeedDisplayMode,
         visibleLogs,
         filteredLogCount,
         currentPage,
@@ -882,7 +1013,26 @@ export default function App() {
         savingIds: savingToDbIds,
         streamingConversations: streamingConversationsRef.current,
         streamingVersion: streamingConversationsVersion,
-        sessionUid
+        sessionUid,
+        isLoadingLogs,
+        // Feed editing props
+        editingField: feedRewriter.editingField,
+        editValue: feedRewriter.editValue,
+        onStartEditing: feedRewriter.startEditing,
+        onSaveEditing: feedRewriter.saveEditing,
+        onCancelEditing: feedRewriter.cancelEditing,
+        onEditValueChange: feedRewriter.setEditValue,
+        rewritingField: feedRewriter.rewritingField,
+        streamingContent: feedRewriter.streamingContent,
+        onRewrite: (itemId: string, field: any) => {
+            const log = visibleLogs.find(l => l.id === itemId);
+            if (log) {
+                const currentValue = field === 'query' ? log.query :
+                    field === 'reasoning' ? log.reasoning :
+                    log.answer;
+                feedRewriter.handleRewrite(itemId, field, currentValue || '');
+            }
+        }
     });
 
     return (
@@ -920,141 +1070,102 @@ export default function App() {
                 }}
             />
 
-            {/* Three-column session-aware layout */}
-            <div className="flex h-screen">
-                {/* Left Sidebar - Sessions */}
-                <SessionSidebar
-                    sessions={sessionManager.sessions}
-                    currentSessionId={sessionManager.currentSession?.id || null}
-                    currentMode={appView}
-                    onSessionSelect={(id) => sessionManager.selectSession(id)}
-                    onNewSession={async (mode) => {
-                        await sessionManager.createSession(
-                            mode,
-                            undefined, // dataset
-                            {
-                                provider: externalProvider,
-                                model: externalModel,
-                                apiKey: externalApiKey,
-                                customBaseUrl,
-                                generationParams
-                            }
-                        );
-                        setAppView(mode);
-                    }}
-                    onModeChange={setAppView}
-                    onRename={(id, name) => sessionManager.renameSession(id, name)}
-                    sortBy={sessionManager.sortBy}
-                    onSortChange={(sort) => sessionManager.setSortBy(sort)}
-                />
-
-                {/* Main Content Area */}
-                <MainContent
-                    viewMode={viewMode === ViewMode.Feed ? MainViewMode.Feed : MainViewMode.Analytics}
-                    onViewModeChange={(mode) => setViewMode(mode === MainViewMode.Feed ? ViewMode.Feed : ViewMode.Analytics)}
-                    mobileControls={
-                        // Controls shown on tablet/mobile
-                        <ControlPanel
-                            currentSession={sessionManager.currentSession}
-                            isGenerating={isRunning}
-                            onAction={async (action) => {
-                                const session = sessionManager.currentSession;
-                                if (!session) return;
-
-                                switch (action) {
-                                    case ControlAction.Start:
-                                        await sessionManager.updateSessionStatus(session.id, SessionStatus.Active);
-                                        startGeneration(false);
-                                        break;
-                                    case ControlAction.Pause:
-                                        await sessionManager.updateSessionStatus(session.id, SessionStatus.Paused);
-                                        stopGeneration();
-                                        break;
-                                    case ControlAction.Stop:
-                                        await sessionManager.updateSessionStatus(session.id, SessionStatus.Completed);
-                                        stopGeneration();
-                                        break;
-                                    case ControlAction.Clear:
-                                        await logManagement.refreshLogs();
-                                        break;
-                                }
-                            }}
-                        >
-                            {/* Settings panel placeholder - integrate existing settings */}
-                            <div className="p-4 text-sm text-slate-400">
-                                <button
-                                    onClick={() => setShowSettings(true)}
-                                    className="w-full px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition-colors"
-                                >
-                                    Open Settings
-                                </button>
-                            </div>
-                        </ControlPanel>
-                    }
-                >
-                    <AppMainContent
-                        appView={appView}
-                        verifierProps={verifierProps}
-                        sidebarProps={sidebarProps}
-                        feedProps={feedProps}
-                    />
-                </MainContent>
-
-                {/* Right Sidebar - Controls (desktop only) */}
-                <div className="hidden xl:block">
-                    <ControlPanel
-                        currentSession={sessionManager.currentSession}
-                        isGenerating={isRunning}
-                        onAction={async (action) => {
-                            const session = sessionManager.currentSession;
-                            if (!session) return;
-
-                            switch (action) {
-                                case ControlAction.Start:
-                                    await sessionManager.updateSessionStatus(session.id, SessionStatus.Active);
-                                    startGeneration(false);
-                                    break;
-                                case ControlAction.Pause:
-                                    await sessionManager.updateSessionStatus(session.id, SessionStatus.Paused);
-                                    stopGeneration();
-                                    break;
-                                case ControlAction.Stop:
-                                    await sessionManager.updateSessionStatus(session.id, SessionStatus.Completed);
-                                    stopGeneration();
-                                    break;
-                                case ControlAction.Clear:
-                                    await logManagement.refreshLogs();
-                                    break;
+            <LayoutContainer
+                isLeftSidebarOpen={isLeftSidebarOpen}
+                isRightSidebarOpen={isRightSidebarOpen}
+                onLeftSidebarToggle={() => setLeftSidebarOpen(!isLeftSidebarOpen)}
+                onRightSidebarToggle={() => setRightSidebarOpen(!isRightSidebarOpen)}
+                leftSidebar={
+                    <LeftSidebar
+                        sessions={sessionsList}
+                        environment={environment}
+                        activeSessionId={sessionUid}
+                        onNewSession={() => {
+                            confirmService.confirm({
+                                title: 'Start new session?',
+                                message: 'This will clear the current session. Continue?',
+                                confirmLabel: 'Start New',
+                                cancelLabel: 'Cancel'
+                            }).then((confirmed) => {
+                                if (confirmed) startNewSession();
+                            });
+                        }}
+                        onSessionSelect={async (id) => {
+                            const session = sessionsList.find(s => s.id === id);
+                            if (session) {
+                                // Both cloud and local sessions use the same handler now due to Service unification
+                                handleCloudSessionSelect(session as any);
                             }
                         }}
-                    >
-                        {/* Settings panel placeholder */}
-                        <div className="p-4 text-sm text-slate-400">
-                            <button
-                                onClick={() => setShowSettings(true)}
-                                className="w-full px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition-colors"
-                            >
-                                Open Settings
-                            </button>
-                            <div className="mt-4 space-y-2">
-                                <button
-                                    onClick={exportJsonl}
-                                    className="w-full px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-white transition-colors text-xs"
-                                >
-                                    Export JSONL
-                                </button>
-                                <div className="text-xs text-slate-500 mt-2">
-                                    Environment: {environment}
-                                </div>
-                                <div className="text-xs text-slate-500">
-                                    Logs: {totalLogCount}
-                                </div>
-                            </div>
+                        onSessionRename={async (id, name) => {
+                            if (sessionManager && sessionManager.renameSession) {
+                                sessionManager.renameSession(id, name);
+                                const list = await sessionLoadService.loadSessionList(true, environment);
+                                setSessionsList(list);
+                            }
+                        }}
+                        onSessionDelete={async (id) => {
+                            if (sessionManager && sessionManager.deleteSession) {
+                                await sessionManager.deleteSession(id);
+                                const list = await sessionLoadService.loadSessionList(true, environment);
+                                setSessionsList(list);
+                            } else {
+                                await handleCloudSessionDelete(id, { stopPropagation: () => { } } as any);
+                                const list = await sessionLoadService.loadSessionList(true, environment);
+                                setSessionsList(list);
+                            }
+                        }}
+                        onOpenSettings={() => setShowSettings(true)}
+                        currentEnvironment={environment}
+                        onEnvironmentChange={(env) => {
+                            setEnvironment(env);
+                        }}
+                    />
+                }
+                mainContent={
+                    <div className="flex flex-col h-full w-full">
+                        <div className="flex-shrink-0 z-20">
+                            <ModeNavbar
+                                currentMode={appView as any}
+                                onModeChange={(mode: any) => setAppView(mode)}
+                                sessionName={sessionName}
+                                onSessionNameChange={setSessionName}
+                                isDirty={environment === Environment.Production && getUnsavedCount() > 0} // Only show 'Unsaved' for cloud needing sync
+                            />
                         </div>
-                    </ControlPanel>
-                </div>
-            </div>
-
+                        <div className="flex-1 min-h-0 relative">
+                            {appView === AppView.Verifier ? (
+                                <VerifierPanel
+                                    currentSessionUid={sessionUid}
+                                    modelConfig={{
+                                        provider,
+                                        externalProvider,
+                                        externalModel,
+                                        apiKey: externalApiKey,
+                                        externalApiKey
+                                    }}
+                                />
+                            ) : (
+                                <div className="h-full overflow-y-auto">
+                                    <FeedAnalyticsPanel {...feedProps} />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                }
+                rightSidebar={
+                    appView === AppView.Verifier ? null : (
+                        <RightSidebar>
+                            <CreatorControls
+                                {...sidebarProps}
+                                setHfConfig={sidebarProps.onHfConfigChange}
+                                feedRewriterConfig={feedRewriter.rewriterConfig}
+                                onFeedRewriterConfigChange={feedRewriter.setRewriterConfig}
+                            />
+                        </RightSidebar>
+                    )
+                }
+            />
         </div>
     );
 }

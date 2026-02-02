@@ -1,5 +1,5 @@
 import { initializeApp, getApps, deleteApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, updateDoc, increment, getDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, updateDoc, increment, getDoc, setDoc } from 'firebase/firestore';
 
 // ... (existing imports)
 
@@ -26,6 +26,7 @@ export const fetchLogItem = async (logId: string): Promise<VerifierItem | null> 
     }
 };
 import { SynthLogItem, FirebaseConfig, VerifierItem } from '../types';
+import { CloudSessionResult, SessionData } from '../interfaces/services/SessionConfig';
 import { logger } from '../utils/logger';
 
 let db: Firestore | null = null;
@@ -55,17 +56,6 @@ const sanitizeForFirestore = (obj: any, seen = new WeakSet()): any => {
     }
     return cleaned;
 };
-
-export interface SavedSession {
-    id: string;
-    name: string;
-    createdAt: string;
-    config: any;
-    logCount?: number;      // Number of logs connected to this session
-    sessionUid?: string;    // The session UID used in synth_logs (matches doc ID)
-    isAutoRecovered?: boolean; // True if session was auto-created from orphaned logs
-    source?: string;
-}
 
 const getEnvConfig = (): FirebaseConfig => {
     const env = (import.meta as any).env || {};
@@ -347,15 +337,28 @@ export const getDbStats = async (currentSessionUid?: string): Promise<{ total: n
     }
 };
 
-export const saveSessionToFirebase = async (sessionData: any, name: string) => {
+export const saveSessionToFirebase = async (sessionData: SessionData, name: string) => {
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
-        await addDoc(collection(db, 'synth_sessions'), {
-            name,
-            config: sessionData,
-            createdAt: new Date().toISOString()
+        // Use the session's id as the document ID for consistent upsert behavior
+        const sessionId = sessionData.id || sessionData.sessionUid;
+        if (!sessionId) {
+            throw new Error("Session must have an id or sessionUid");
+        }
+
+        // Sanitize the full SessionData for Firestore (removes undefined values)
+        const sanitizedData = sanitizeForFirestore({
+            ...sessionData,
+            name: name || sessionData.name,
+            updatedAt: Date.now(),
+            // Ensure sessionUid matches the document ID
+            sessionUid: sessionId
         });
+
+        // Use setDoc with merge to update existing or create new
+        const docRef = doc(db, 'synth_sessions', sessionId);
+        await setDoc(docRef, sanitizedData, { merge: true });
     } catch (e) {
         console.error("Error saving session", e);
         throw e;
@@ -407,7 +410,7 @@ export const createSessionInFirebase = async (name?: string, source?: string, co
     }
 };
 
-export const getSessionsFromFirebase = async (): Promise<SavedSession[]> => {
+export const getSessionsFromFirebase = async (): Promise<SessionData[]> => {
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
@@ -416,16 +419,7 @@ export const getSessionsFromFirebase = async (): Promise<SavedSession[]> => {
         // Only extract minimal fields - avoid spreading large config objects
         return snapshot.docs.map(d => {
             const data = d.data();
-            return {
-                id: d.id,
-                name: data.name || 'Unknown Session',
-                createdAt: data.createdAt || '',
-                logCount: data.logCount,
-                sessionUid: data.sessionUid || d.id,
-                isAutoRecovered: data.isAutoRecovered,
-                source: data.source,
-                config: undefined  // Don't load full config - too large
-            } as SavedSession;
+            return { ...data, id: d.id } as SessionData;
         });
     } catch (e) {
         console.error("Error fetching sessions", e);
@@ -440,6 +434,53 @@ export const deleteSessionFromFirebase = async (id: string) => {
         await deleteDoc(doc(db, 'synth_sessions', id));
     } catch (e) {
         console.error("Error deleting session", e);
+        throw e;
+    }
+};
+
+export const loadFromCloud = async (sessionId: string): Promise<CloudSessionResult | null> => {
+    await ensureInitialized();
+    if (!db) throw new Error("Firebase not initialized");
+    try {
+        const docRef = doc(db, 'synth_sessions', sessionId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+
+            // Handle both old format (sessionData nested in 'config') and new format (full SessionData at root)
+            let sessionData: SessionData;
+
+            if (data.config && typeof data.config === 'object' && data.config.config) {
+                // Old format: { name, config: SessionData, createdAt }
+                // The SessionData was stored in 'config' field
+                sessionData = data.config as SessionData;
+            } else if (data.config && typeof data.config === 'object') {
+                // Intermediate format: config contains SessionConfig (not full SessionData)
+                sessionData = {
+                    ...data,
+                    id: docSnap.id,
+                    sessionUid: data.sessionUid || docSnap.id
+                } as SessionData;
+            } else {
+                // New format: full SessionData stored at document root
+                sessionData = {
+                    ...data,
+                    id: docSnap.id,
+                    sessionUid: data.sessionUid || docSnap.id
+                } as SessionData;
+            }
+
+            return {
+                id: docSnap.id,
+                name: data.name || sessionData.name || 'Unknown Session',
+                sessionData,
+                sessionUid: data.sessionUid || docSnap.id
+            };
+        }
+        return null;
+    } catch (e) {
+        console.error("Error loading session from cloud", e);
         throw e;
     }
 };

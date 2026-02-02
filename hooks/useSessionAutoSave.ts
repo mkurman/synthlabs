@@ -9,6 +9,7 @@ interface UseSessionAutoSaveOptions {
     debounceMs?: number;
     onSave?: (session: SessionData) => void;
     onError?: (error: Error) => void;
+    disableDefaultPersistence?: boolean;
 }
 
 /**
@@ -20,7 +21,8 @@ export function useSessionAutoSave(options: UseSessionAutoSaveOptions) {
         enabled = true,
         debounceMs = 2000,
         onSave,
-        onError
+        onError,
+        disableDefaultPersistence = false
     } = options;
 
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -38,12 +40,14 @@ export function useSessionAutoSave(options: UseSessionAutoSaveOptions) {
             // Determine storage mode
             const storageMode = sessionToSave.storageMode || StorageMode.Local;
 
-            if (storageMode === StorageMode.Local) {
-                await IndexedDBUtils.saveSession(sessionToSave);
-            } else {
-                // Save to Firebase (to be implemented)
-                // For now, fall back to local
-                await IndexedDBUtils.saveSession(sessionToSave);
+            if (!disableDefaultPersistence) {
+                if (storageMode === StorageMode.Local) {
+                    await IndexedDBUtils.saveSession(sessionToSave);
+                } else {
+                    // Save to Firebase (to be implemented)
+                    // For now, fall back to local
+                    await IndexedDBUtils.saveSession(sessionToSave);
+                }
             }
 
             // Update last saved reference

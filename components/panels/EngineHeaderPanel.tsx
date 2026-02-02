@@ -20,13 +20,10 @@ export default function EngineHeaderPanel({
 }: EngineHeaderPanelProps) {
     return (
         <>
-            <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-slate-400" /> ENGINE
-                </h3>
-                <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800">
-                    <button onClick={() => onEngineModeChange(EngineMode.Regular)} className={`px-2 py-1 text-[10px] font-bold rounded transition-all ${engineMode === EngineMode.Regular ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>REGULAR</button>
-                    <button onClick={() => onEngineModeChange(EngineMode.Deep)} className={`px-2 py-1 text-[10px] font-bold rounded transition-all flex items-center gap-1 ${engineMode === EngineMode.Deep ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
+            <div className="flex items-center justify-between w-full">
+                <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 w-full">
+                    <button onClick={() => onEngineModeChange(EngineMode.Regular)} className={`px-2 py-1 w-full text-[10px] font-bold rounded transition-all ${engineMode === EngineMode.Regular ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>REGULAR</button>
+                    <button onClick={() => onEngineModeChange(EngineMode.Deep)} className={`px-2 py-1 w-full text-[10px] font-bold rounded transition-all gap-1 ${engineMode === EngineMode.Deep ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
                         DEEP
                     </button>
                 </div>

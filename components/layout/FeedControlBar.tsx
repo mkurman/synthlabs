@@ -1,5 +1,5 @@
-import { LayoutDashboard, List, Terminal, AlertCircle, Eye } from 'lucide-react';
-import { ViewMode, LogFilter } from '../../interfaces/enums';
+import { LayoutDashboard, List, Terminal, AlertCircle, Eye, LayoutGrid, Table2, Layers } from 'lucide-react';
+import { ViewMode, LogFilter, FeedDisplayMode } from '../../interfaces/enums';
 
 interface FeedControlBarProps {
   viewMode: ViewMode;
@@ -7,10 +7,12 @@ interface FeedControlBarProps {
   hasInvalidLogs: boolean;
   showLatestOnly: boolean;
   feedPageSize: number;
+  feedDisplayMode: FeedDisplayMode;
   onViewModeChange: (mode: ViewMode) => void;
   onLogFilterChange: (filter: LogFilter) => void;
   onShowLatestOnlyChange: (show: boolean) => void;
   onFeedPageSizeChange: (size: number) => void;
+  onFeedDisplayModeChange: (mode: FeedDisplayMode) => void;
 }
 
 export default function FeedControlBar({
@@ -19,10 +21,12 @@ export default function FeedControlBar({
   hasInvalidLogs,
   showLatestOnly,
   feedPageSize,
+  feedDisplayMode,
   onViewModeChange,
   onLogFilterChange,
   onShowLatestOnlyChange,
-  onFeedPageSizeChange
+  onFeedPageSizeChange,
+  onFeedDisplayModeChange
 }: FeedControlBarProps) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
@@ -85,13 +89,52 @@ export default function FeedControlBar({
           <button
             onClick={() => onShowLatestOnlyChange(!showLatestOnly)}
             className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold uppercase transition-all border ${
-              showLatestOnly 
-                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' 
+              showLatestOnly
+                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
                 : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700'
             }`}
           >
             <Eye className="w-3 h-3" /> Latest only
           </button>
+        )}
+
+        {/* Feed Display Mode Selector */}
+        {viewMode === ViewMode.Feed && (
+          <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
+            <button
+              onClick={() => onFeedDisplayModeChange(FeedDisplayMode.Default)}
+              className={`p-1.5 rounded-md transition-all ${
+                feedDisplayMode === FeedDisplayMode.Default
+                  ? 'bg-slate-700 text-white'
+                  : 'text-slate-500 hover:text-white hover:bg-slate-800'
+              }`}
+              title="Full View"
+            >
+              <Layers className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => onFeedDisplayModeChange(FeedDisplayMode.List)}
+              className={`p-1.5 rounded-md transition-all ${
+                feedDisplayMode === FeedDisplayMode.List
+                  ? 'bg-slate-700 text-white'
+                  : 'text-slate-500 hover:text-white hover:bg-slate-800'
+              }`}
+              title="List View"
+            >
+              <Table2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => onFeedDisplayModeChange(FeedDisplayMode.Cards)}
+              className={`p-1.5 rounded-md transition-all ${
+                feedDisplayMode === FeedDisplayMode.Cards
+                  ? 'bg-slate-700 text-white'
+                  : 'text-slate-500 hover:text-white hover:bg-slate-800'
+              }`}
+              title="Compact Cards"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+          </div>
         )}
       </div>
 

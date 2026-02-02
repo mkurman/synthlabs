@@ -1,13 +1,13 @@
 import { AlertCircle, ArrowLeftRight, Database, FileJson, Pause, Play, Plus, RefreshCcw, RefreshCw, ShieldCheck, Square, Terminal } from 'lucide-react';
 import { ProgressStats } from '../../types';
-import { DataSource, Environment, AppMode } from '../../interfaces/enums';
+import { DataSource, Environment, CreatorMode } from '../../interfaces/enums';
 import { confirmService } from '../../services/confirmService';
 import { PrefetchState } from '../../services/hfPrefetchService';
 import { TaskType } from '../../interfaces/enums';
 import MiniDbPanel from '../MiniDbPanel';
 
 interface ControlPanelProps {
-    appMode: AppMode;
+    appMode: CreatorMode;
     environment: Environment;
     isRunning: boolean;
     isPaused: boolean;
@@ -17,7 +17,7 @@ interface ControlPanelProps {
     error: string | null;
     isStreamingEnabled: boolean;
     onStreamingChange: (enabled: boolean) => void;
-    onAppModeChange: (mode: AppMode) => void;
+    onAppModeChange: (mode: CreatorMode) => void;
     onStart: () => void;
     onPause: () => void;
     onResume: () => void;
@@ -68,14 +68,14 @@ export default function ControlPanel({
             {/* Mode Switcher */}
             <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800 mb-6">
                 <button
-                    onClick={() => onAppModeChange(AppMode.Generator)}
-                    className={`flex-1 py-2 text-xs font-bold rounded flex items-center justify-center gap-2 transition-all uppercase tracking-wide ${appMode === AppMode.Generator ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                    onClick={() => onAppModeChange(CreatorMode.Generator)}
+                    className={`flex-1 py-2 text-xs font-bold rounded flex items-center justify-center gap-2 transition-all uppercase tracking-wide ${appMode === CreatorMode.Generator ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
                 >
                     <FileJson className="w-3.5 h-3.5" /> Generator
                 </button>
                 <button
-                    onClick={() => onAppModeChange(AppMode.Converter)}
-                    className={`flex-1 py-2 text-xs font-bold rounded flex items-center justify-center gap-2 transition-all uppercase tracking-wide ${appMode === AppMode.Converter ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                    onClick={() => onAppModeChange(CreatorMode.Converter)}
+                    className={`flex-1 py-2 text-xs font-bold rounded flex items-center justify-center gap-2 transition-all uppercase tracking-wide ${appMode === CreatorMode.Converter ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
                 >
                     <ArrowLeftRight className="w-3.5 h-3.5" /> Converter
                 </button>

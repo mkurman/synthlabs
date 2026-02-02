@@ -1,10 +1,10 @@
 import { useCallback } from 'react';
 
 import { optimizePrompt } from '../services/promptOptimizationService';
-import { AppMode } from '../interfaces/enums';
+import { CreatorMode } from '../interfaces/enums';
 
 interface UsePromptOptimizationOptions {
-    appMode: AppMode;
+    appMode: CreatorMode;
     systemPrompt: string;
     converterPrompt: string;
     setSystemPrompt: (prompt: string) => void;

@@ -42,6 +42,7 @@ import { useVerifierDbActions } from '../hooks/useVerifierDbActions';
 import { useVerifierInlineEditing } from '../hooks/useVerifierInlineEditing';
 import ImportTab from './verifier/ImportTab';
 import ExportTab from './verifier/ExportTab';
+import { SessionData } from '../interfaces';
 
 interface VerifierPanelProps {
     currentSessionUid: string;
@@ -68,7 +69,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig }: Verifi
     // Chat Panel State
     const [showChat, setShowChat] = useState(false);
 
-    const [availableSessions, setAvailableSessions] = useState<FirebaseService.SavedSession[]>([]);
+    const [availableSessions, setAvailableSessions] = useState<SessionData[]>([]);
     const [isSyncing, setIsSyncing] = useState(false);  // Sync orphaned logs state
     const [isCheckingOrphans, setIsCheckingOrphans] = useState(false);  // Loading state for orphan check
     const [orphanedLogsInfo, setOrphanedLogsInfo] = useState<FirebaseService.OrphanedLogsInfo | null>(null);
@@ -1581,316 +1582,316 @@ Based on the criteria above, provide a 1-5 score.`;
                                     const displayAnswer = parsedAnswer.hasThinkTags ? parsedAnswer.answer : item.answer;
 
                                     return (
-                                    <div key={item.id} className={`bg-slate-900 border relative group transition-all rounded-xl p-4 flex flex-col gap-3 ${item.hasUnsavedChanges
-                                        ? 'border-orange-500/80 shadow-[0_0_15px_-3px_rgba(249,115,22,0.3)]'
-                                        : item.isDuplicate
-                                            ? 'border-amber-500/30'
-                                            : 'border-slate-800 hover:border-teal-500/30'
-                                        }`}>
+                                        <div key={item.id} className={`bg-slate-900 border relative group transition-all rounded-xl p-4 flex flex-col gap-3 ${item.hasUnsavedChanges
+                                            ? 'border-orange-500/80 shadow-[0_0_15px_-3px_rgba(249,115,22,0.3)]'
+                                            : item.isDuplicate
+                                                ? 'border-amber-500/30'
+                                                : 'border-slate-800 hover:border-teal-500/30'
+                                            }`}>
 
-                                        {item.isDuplicate && (
-                                            <button
-                                                onClick={() => toggleDuplicateStatus(item.id)}
-                                                className="absolute top-2 right-2 text-amber-500 hover:text-amber-400 transition-colors z-10"
-                                                title="Duplicate Detected. Click to unmark."
-                                            >
-                                                <AlertTriangle className="w-4 h-4" />
-                                            </button>
-                                        )}
+                                            {item.isDuplicate && (
+                                                <button
+                                                    onClick={() => toggleDuplicateStatus(item.id)}
+                                                    className="absolute top-2 right-2 text-amber-500 hover:text-amber-400 transition-colors z-10"
+                                                    title="Duplicate Detected. Click to unmark."
+                                                >
+                                                    <AlertTriangle className="w-4 h-4" />
+                                                </button>
+                                            )}
 
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex items-center gap-3">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedItemIds.has(item.id)}
-                                                    onChange={() => toggleSelection(item.id)}
-                                                    className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-teal-600 focus:ring-offset-slate-900 cursor-pointer"
-                                                />
-                                                <span className="text-[10px] font-mono text-slate-500 bg-slate-800/50 px-1.5 py-0.5 rounded border border-slate-700/50" title="Index in dataset (0-based)">
-                                                    #{data.indexOf(item)}
-                                                </span>
-                                                <div className="flex gap-1">
-                                                    {[1, 2, 3, 4, 5].map(star => (
-                                                        <button key={star} onClick={() => setScore(item.id, star)} className="focus:outline-none transition-transform active:scale-90">
-                                                            <Star className={`w-4 h-4 ${item.score >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
-                                                        </button>
-                                                    ))}
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex items-center gap-3">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedItemIds.has(item.id)}
+                                                        onChange={() => toggleSelection(item.id)}
+                                                        className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-teal-600 focus:ring-offset-slate-900 cursor-pointer"
+                                                    />
+                                                    <span className="text-[10px] font-mono text-slate-500 bg-slate-800/50 px-1.5 py-0.5 rounded border border-slate-700/50" title="Index in dataset (0-based)">
+                                                        #{data.indexOf(item)}
+                                                    </span>
+                                                    <div className="flex gap-1">
+                                                        {[1, 2, 3, 4, 5].map(star => (
+                                                            <button key={star} onClick={() => setScore(item.id, star)} className="focus:outline-none transition-transform active:scale-90">
+                                                                <Star className={`w-4 h-4 ${item.score >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
+                                                            </button>
+                                                        ))}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                            <div className="flex gap-2">
-                                                {dataSource === 'db' && (
-                                                    <>
-                                                        <button
-                                                            onClick={() => handleDbUpdate(item)}
-                                                            disabled={itemStates[item.id] === 'saving'}
-                                                            className={`transition-colors ${itemStates[item.id] === 'saved' ? 'text-emerald-500' : 'text-slate-600 hover:text-teal-400'}`}
-                                                            title={itemStates[item.id] === 'saved' ? "Saved!" : "Update in DB"}
-                                                        >
-                                                            {itemStates[item.id] === 'saving' ? (
-                                                                <Loader2 className="w-4 h-4 animate-spin" />
-                                                            ) : itemStates[item.id] === 'saved' ? (
-                                                                <Check className="w-4 h-4 animate-in zoom-in spin-in-180" />
-                                                            ) : (
-                                                                <Save className="w-4 h-4" />
-                                                            )}
-                                                        </button>
-                                                        <button onClick={() => handleDbRollback(item)} className="text-slate-600 hover:text-amber-400 transition-colors" title="Discard Changes (Reload from DB)">
-                                                            <RotateCcw className="w-4 h-4" />
-                                                        </button>
-                                                        <button onClick={() => initiateDelete([item.id])} className="text-slate-600 hover:text-red-500 transition-colors" title="Permanently Delete from DB">
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    </>
-                                                )}
-                                                {dataSource !== 'db' && (
-                                                    <button onClick={() => toggleDiscard(item.id)} className="text-slate-600 hover:text-red-400 transition-colors" title="Remove from list">
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        {/* Query Section */}
-                                        <div className="flex-1 min-h-0">
-                                            <div className="flex items-center justify-between mb-1">
-                                                <h4 className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
-                                                    Query
-                                                    {item.isMultiTurn && <MessageCircle className="w-3 h-3 text-cyan-400" />}
-                                                </h4>
-                                                <div className="flex items-center gap-1">
-                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Query ? (
+                                                <div className="flex gap-2">
+                                                    {dataSource === 'db' && (
                                                         <>
-                                                            <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
-                                                                <Check className="w-3 h-3" />
-                                                            </button>
-                                                            <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
-                                                                <X className="w-3 h-3" />
-                                                            </button>
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <button onClick={() => startEditing(item.id, OutputFieldName.Query, item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
-                                                                <Edit3 className="w-3 h-3" />
-                                                            </button>
                                                             <button
-                                                                onClick={() => handleFieldRewrite(item.id, VerifierRewriteTarget.Query)}
-                                                                disabled={rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Query}
-                                                                className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
-                                                                title="AI Rewrite"
+                                                                onClick={() => handleDbUpdate(item)}
+                                                                disabled={itemStates[item.id] === 'saving'}
+                                                                className={`transition-colors ${itemStates[item.id] === 'saved' ? 'text-emerald-500' : 'text-slate-600 hover:text-teal-400'}`}
+                                                                title={itemStates[item.id] === 'saved' ? "Saved!" : "Update in DB"}
                                                             >
-                                                                {rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Query ? (
-                                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                                {itemStates[item.id] === 'saving' ? (
+                                                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                                                ) : itemStates[item.id] === 'saved' ? (
+                                                                    <Check className="w-4 h-4 animate-in zoom-in spin-in-180" />
                                                                 ) : (
-                                                                    <RotateCcw className="w-3 h-3" />
+                                                                    <Save className="w-4 h-4" />
                                                                 )}
                                                             </button>
-                                                            {showRegenerateDropdown === item.id && (
-                                                                <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
-                                                            )}
+                                                            <button onClick={() => handleDbRollback(item)} className="text-slate-600 hover:text-amber-400 transition-colors" title="Discard Changes (Reload from DB)">
+                                                                <RotateCcw className="w-4 h-4" />
+                                                            </button>
+                                                            <button onClick={() => initiateDelete([item.id])} className="text-slate-600 hover:text-red-500 transition-colors" title="Permanently Delete from DB">
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </button>
                                                         </>
                                                     )}
-                                                </div>
-                                            </div>
-                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Query ? (
-                                                <AutoResizeTextarea
-                                                    value={editValue}
-                                                    onChange={e => setEditValue(e.target.value)}
-                                                    onBlur={saveEditing}
-                                                    autoFocus
-                                                    className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[60px]"
-                                                    placeholder="Enter query..."
-                                                />
-                                            ) : (<p className="text-xs text-slate-200 line-clamp-2 font-medium">{item.query || (item as any).QUERY || item.full_seed || '(No query)'}</p>
-                                            )}
-                                        </div>
-
-                                        {/* Multi-turn Conversation View */}
-                                        {item.isMultiTurn && item.messages && item.messages.length > 0 ? (
-                                            <div className="bg-slate-950/30 p-3 rounded border border-cyan-800/30 my-2">
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <h4 className="text-[10px] uppercase font-bold text-cyan-500 flex items-center gap-1">
-                                                        <MessageCircle className="w-3 h-3" /> Conversation ({item.messages.length} messages)
-                                                    </h4>
-                                                    <button
-                                                        onClick={() => toggleConversationExpand(item.id)}
-                                                        className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-cyan-400 transition-colors uppercase font-bold"
-                                                    >
-                                                        {expandedConversations.has(item.id) ? (
-                                                            <><Minimize2 className="w-3 h-3" /> Collapse</>
-                                                        ) : (
-                                                            <><Maximize2 className="w-3 h-3" /> Expand</>
-                                                        )}
-                                                    </button>
-                                                </div>
-                                                <div className={expandedConversations.has(item.id) ? '' : 'max-h-48 overflow-y-auto'}>
-                                                    <ConversationView
-                                                        messages={item.messages}
-                                                        onEditStart={(idx, content) => {
-                                                            setEditingField({ itemId: item.id, field: VerifierRewriteTarget.MessageAnswer, messageIndex: idx, originalValue: content });
-                                                            setEditValue(content);
-                                                        }}
-                                                        onEditSave={saveEditing}
-                                                        onEditCancel={cancelEditing}
-                                                        onEditChange={setEditValue}
-                                                        onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
-                                                        onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
-                                                        onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
-                                                        onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
-                                                        editingIndex={editingField?.itemId === item.id && editingField.field === VerifierRewriteTarget.MessageAnswer ? editingField.messageIndex : undefined}
-                                                        editValue={editValue}
-                                                        rewritingIndex={
-                                                            rewritingField?.itemId === item.id &&
-                                                                (rewritingField.field === VerifierRewriteTarget.MessageAnswer || rewritingField.field === VerifierRewriteTarget.MessageReasoning || rewritingField.field === VerifierRewriteTarget.MessageBoth || rewritingField.field === VerifierRewriteTarget.MessageQuery)
-                                                                ? rewritingField.messageIndex
-                                                                : undefined
-                                                        }
-                                                        streamingContent={rewritingField?.itemId === item.id ? streamingContent : undefined}
-                                                        streamingField={
-                                                            rewritingField?.field === VerifierRewriteTarget.MessageReasoning ? StreamingField.Reasoning :
-                                                                rewritingField?.field === VerifierRewriteTarget.MessageAnswer ? StreamingField.Answer :
-                                                                    rewritingField?.field === VerifierRewriteTarget.MessageBoth ? StreamingField.Both :
-                                                                        rewritingField?.field === VerifierRewriteTarget.MessageQuery ? StreamingField.Query : undefined
-                                                        }
-                                                    />
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            <>
-                                                {/* Reasoning Section */}
-                                                <div className="bg-slate-950/30 p-2 rounded border border-slate-800/50 my-2">
-                                                    <div className="flex items-center justify-between mb-1">
-                                                        <h4 className="text-[10px] uppercase font-bold text-slate-500">Reasoning Trace</h4>
-                                                        <div className="flex items-center gap-1 relative">
-                                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Reasoning ? (
-                                                                <>
-                                                                    <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
-                                                                        <Check className="w-3 h-3" />
-                                                                    </button>
-                                                                    <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
-                                                                        <X className="w-3 h-3" />
-                                                                    </button>
-                                                                </>
-                                                            ) : (
-                                                                <>
-                                                                    <button onClick={() => startEditing(item.id, OutputFieldName.Reasoning, item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
-                                                                        <Edit3 className="w-3 h-3" />
-                                                                    </button>
-                                                                    <div className="relative">
-                                                                        <button
-                                                                            onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(showRegenerateDropdown === item.id ? null : item.id); }}
-                                                                            disabled={rewritingField?.itemId === item.id}
-                                                                            className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
-                                                                            title="AI Regenerate"
-                                                                        >
-                                                                            {rewritingField?.itemId === item.id ? (
-                                                                                <Loader2 className="w-3 h-3 animate-spin" />
-                                                                            ) : (
-                                                                                <Sparkles className="w-3 h-3" />
-                                                                            )}
-                                                                        </button>
-                                                                        {showRegenerateDropdown === item.id && (
-                                                                            <div
-                                                                                className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 py-1 min-w-[140px]"
-                                                                                onClick={(e) => e.stopPropagation()}
-                                                                            >
-                                                                                <button
-                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, VerifierRewriteTarget.Reasoning); }}
-                                                                                    className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
-                                                                                >
-                                                                                    <RotateCcw className="w-3 h-3" /> Reasoning Only
-                                                                                </button>
-                                                                                <button
-                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, VerifierRewriteTarget.Answer); }}
-                                                                                    className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
-                                                                                >
-                                                                                    <RotateCcw className="w-3 h-3" /> Answer Only
-                                                                                </button>
-                                                                                <button
-                                                                                    onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleBothRewrite(item.id); }}
-                                                                                    className="w-full px-3 py-2 text-left text-xs text-teal-400 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700"
-                                                                                >
-                                                                                    <Sparkles className="w-3 h-3" /> Both Together
-                                                                                </button>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                    {showRegenerateDropdown === item.id && (
-                                                                        <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
-                                                                    )}
-                                                                </>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Reasoning ? (
-                                                        <AutoResizeTextarea
-                                                            value={editValue}
-                                                            onChange={e => setEditValue(e.target.value)}
-                                                            onBlur={saveEditing}
-                                                            autoFocus
-                                                            className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[100px] font-mono text-xs"
-                                                        />
-                                                    ) : (rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Reasoning && streamingContent ? (
-                                                        <div className="max-h-32 overflow-y-auto text-[10px] text-teal-300 font-mono animate-pulse">
-                                                            {streamingContent}
-                                                            <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
-                                                        </div>
-                                                    ) : (
-                                                        <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
-                                                            <ReasoningHighlighter text={displayReasoning} />
-                                                        </div>
-                                                    ))}
-                                                </div>
-
-                                                {/* Answer Section */}
-                                                <div className="bg-slate-950/50 p-2 rounded border border-slate-800/50">
-                                                    <div className="flex items-center justify-between mb-1">
-                                                        <h4 className="text-[10px] uppercase font-bold text-slate-500">Answer Preview</h4>
-                                                        <div className="flex items-center gap-1">
-                                                            {editingField?.itemId === item.id && editingField.field === OutputFieldName.Answer ? (
-                                                                <>
-                                                                    <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
-                                                                        <Check className="w-3 h-3" />
-                                                                    </button>
-                                                                    <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
-                                                                        <X className="w-3 h-3" />
-                                                                    </button>
-                                                                </>
-                                                            ) : (
-                                                                <button onClick={() => startEditing(item.id, OutputFieldName.Answer, item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
-                                                                    <Edit3 className="w-3 h-3" />
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                    {editingField?.itemId === item.id && editingField.field === OutputFieldName.Answer ? (
-                                                        <AutoResizeTextarea
-                                                            value={editValue}
-                                                            onChange={e => setEditValue(e.target.value)}
-                                                            onBlur={saveEditing}
-                                                            autoFocus
-                                                            className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[80px]"
-                                                        />
-                                                    ) : rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Answer && streamingContent ? (
-                                                        <div className="max-h-32 overflow-y-auto">
-                                                            <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
-                                                                {streamingContent}
-                                                                <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
-                                                            </p>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="max-h-32 overflow-y-auto">
-                                                            <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{displayAnswer}</p>
-                                                        </div>
+                                                    {dataSource !== 'db' && (
+                                                        <button onClick={() => toggleDiscard(item.id)} className="text-slate-600 hover:text-red-400 transition-colors" title="Remove from list">
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
                                                     )}
                                                 </div>
-                                            </>
-                                        )}
+                                            </div>
 
-                                        <div className="flex justify-between items-center text-[10px] text-slate-600 border-t border-slate-800/50 pt-2 mt-1">
-                                            <span className="truncate max-w-[150px]">{item.modelUsed}</span>
-                                            {item.deepMetadata && <span className="bg-teal-900/20 text-teal-400 px-1.5 py-0.5 rounded">Deep</span>}
+                                            {/* Query Section */}
+                                            <div className="flex-1 min-h-0">
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <h4 className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                                                        Query
+                                                        {item.isMultiTurn && <MessageCircle className="w-3 h-3 text-cyan-400" />}
+                                                    </h4>
+                                                    <div className="flex items-center gap-1">
+                                                        {editingField?.itemId === item.id && editingField.field === OutputFieldName.Query ? (
+                                                            <>
+                                                                <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                                    <Check className="w-3 h-3" />
+                                                                </button>
+                                                                <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                                    <X className="w-3 h-3" />
+                                                                </button>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <button onClick={() => startEditing(item.id, OutputFieldName.Query, item.query || (item as any).QUERY || item.full_seed || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                    <Edit3 className="w-3 h-3" />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleFieldRewrite(item.id, VerifierRewriteTarget.Query)}
+                                                                    disabled={rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Query}
+                                                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                                    title="AI Rewrite"
+                                                                >
+                                                                    {rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Query ? (
+                                                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                                                    ) : (
+                                                                        <RotateCcw className="w-3 h-3" />
+                                                                    )}
+                                                                </button>
+                                                                {showRegenerateDropdown === item.id && (
+                                                                    <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
+                                                                )}
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {editingField?.itemId === item.id && editingField.field === OutputFieldName.Query ? (
+                                                    <AutoResizeTextarea
+                                                        value={editValue}
+                                                        onChange={e => setEditValue(e.target.value)}
+                                                        onBlur={saveEditing}
+                                                        autoFocus
+                                                        className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[60px]"
+                                                        placeholder="Enter query..."
+                                                    />
+                                                ) : (<p className="text-xs text-slate-200 line-clamp-2 font-medium">{item.query || (item as any).QUERY || item.full_seed || '(No query)'}</p>
+                                                )}
+                                            </div>
+
+                                            {/* Multi-turn Conversation View */}
+                                            {item.isMultiTurn && item.messages && item.messages.length > 0 ? (
+                                                <div className="bg-slate-950/30 p-3 rounded border border-cyan-800/30 my-2">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <h4 className="text-[10px] uppercase font-bold text-cyan-500 flex items-center gap-1">
+                                                            <MessageCircle className="w-3 h-3" /> Conversation ({item.messages.length} messages)
+                                                        </h4>
+                                                        <button
+                                                            onClick={() => toggleConversationExpand(item.id)}
+                                                            className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-cyan-400 transition-colors uppercase font-bold"
+                                                        >
+                                                            {expandedConversations.has(item.id) ? (
+                                                                <><Minimize2 className="w-3 h-3" /> Collapse</>
+                                                            ) : (
+                                                                <><Maximize2 className="w-3 h-3" /> Expand</>
+                                                            )}
+                                                        </button>
+                                                    </div>
+                                                    <div className={expandedConversations.has(item.id) ? '' : 'max-h-48 overflow-y-auto'}>
+                                                        <ConversationView
+                                                            messages={item.messages}
+                                                            onEditStart={(idx, content) => {
+                                                                setEditingField({ itemId: item.id, field: VerifierRewriteTarget.MessageAnswer, messageIndex: idx, originalValue: content });
+                                                                setEditValue(content);
+                                                            }}
+                                                            onEditSave={saveEditing}
+                                                            onEditCancel={cancelEditing}
+                                                            onEditChange={setEditValue}
+                                                            onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
+                                                            onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
+                                                            onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
+                                                            onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
+                                                            editingIndex={editingField?.itemId === item.id && editingField.field === VerifierRewriteTarget.MessageAnswer ? editingField.messageIndex : undefined}
+                                                            editValue={editValue}
+                                                            rewritingIndex={
+                                                                rewritingField?.itemId === item.id &&
+                                                                    (rewritingField.field === VerifierRewriteTarget.MessageAnswer || rewritingField.field === VerifierRewriteTarget.MessageReasoning || rewritingField.field === VerifierRewriteTarget.MessageBoth || rewritingField.field === VerifierRewriteTarget.MessageQuery)
+                                                                    ? rewritingField.messageIndex
+                                                                    : undefined
+                                                            }
+                                                            streamingContent={rewritingField?.itemId === item.id ? streamingContent : undefined}
+                                                            streamingField={
+                                                                rewritingField?.field === VerifierRewriteTarget.MessageReasoning ? StreamingField.Reasoning :
+                                                                    rewritingField?.field === VerifierRewriteTarget.MessageAnswer ? StreamingField.Answer :
+                                                                        rewritingField?.field === VerifierRewriteTarget.MessageBoth ? StreamingField.Both :
+                                                                            rewritingField?.field === VerifierRewriteTarget.MessageQuery ? StreamingField.Query : undefined
+                                                            }
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    {/* Reasoning Section */}
+                                                    <div className="bg-slate-950/30 p-2 rounded border border-slate-800/50 my-2">
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <h4 className="text-[10px] uppercase font-bold text-slate-500">Reasoning Trace</h4>
+                                                            <div className="flex items-center gap-1 relative">
+                                                                {editingField?.itemId === item.id && editingField.field === OutputFieldName.Reasoning ? (
+                                                                    <>
+                                                                        <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                                            <Check className="w-3 h-3" />
+                                                                        </button>
+                                                                        <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                                            <X className="w-3 h-3" />
+                                                                        </button>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <button onClick={() => startEditing(item.id, OutputFieldName.Reasoning, item.reasoning)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                            <Edit3 className="w-3 h-3" />
+                                                                        </button>
+                                                                        <div className="relative">
+                                                                            <button
+                                                                                onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(showRegenerateDropdown === item.id ? null : item.id); }}
+                                                                                disabled={rewritingField?.itemId === item.id}
+                                                                                className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                                                title="AI Regenerate"
+                                                                            >
+                                                                                {rewritingField?.itemId === item.id ? (
+                                                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                                                ) : (
+                                                                                    <Sparkles className="w-3 h-3" />
+                                                                                )}
+                                                                            </button>
+                                                                            {showRegenerateDropdown === item.id && (
+                                                                                <div
+                                                                                    className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 py-1 min-w-[140px]"
+                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                >
+                                                                                    <button
+                                                                                        onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, VerifierRewriteTarget.Reasoning); }}
+                                                                                        className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                                    >
+                                                                                        <RotateCcw className="w-3 h-3" /> Reasoning Only
+                                                                                    </button>
+                                                                                    <button
+                                                                                        onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleFieldRewrite(item.id, VerifierRewriteTarget.Answer); }}
+                                                                                        className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                                    >
+                                                                                        <RotateCcw className="w-3 h-3" /> Answer Only
+                                                                                    </button>
+                                                                                    <button
+                                                                                        onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); handleBothRewrite(item.id); }}
+                                                                                        className="w-full px-3 py-2 text-left text-xs text-teal-400 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700"
+                                                                                    >
+                                                                                        <Sparkles className="w-3 h-3" /> Both Together
+                                                                                    </button>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                        {showRegenerateDropdown === item.id && (
+                                                                            <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setShowRegenerateDropdown(null); }} />
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        {editingField?.itemId === item.id && editingField.field === OutputFieldName.Reasoning ? (
+                                                            <AutoResizeTextarea
+                                                                value={editValue}
+                                                                onChange={e => setEditValue(e.target.value)}
+                                                                onBlur={saveEditing}
+                                                                autoFocus
+                                                                className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[100px] font-mono text-xs"
+                                                            />
+                                                        ) : (rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Reasoning && streamingContent ? (
+                                                            <div className="max-h-32 overflow-y-auto text-[10px] text-teal-300 font-mono animate-pulse">
+                                                                {streamingContent}
+                                                                <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                                            </div>
+                                                        ) : (
+                                                            <div className="max-h-32 overflow-y-auto text-[10px] text-slate-400 font-mono">
+                                                                <ReasoningHighlighter text={displayReasoning} />
+                                                            </div>
+                                                        ))}
+                                                    </div>
+
+                                                    {/* Answer Section */}
+                                                    <div className="bg-slate-950/50 p-2 rounded border border-slate-800/50">
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <h4 className="text-[10px] uppercase font-bold text-slate-500">Answer Preview</h4>
+                                                            <div className="flex items-center gap-1">
+                                                                {editingField?.itemId === item.id && editingField.field === OutputFieldName.Answer ? (
+                                                                    <>
+                                                                        <button onClick={saveEditing} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                                                            <Check className="w-3 h-3" />
+                                                                        </button>
+                                                                        <button onClick={cancelEditing} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                                                            <X className="w-3 h-3" />
+                                                                        </button>
+                                                                    </>
+                                                                ) : (
+                                                                    <button onClick={() => startEditing(item.id, OutputFieldName.Answer, item.answer)} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                                                        <Edit3 className="w-3 h-3" />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        {editingField?.itemId === item.id && editingField.field === OutputFieldName.Answer ? (
+                                                            <AutoResizeTextarea
+                                                                value={editValue}
+                                                                onChange={e => setEditValue(e.target.value)}
+                                                                onBlur={saveEditing}
+                                                                autoFocus
+                                                                className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-inherit outline-none min-h-[80px]"
+                                                            />
+                                                        ) : rewritingField?.itemId === item.id && rewritingField.field === VerifierRewriteTarget.Answer && streamingContent ? (
+                                                            <div className="max-h-32 overflow-y-auto">
+                                                                <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
+                                                                    {streamingContent}
+                                                                    <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                                                </p>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="max-h-32 overflow-y-auto">
+                                                                <p className="text-[10px] text-slate-400 font-mono whitespace-pre-wrap">{displayAnswer}</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </>
+                                            )}
+
+                                            <div className="flex justify-between items-center text-[10px] text-slate-600 border-t border-slate-800/50 pt-2 mt-1">
+                                                <span className="truncate max-w-[150px]">{item.modelUsed}</span>
+                                                {item.deepMetadata && <span className="bg-teal-900/20 text-teal-400 px-1.5 py-0.5 rounded">Deep</span>}
+                                            </div>
                                         </div>
-                                    </div>
                                     );
                                 })}
                             </div>

@@ -12,7 +12,7 @@ import {
 import { SessionService } from '../services/sessionService';
 import type { CompleteGenerationConfig, RuntimePromptConfig } from '../interfaces';
 import type { SynthLogItem } from '../types';
-import type { Environment, DataSource, AppMode } from '../interfaces/enums';
+import type { Environment, DataSource, CreatorMode } from '../interfaces/enums';
 import type { HuggingFaceConfig } from '../types';
 
 interface UseGenerationActionsOptions {
@@ -29,7 +29,7 @@ interface UseGenerationActionsOptions {
     dataSourceMode: DataSource;
     hfConfig: HuggingFaceConfig;
     manualFileName: string;
-    appMode: AppMode;
+    appMode: CreatorMode;
     getSessionData: () => any;
     setSessionUid: (uid: string) => void;
     sessionUidRef: MutableRefObject<string>;

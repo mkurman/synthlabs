@@ -1,7 +1,7 @@
 import ControlPanel from '../panels/ControlPanel';
 import SessionConfigPanel from '../panels/SessionConfigPanel';
 import { ProgressStats } from '../../types';
-import { DataSource, Environment, AppMode } from '../../interfaces/enums';
+import { DataSource, Environment, CreatorMode } from '../../interfaces/enums';
 import { PrefetchState } from '../../services/hfPrefetchService';
 import { TaskType } from '../../interfaces/enums';
 
@@ -12,8 +12,8 @@ interface SidebarSessionPanelProps {
     onSaveSession: () => void;
     onCloudLoadOpen: () => void;
     onCloudSave: () => void;
-    appMode: AppMode;
-    onAppModeChange: (mode: AppMode) => void;
+    appMode: CreatorMode;
+    onAppModeChange: (mode: CreatorMode) => void;
     isRunning: boolean;
     isPaused: boolean;
     progress: ProgressStats;

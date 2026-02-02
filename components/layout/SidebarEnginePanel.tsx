@@ -1,5 +1,5 @@
 import { GenerationParams, HuggingFaceConfig, UserAgentConfig, DeepConfig } from '../../types';
-import { ApiType, AppMode, DataSource, DeepPhase, EngineMode, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
+import { ApiType, CreatorMode, DataSource, DeepPhase, EngineMode, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
 import { OutputField } from '../../interfaces/types/PromptSchema';
 import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
 import { OllamaModel } from '../../services/externalApiService';
@@ -40,7 +40,7 @@ interface SidebarEnginePanelProps {
     defaultCustomBaseUrl: string;
     generationParams: GenerationParams;
     onGenerationParamsChange: (params: GenerationParams) => void;
-    appMode: AppMode;
+    appMode: CreatorMode;
     systemPrompt: string;
     converterPrompt: string;
     onSystemPromptChange: (value: string) => void;
@@ -151,7 +151,7 @@ export default function SidebarEnginePanel({
     onToggleNativeOutput
 }: SidebarEnginePanelProps) {
     return (
-        <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-5 space-y-4">
+        <div className="space-y-4">
             <EngineHeaderPanel
                 engineMode={engineMode}
                 onEngineModeChange={onEngineModeChange}

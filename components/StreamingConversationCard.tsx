@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, Bot, Loader, ChevronDown, ChevronUp, Sparkles, X, Square } from 'lucide-react';
+import { User, Bot, Loader, ChevronDown, ChevronUp, Sparkles, X, Square, Brain } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import { ChatMessage, StreamingConversationState } from '../types';
 import { ChatRole, StreamingPhase } from '../interfaces/enums';
@@ -88,8 +88,9 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                     onClick={() => toggleReasoning(idx)}
                                     className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-slate-400 uppercase font-bold"
                                 >
-                                    <Sparkles className="w-2.5 h-2.5" />
-                                    Reasoning
+
+                                    <Brain className="w-3 h-3" />
+                                    <span className="font-medium">Thinking...</span>
                                     {expandedReasoning.has(idx) ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
                                 </button>
                                 {expandedReasoning.has(idx) && (
@@ -147,14 +148,13 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                     {/* Left: Reasoning Trace */}
                     <div className="p-4 border-r border-slate-800 bg-slate-950/20">
                         <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                            <Brain className="w-3 h-3 text-emerald-400 animate-pulse" />
                             {phase === StreamingPhase.ExtractingReasoning ? (
                                 <>
-                                    <Sparkles className="w-3 h-3 text-emerald-400 animate-pulse" />
-                                    Extracting Reasoning...
+                                    Thinking...
                                 </>
                             ) : (
-                                'Stenographic Trace'
+                                'Thoughts'
                             )}
                         </h4>
                         <div className="text-sm text-slate-300 font-mono">
@@ -168,10 +168,10 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                             ) : phase === StreamingPhase.WaitingForResponse ? (
                                 <div className="flex items-center gap-2 text-slate-500">
                                     <Loader className="w-3 h-3 animate-spin" />
-                                    <span>Waiting for response...</span>
+                                    <span>Waiting for thoughts...</span>
                                 </div>
                             ) : (
-                                <span className="text-slate-600 italic">No reasoning yet...</span>
+                                <span className="text-slate-600 italic">No thoughts yet...</span>
                             )}
                         </div>
                     </div>
@@ -179,14 +179,13 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                     {/* Right: Final Answer */}
                     <div className="p-4 bg-slate-950/20">
                         <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                             {phase === StreamingPhase.ExtractingAnswer ? (
                                 <>
                                     <Sparkles className="w-3 h-3 text-emerald-400 animate-pulse" />
                                     Extracting Answer...
                                 </>
                             ) : (
-                                'Final Output'
+                                'Answer'
                             )}
                         </h4>
                         <div className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">

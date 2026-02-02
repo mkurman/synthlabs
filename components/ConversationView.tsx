@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings, Edit3, RotateCcw, Check, X, Loader2 } from 'lucide-react';
+import { User, Bot, ChevronDown, ChevronUp, Sparkles, Settings, Edit3, RotateCcw, Check, X, Loader2, Brain } from 'lucide-react';
 import { ChatMessage } from '../types';
 import { ChatRole, StreamingField } from '../interfaces/enums';
 import ReasoningHighlighter from './ReasoningHighlighter';
@@ -234,8 +234,8 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                             onClick={() => toggleReasoning(idx)}
                                             className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-400 transition-colors uppercase font-bold tracking-wider"
                                         >
-                                            <Sparkles className="w-3 h-3" />
-                                            Reasoning Trace
+                                            <Brain className="w-3 h-3" />
+                                            Thoughts
                                             {expandedReasoning.has(idx) ? (
                                                 <ChevronUp className="w-3 h-3" />
                                             ) : (

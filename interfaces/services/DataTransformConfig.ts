@@ -1,4 +1,4 @@
-import { AppMode } from '../enums';
+import { CreatorMode } from '../enums';
 import { HuggingFaceConfig, DetectedColumns } from '../../types';
 
 /**
@@ -9,7 +9,7 @@ export interface RowContentConfig {
     /** HuggingFace dataset configuration with column mappings */
     hfConfig: HuggingFaceConfig;
     /** Current application mode (generator or converter) */
-    appMode: AppMode;
+    appMode: CreatorMode;
 }
 
 /**
