@@ -8,7 +8,7 @@ import * as IndexedDBUtils from '../services/session/indexedDBUtils';
 import { generateSessionName, autoNameSessionBeforeGeneration } from '../services/session/SessionNamingService';
 import { ExternalProvider } from '../interfaces/enums';
 import { GenerationParams } from '../interfaces/config/GenerationParams';
-import { sessionLoadService, SessionSummary } from '../services/sessionLoadService';
+import { sessionLoadService } from '../services/sessionLoadService';
 import { SessionData, SessionDataSource } from '../interfaces/services/SessionConfig';
 
 interface UseSessionManagerOptions {
@@ -56,23 +56,15 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         try {
             let loadedSessions: SessionData[] = [];
 
-            loadedSessions = await sessionLoadService.loadSessionList();
+            loadedSessions = await sessionLoadService.loadSessionList(false, environment);
 
             setSessions(loadedSessions);
-
-            // Auto-select most recent session if none selected
-            if (!currentSession && loadedSessions.length > 0) {
-                const mostRecent = loadedSessions.reduce((prev, current) =>
-                    (current.timestamp || 0) > (prev.timestamp || 0) ? current : prev
-                );
-                setCurrentSession(mostRecent);
-            }
         } catch (error) {
             console.error('Failed to load sessions:', error);
         } finally {
             setIsLoading(false);
         }
-    }, [storageMode, currentSession]);
+    }, [environment]);
 
     /**
      * Create a new session

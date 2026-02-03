@@ -1,13 +1,13 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
 
 // Use app.isPackaged instead of electron-is-dev package
 const isDev = !app.isPackaged;
 
-let mainWindow;
+const windows = new Set();
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
+function createWindow(navigationUrl) {
+  const window = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
@@ -26,15 +26,29 @@ function createWindow() {
     ? 'http://localhost:5173'
     : `file://${path.join(__dirname, '../dist/index.html')}`;
 
-  mainWindow.loadURL(startUrl);
+  window.loadURL(navigationUrl || startUrl);
 
   if (isDev) {
-    mainWindow.webContents.openDevTools();
+    window.webContents.openDevTools();
   }
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const isAppUrl = isDev ? url.startsWith(startUrl) : url.startsWith('file://');
+    if (isAppUrl) {
+      createWindow(url);
+      return { action: 'deny' };
+    }
+
+    shell.openExternal(url);
+    return { action: 'deny' };
   });
+
+  window.on('closed', () => {
+    windows.delete(window);
+  });
+
+  windows.add(window);
+  return window;
 }
 
 function createMenu() {
@@ -42,6 +56,12 @@ function createMenu() {
     {
       label: 'File',
       submenu: [
+        {
+          label: 'New Window',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => createWindow()
+        },
+        { type: 'separator' },
         { role: 'quit' }
       ]
     },
@@ -119,12 +139,10 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('web-contents-created', (event, contents) => {
-  contents.on('new-window', (event, navigationUrl) => {
-    event.preventDefault();
-  });
-});
-
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
+});
+
+ipcMain.handle('open-new-window', () => {
+  createWindow();
 });

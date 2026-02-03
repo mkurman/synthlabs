@@ -6,7 +6,7 @@
 
 import { EXTERNAL_PROVIDERS, PROVIDERS } from '../constants';
 import { GenerationParams } from '../types';
-import { ApiType, ExternalProvider, ProviderType } from '../interfaces/enums';
+import { ApiType, ExternalProvider, ProviderType, ThemeMode } from '../interfaces/enums';
 
 const DB_NAME = 'SynthLabsSettingsDB';
 const DB_VERSION = 3; // Aligned with modelService for models store
@@ -105,6 +105,7 @@ export interface AppSettings {
     firebaseStorageBucket?: string;
     firebaseMessagingSenderId?: string;
     firebaseAppId?: string;
+    backendServiceAccountPath?: string;
 
     // Gemini (primary provider, not external)
     geminiApiKey?: string;
@@ -113,7 +114,7 @@ export interface AppSettings {
     defaultProvider?: string;
     defaultModel?: string;
     defaultConcurrency?: number;
-    theme?: 'dark' | 'light';
+    theme?: ThemeMode;
     promptSet?: string;
 
     // Task Classification / Auto-routing
@@ -130,6 +131,9 @@ export interface AppSettings {
     // Default generation parameters for LLM calls
     defaultGenerationParams?: GenerationParams;
     generationTimeoutSeconds?: number;
+
+    // Assistant (Verifier chat) preferences
+    assistantDefaults?: AssistantDefaults;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -138,7 +142,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     workflowDefaults: { ...DEFAULT_WORKFLOW_DEFAULTS },
     generalPurposeModel: { ...EMPTY_STEP_CONFIG },
     defaultConcurrency: 4,
-    theme: 'dark',
+    theme: ThemeMode.Dark,
     promptSet: 'default',
     autoRouteEnabled: false,
     autoRouteMethod: 'heuristic',
@@ -162,8 +166,17 @@ const DEFAULT_SETTINGS: AppSettings = {
         maxTokens: undefined,
         forceStructuredOutput: true
     },
-    generationTimeoutSeconds: 300
+    generationTimeoutSeconds: 300,
+    backendServiceAccountPath: ''
 };
+
+export interface AssistantDefaults {
+    provider: ProviderType | ExternalProvider;
+    model: string;
+    apiKeyOverride?: string;
+    customBaseUrl?: string;
+    toolsEnabled?: boolean;
+}
 
 // In-memory cache for synchronous access
 let isInitialized = false;

@@ -11,7 +11,7 @@ export function useVerifierSessions({ activeTab, setAvailableSessions }: UseVeri
     useEffect(() => {
         if (activeTab === 'import' && FirebaseService.isFirebaseConfigured()) {
             FirebaseService.getSessionsFromFirebase()
-                .then(setAvailableSessions)
+                .then(({ sessions }) => setAvailableSessions(sessions))
                 .catch(console.error);
         }
     }, [activeTab, setAvailableSessions]);

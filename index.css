@@ -1,0 +1,60 @@
+/* Theme overrides for light mode (class-based) */
+
+:root {
+  color-scheme: dark;
+}
+
+html.light {
+  color-scheme: light;
+}
+
+html.light body {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+html.light body::before {
+  background:
+    radial-gradient(1200px 600px at 12% -10%, rgba(56, 189, 248, 0.18), transparent 60%),
+    radial-gradient(900px 500px at 88% -12%, rgba(14, 165, 233, 0.12), transparent 55%),
+    radial-gradient(700px 500px at 50% 120%, rgba(148, 163, 184, 0.12), transparent 50%);
+}
+
+html.light ::-webkit-scrollbar-track {
+  background: #e2e8f0;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+html.light select option {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+html.light select,
+html.light input,
+html.light textarea {
+  color-scheme: light;
+}
+
+/* Tailwind utility overrides for light mode */
+html.light [class*="bg-slate-950"] { background-color: rgba(248, 250, 252, 0.95) !important; }
+html.light [class*="bg-slate-900"] { background-color: rgba(241, 245, 249, 0.95) !important; }
+html.light [class*="bg-slate-800"] { background-color: rgba(226, 232, 240, 0.95) !important; }
+html.light [class*="bg-slate-700"] { background-color: rgba(203, 213, 225, 0.9) !important; }
+
+html.light [class*="text-slate-100"] { color: #0f172a !important; }
+html.light [class*="text-slate-200"] { color: #1e293b !important; }
+html.light [class*="text-slate-300"] { color: #334155 !important; }
+html.light [class*="text-slate-400"] { color: #475569 !important; }
+html.light [class*="text-slate-500"] { color: #64748b !important; }
+
+html.light [class*="border-slate-800"] { border-color: rgba(203, 213, 225, 0.9) !important; }
+html.light [class*="border-slate-700"] { border-color: rgba(203, 213, 225, 0.7) !important; }
+html.light [class*="border-slate-600"] { border-color: rgba(148, 163, 184, 0.7) !important; }

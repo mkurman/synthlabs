@@ -33,3 +33,4 @@ pnpm-lock*
 .factory
 .github
 .opencode
+.firebase

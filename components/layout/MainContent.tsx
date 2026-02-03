@@ -25,7 +25,7 @@ export default function MainContent({
 
             {/* Mobile/Tablet Controls (shown below navbar on smaller screens) */}
             {mobileControls && (
-                <div className="xl:hidden border-b border-slate-800 bg-slate-900">
+                <div className="xl:hidden border-b border-slate-800/70 bg-slate-950/70">
                     {mobileControls}
                 </div>
             )}

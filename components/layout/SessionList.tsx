@@ -41,11 +41,11 @@ export default function SessionList({
         return (
             <div className="flex-1 flex items-center justify-center p-8">
                 <div className="text-center">
-                    <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mx-auto mb-3">
+                    <div className="w-16 h-16 rounded-full bg-slate-900/60 flex items-center justify-center mx-auto mb-3">
                         <span className="text-2xl">📁</span>
                     </div>
-                    <p className="text-sm text-slate-400">No sessions yet</p>
-                    <p className="text-xs text-slate-500 mt-1">Create one to get started</p>
+                    <p className="text-sm text-slate-300">No sessions yet</p>
+                    <p className="text-xs text-slate-400 mt-1">Create one to get started</p>
                 </div>
             </div>
         );

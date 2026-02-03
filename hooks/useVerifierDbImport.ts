@@ -4,6 +4,7 @@ import * as FirebaseService from '../services/firebaseService';
 import { resolveSessionFilter } from '../services/verifierSessionFilterService';
 import type { VerifierItem } from '../types';
 import { VerifierPanelTab } from '../interfaces/enums/VerifierPanelTab';
+import { VerifierDataSource } from '../interfaces/enums/VerifierDataSource';
 
 interface UseVerifierDbImportOptions {
     currentSessionUid: string;
@@ -15,9 +16,11 @@ interface UseVerifierDbImportOptions {
     setIsImporting: (value: boolean) => void;
     analyzeDuplicates: (items: VerifierItem[]) => void;
     setData: (items: VerifierItem[]) => void;
-    setDataSource: (source: 'file' | 'db' | null) => void;
+    setDataSource: (source: VerifierDataSource | null) => void;
     setActiveTab: (tab: VerifierPanelTab) => void;
     toast: { error: (message: string) => void; info: (message: string) => void };
+    confirmService: { confirm: (options: { title: string; message: string; confirmLabel: string; cancelLabel: string; variant: 'info' | 'warning' | 'danger' }) => Promise<boolean> };
+    onSessionDeleted: (sessionId: string) => void;
 }
 
 export function useVerifierDbImport({
@@ -32,7 +35,9 @@ export function useVerifierDbImport({
     setData,
     setDataSource,
     setActiveTab,
-    toast
+    toast,
+    confirmService,
+    onSessionDeleted
 }: UseVerifierDbImportOptions) {
     const handleDbImport = useCallback(async () => {
         if (!FirebaseService.isFirebaseConfigured()) {
@@ -41,7 +46,7 @@ export function useVerifierDbImport({
         }
         setIsImporting(true);
         try {
-            const limitToUse = isLimitEnabled ? importLimit : undefined;
+            const limitToUse = isLimitEnabled ? importLimit : 100;
             const { sessionUid, requiresCustom } = resolveSessionFilter(
                 selectedSessionFilter,
                 currentSessionUid,
@@ -56,10 +61,24 @@ export function useVerifierDbImport({
             const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUid);
             if (items.length === 0) {
                 toast.info('No items found matching criteria.');
+                if (sessionUid) {
+                    const shouldDelete = await confirmService.confirm({
+                        title: 'Empty session found',
+                        message: 'This session has 0 rows. Do you want to delete the session and its logs?',
+                        confirmLabel: 'Delete Session',
+                        cancelLabel: 'Keep',
+                        variant: 'danger'
+                    });
+                    if (shouldDelete) {
+                        await FirebaseService.deleteSessionWithLogs(sessionUid);
+                        onSessionDeleted(sessionUid);
+                        toast.info('Empty session deleted.');
+                    }
+                }
             } else {
                 analyzeDuplicates(items);
                 setData(items);
-                setDataSource('db');
+                setDataSource(VerifierDataSource.Database);
                 setActiveTab(VerifierPanelTab.Review);
             }
         } catch (e: any) {
@@ -67,7 +86,7 @@ export function useVerifierDbImport({
         } finally {
             setIsImporting(false);
         }
-    }, [analyzeDuplicates, currentSessionUid, customSessionId, importLimit, isLimitEnabled, selectedSessionFilter, setActiveTab, setData, setDataSource, setIsImporting, toast]);
+    }, [analyzeDuplicates, confirmService, currentSessionUid, customSessionId, importLimit, isLimitEnabled, onSessionDeleted, selectedSessionFilter, setActiveTab, setData, setDataSource, setIsImporting, toast]);
 
     const handleFetchMore = useCallback(async (start: number, end: number) => {
         if (!FirebaseService.isFirebaseConfigured()) {

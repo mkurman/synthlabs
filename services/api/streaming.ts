@@ -8,7 +8,6 @@ export async function processStreamResponse(
   signal?: AbortSignal,
   apiType: ApiType = ApiType.Chat
 ): Promise<string> {
-  console.log('🔴 externalApiService: processStreamResponse STARTED', { apiType });
   const reader = response.body?.getReader();
   if (!reader) throw new Error('No response body for streaming');
 
@@ -54,14 +53,12 @@ export async function processStreamResponse(
         if (dataStart !== -1) {
           try {
             const json = JSON.parse(trimmed.slice(dataStart));
-            console.log('externalApiService: Parsed JSON chunk, has usage:', !!json.usage);
 
             let chunk = '';
             let isReasoningChunk = false;
 
             if (json.usage) {
               usageData = json.usage;
-              console.log('externalApiService: Captured usage data:', usageData);
             }
 
             if (provider === ExternalProvider.Anthropic) {
@@ -176,6 +173,5 @@ export async function processStreamResponse(
     }
   }
 
-  console.log('🔴 externalApiService: Stream finished, total chunks:', chunkCount, 'final usage:', usageData);
   return accumulated;
 }

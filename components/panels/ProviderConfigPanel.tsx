@@ -56,15 +56,15 @@ export default function ProviderConfigPanel({
 }: ProviderConfigPanelProps) {
     return (
         <div className="animate-in fade-in slide-in-from-left-2 duration-300 space-y-4">
-            <div className="bg-slate-950 p-1 rounded-lg border border-slate-800">
+            <div className="bg-slate-950 p-1 rounded-lg border border-slate-800/70">
                 <select
                     value={providerSelectValue}
                     onChange={(e) => onProviderSelect(e.target.value)}
                     className="w-full bg-transparent text-xs font-bold text-white outline-none px-2 py-1 cursor-pointer"
                 >
-                    <option value={ProviderTypeEnum.Gemini} className="bg-slate-950 text-indigo-400 font-bold">Native Gemini</option>
+                    <option value={ProviderTypeEnum.Gemini} className="bg-slate-950 text-sky-400 font-bold">Native Gemini</option>
                     {externalProviders.map(ep => (
-                        <option key={ep} value={ep} className="bg-slate-950 text-slate-200">
+                        <option key={ep} value={ep} className="bg-slate-950 text-slate-100">
                             {ep === ExternalProviderEnum.Other ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}
                         </option>
                     ))}
@@ -73,11 +73,11 @@ export default function ProviderConfigPanel({
 
             {provider === ProviderTypeEnum.External && (
                 <div className="space-y-1">
-                    <label className="text-[10px] text-slate-500 font-bold uppercase">API Type</label>
+                    <label className="text-[10px] text-slate-400 font-bold uppercase">API Type</label>
                     <select
                         value={apiType}
                         onChange={(e) => onApiTypeChange(e.target.value as ApiType)}
-                        className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
+                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-white focus:border-sky-500 outline-none"
                         title="API Type: chat=completions, responses=responses API"
                     >
                         <option value={ApiTypeEnum.Chat}>Chat Completions (/chat/completions)</option>
@@ -89,7 +89,7 @@ export default function ProviderConfigPanel({
             <div className="space-y-3">
                 <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                        <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
+                        <label className="text-[10px] text-slate-400 font-bold uppercase">Model ID</label>
                         {externalProvider === ExternalProviderEnum.Ollama && (
                             <div className="flex items-center gap-2">
                                 <span className={`text-[9px] ${ollamaStatus === OllamaStatus.Online ? 'text-emerald-400' : ollamaStatus === OllamaStatus.Offline ? 'text-red-400' : 'text-yellow-400'}`}>
@@ -98,7 +98,7 @@ export default function ProviderConfigPanel({
                                 <button
                                     onClick={onRefreshOllamaModels}
                                     disabled={ollamaLoading}
-                                    className="p-0.5 text-slate-400 hover:text-emerald-400 disabled:opacity-50"
+                                    className="p-0.5 text-slate-300 hover:text-emerald-400 disabled:opacity-50"
                                     title="Refresh Ollama models"
                                 >
                                     <RefreshCw className={`w-3 h-3 ${ollamaLoading ? 'animate-spin' : ''}`} />
@@ -133,7 +133,7 @@ export default function ProviderConfigPanel({
                                             onClick={() => onExternalModelChange(model.name)}
                                             className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${externalModel === model.name
                                                 ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
-                                                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover-border-emerald-600 hover:text-emerald-400'
+                                                : 'bg-slate-900/60 border-slate-700/70 text-slate-300 hover-border-emerald-600 hover:text-emerald-400'
                                                 }`}
                                         >
                                             {model.name.includes(':') ? model.name.split(':')[0] : model.name}
@@ -143,7 +143,7 @@ export default function ProviderConfigPanel({
                             )}
                             {ollamaStatus === OllamaStatus.Offline && (
                                 <p className="text-[9px] text-red-400/80">
-                                    Start Ollama: <code className="bg-slate-800 px-1 rounded">ollama serve</code>
+                                    Start Ollama: <code className="bg-slate-900/60 px-1 rounded">ollama serve</code>
                                 </p>
                             )}
                         </div>
@@ -163,14 +163,14 @@ export default function ProviderConfigPanel({
                     <>
                         {externalProvider !== ExternalProviderEnum.Ollama && (
                             <div className="space-y-1">
-                                <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
-                                <input type="password" value={externalApiKey || ''} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => onExternalApiKeyChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" />
+                                <label className="text-[10px] text-slate-400 font-bold uppercase">API Key</label>
+                                <input type="password" value={externalApiKey || ''} placeholder="Required here unless a main key is set in Settings" onChange={(e: React.ChangeEvent<HTMLInputElement>) => onExternalApiKeyChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-white focus:border-sky-500 outline-none" />
                             </div>
                         )}
                         {externalProvider === ExternalProviderEnum.Other && (
                             <div className="space-y-1">
-                                <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
-                                <input type="text" value={customBaseUrl || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => onCustomBaseUrlChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none" placeholder={defaultCustomBaseUrl || "https://api.example.com/v1"} />
+                                <label className="text-[10px] text-slate-400 font-bold uppercase">Base URL</label>
+                                <input type="text" value={customBaseUrl || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => onCustomBaseUrlChange(e.target.value)} className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-white focus:border-sky-500 outline-none" placeholder={defaultCustomBaseUrl || "https://api.example.com/v1"} />
                             </div>
                         )}
                     </>

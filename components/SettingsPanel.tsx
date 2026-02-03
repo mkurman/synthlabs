@@ -1,7 +1,8 @@
-import React, { useEffect } from 'react';
-import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2, FolderOpen } from 'lucide-react';
 import { SettingsService, AVAILABLE_PROVIDERS, EMPTY_STEP_CONFIG } from '../services/settingsService';
-import { ApiType, ExternalProvider, ProviderType, EngineMode, SettingsPanelTab, ApiSubTab } from '../interfaces/enums';
+import { ApiType, ExternalProvider, ProviderType, EngineMode, SettingsPanelTab, ApiSubTab, BackendApplyStatus } from '../interfaces/enums';
+import * as backendClient from '../services/backendClient';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService } from '../services/promptService';
 import { TaskClassifierService, TASK_PROMPT_MAPPING } from '../services/taskClassifierService';
@@ -12,6 +13,7 @@ import { ModelListProvider } from '../types';
 import { OllamaStatus } from '../interfaces/enums';
 import { useSettingsState } from '../hooks/useSettingsState';
 import { useSettingsOllama } from '../hooks/useSettingsOllama';
+import CollapsibleSection from './layout/CollapsibleSection';
 
 interface SettingsPanelProps {
     isOpen: boolean;
@@ -56,6 +58,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
         ollamaLoading,
         refreshOllamaModels
     } = useSettingsOllama();
+    const [backendApplyStatus, setBackendApplyStatus] = useState<BackendApplyStatus>(BackendApplyStatus.Idle);
+    const [backendApplyError, setBackendApplyError] = useState('');
 
     // Load settings and prompt sets when panel opens
     useEffect(() => {
@@ -75,33 +79,65 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];
     const allProvidersForKeys = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS.filter(p => p !== ExternalProvider.Other), ExternalProvider.Other];
 
+    const handleServiceAccountFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0] as (File & { path?: string }) | undefined;
+        const filePath = file?.path || '';
+        if (filePath) {
+            updateSetting('backendServiceAccountPath', filePath);
+            setBackendApplyStatus(BackendApplyStatus.Idle);
+            setBackendApplyError('');
+        }
+    };
+
+    const handleApplyBackendServiceAccount = async () => {
+        if (!settings.backendServiceAccountPath) {
+            setBackendApplyStatus(BackendApplyStatus.Error);
+            setBackendApplyError('Select a service account JSON file first.');
+            return;
+        }
+        if (!backendClient.isBackendEnabled()) {
+            setBackendApplyStatus(BackendApplyStatus.Error);
+            setBackendApplyError('Backend URL is not configured.');
+            return;
+        }
+        try {
+            setBackendApplyStatus(BackendApplyStatus.Pending);
+            setBackendApplyError('');
+            await backendClient.setServiceAccountPath(settings.backendServiceAccountPath);
+            setBackendApplyStatus(BackendApplyStatus.Success);
+        } catch (error: any) {
+            setBackendApplyStatus(BackendApplyStatus.Error);
+            setBackendApplyError(error?.message || 'Failed to apply service account path.');
+        }
+    };
+
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-            <div className={`bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full overflow-hidden flex flex-col ${isFullscreen ? 'max-w-[90vw] h-[90vh]' : 'max-w-2xl h-[80vh]'}`}>
+            <div className={`bg-slate-950/70 border border-slate-700/70 rounded-xl shadow-2xl w-full overflow-hidden flex flex-col ${isFullscreen ? 'max-w-[90vw] h-[90vh]' : 'max-w-2xl h-[80vh]'}`}>
                 {/* Header */}
-                <div className="flex items-center justify-between p-4 border-b border-slate-800">
+                <div className="flex items-center justify-between p-4 border-b border-slate-800/70">
                     <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                        <Settings className="w-5 h-5 text-indigo-400" />
+                        <Settings className="w-5 h-5 text-sky-400" />
                         Settings
                     </h2>
                     <div className="flex items-center gap-2">
                         <button
                             onClick={() => setIsFullscreen(prev => !prev)}
-                            className="text-slate-400 hover:text-white"
+                            className="text-slate-300 hover:text-white"
                             title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
                         >
                             {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
                         </button>
-                        <button onClick={onClose} className="text-slate-400 hover:text-white" title="Close">
+                        <button onClick={onClose} className="text-slate-300 hover:text-white" title="Close">
                             <X className="w-5 h-5" />
                         </button>
                     </div>
                 </div>
 
                 {/* Tabs */}
-                <div className="flex border-b border-slate-800">
+                <div className="flex border-b border-slate-800/70">
                     {[
                         { id: SettingsPanelTab.Providers, label: 'API Keys', icon: Key },
                         { id: SettingsPanelTab.Generation, label: 'Generation', icon: Sliders },
@@ -114,8 +150,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 transition-colors ${activeTab === tab.id
-                                ? 'text-indigo-400 border-b-2 border-indigo-400 bg-slate-800/50'
-                                : 'text-slate-500 hover:text-slate-300'
+                                ? 'bg-slate-100 text-slate-900'
+                                : 'text-slate-300 hover:text-white hover:bg-slate-950/40'
                                 }`}
                         >
                             <tab.icon className="w-4 h-4" />
@@ -127,14 +163,19 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {activeTab === SettingsPanelTab.Providers && (
+                        <CollapsibleSection
+                            title="API Providers"
+                            icon={<Key className="w-3.5 h-3.5 text-sky-400" />}
+                            defaultExpanded
+                        >
                         <div className="space-y-4">
                             {/* Sub-tabs: API Keys | Default Models */}
-                            <div className="flex gap-2 p-1 bg-slate-800/50 rounded-lg">
+                            <div className="flex gap-2 p-1 bg-slate-950/60 rounded-lg border border-slate-800/70">
                                 <button
                                     onClick={() => setApiSubTab(ApiSubTab.Keys)}
                                     className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Keys
-                                        ? 'bg-indigo-600 text-white'
-                                        : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                                        ? 'bg-slate-100 text-slate-900'
+                                        : 'text-slate-300 hover:text-white hover:bg-slate-900/50'
                                         }`}
                                 >
                                     <Key className="w-3.5 h-3.5" />
@@ -143,8 +184,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                 <button
                                     onClick={() => setApiSubTab(ApiSubTab.Defaults)}
                                     className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Defaults
-                                        ? 'bg-indigo-600 text-white'
-                                        : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                                        ? 'bg-slate-100 text-slate-900'
+                                        : 'text-slate-300 hover:text-white hover:bg-slate-900/50'
                                         }`}
                                 >
                                     <Layers className="w-3.5 h-3.5" />
@@ -155,7 +196,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             {/* API Keys Sub-tab */}
                             {apiSubTab === ApiSubTab.Keys && (
                                 <div className="space-y-2">
-                                    <p className="text-xs text-slate-500">
+                                    <p className="text-xs text-slate-400">
                                         Configure API keys. Leave empty to use .env values.
                                     </p>
                                     <div className="space-y-2 h-full overflow-y-auto pr-1">
@@ -186,10 +227,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             const isOllama = provider === ExternalProvider.Ollama;
 
                                             return (
-                                                <div key={provider} className={`flex flex-col gap-2 py-1.5 px-2 bg-slate-900/50 rounded border ${isOllama ? 'border-emerald-800/50' : 'border-slate-800'} hover:border-slate-700`}>
+                                                <div key={provider} className={`flex flex-col gap-2 py-1.5 px-2 bg-slate-950/70 rounded border ${isOllama ? 'border-emerald-800/50' : 'border-slate-800/70'} hover:border-slate-700/70`}>
                                                     <div className="flex items-center gap-2">
                                                         <div className="w-28 flex-shrink-0">
-                                                            <span className="text-xs font-semibold text-slate-200">{info.name}</span>
+                                                            <span className="text-xs font-semibold text-slate-100">{info.name}</span>
                                                             {hasEnvVar && (
                                                                 <span className="text-emerald-400 text-[8px] ml-1">✓</span>
                                                             )}
@@ -212,11 +253,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                         }
                                                                     }}
                                                                     placeholder={hasEnvVar ? '(env)' : 'API Key'}
-                                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none pr-6"
+                                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-sky-500 outline-none pr-6"
                                                                 />
                                                                 <button
                                                                     onClick={() => toggleShowKey(provider)}
-                                                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                                                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
                                                                 >
                                                                     {showKeys[provider] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                                                                 </button>
@@ -226,7 +267,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         {isOllama && (
                                                             <div className="flex-1 flex items-center gap-2">
                                                                 <Server className="w-3.5 h-3.5 text-emerald-500" />
-                                                                <span className="text-[10px] text-slate-400">No API key needed</span>
+                                                                <span className="text-[10px] text-slate-300">No API key needed</span>
                                                             </div>
                                                         )}
                                                         {/* Default Model - Show dropdown for Ollama */}
@@ -235,7 +276,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 <select
                                                                     value={settings.providerDefaultModels?.[provider] || ''}
                                                                     onChange={(e) => updateDefaultModel(provider, e.target.value)}
-                                                                    className="w-36 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-emerald-500 outline-none"
+                                                                    className="w-36 bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-emerald-500 outline-none"
                                                                     disabled={ollamaStatus !== OllamaStatus.Online || ollamaModels.length === 0}
                                                                 >
                                                                     <option value="">
@@ -252,7 +293,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 <button
                                                                     onClick={refreshOllamaModels}
                                                                     disabled={ollamaLoading}
-                                                                    className="p-1 text-slate-400 hover:text-emerald-400 disabled:opacity-50"
+                                                                    className="p-1 text-slate-300 hover:text-emerald-400 disabled:opacity-50"
                                                                     title="Refresh Ollama models"
                                                                 >
                                                                     <RefreshCw className={`w-3 h-3 ${ollamaLoading ? 'animate-spin' : ''}`} />
@@ -279,7 +320,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 value={settings.customEndpointUrl || ''}
                                                                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
                                                                 placeholder="Base URL"
-                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-300 focus:border-indigo-500 outline-none font-mono"
+                                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-sky-500 outline-none font-mono"
                                                             />
                                                         </div>
                                                     )}
@@ -299,7 +340,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                         onClick={() => updateDefaultModel('ollama', model.name)}
                                                                         className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${settings.providerDefaultModels?.['ollama'] === model.name
                                                                             ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
-                                                                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-emerald-600 hover:text-emerald-400'
+                                                                            : 'bg-slate-900/60 border-slate-700/70 text-slate-300 hover:border-emerald-600 hover:text-emerald-400'
                                                                             }`}
                                                                     >
                                                                         {displayName}
@@ -307,13 +348,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 );
                                                             })}
                                                             {ollamaModels.length > 6 && (
-                                                                <span className="text-[9px] text-slate-500 px-2 py-0.5">+{ollamaModels.length - 6} more</span>
+                                                                <span className="text-[9px] text-slate-400 px-2 py-0.5">+{ollamaModels.length - 6} more</span>
                                                             )}
                                                         </div>
                                                     )}
                                                     {isOllama && ollamaStatus === OllamaStatus.Offline && (
                                                         <div className="text-[9px] text-red-400/80 pl-28">
-                                                            Start Ollama with: <code className="bg-slate-800 px-1 rounded">ollama serve</code>
+                                                            Start Ollama with: <code className="bg-slate-900/60 px-1 rounded">ollama serve</code>
                                                         </div>
                                                     )}
                                                 </div>
@@ -326,26 +367,26 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             {/* Default Models Sub-tab */}
                             {apiSubTab === ApiSubTab.Defaults && (
                                 <div className="space-y-4">
-                                    <p className="text-xs text-slate-500">
+                                    <p className="text-xs text-slate-400">
                                         Configure default provider and model for each workflow step.
                                     </p>
 
                                     {/* General Purpose Model Section */}
-                                    <div className="bg-slate-900/50 rounded-lg border border-slate-800">
+                                    <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
                                         <button
                                             onClick={() => toggleSection('generalPurpose')}
-                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-800/50 rounded-t-lg"
+                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
                                         >
                                             <div className="flex items-center gap-2">
                                                 <Bot className="w-4 h-4 text-emerald-400" />
                                                 <span className="text-sm font-bold text-white">General purpose model</span>
                                             </div>
-                                            {expandedSections['generalPurpose'] ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+                                            {expandedSections['generalPurpose'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
                                         </button>
                                         {expandedSections['generalPurpose'] && (
                                             <div className="p-3 pt-0 space-y-3">
                                                 <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Default Model</label>
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Default Model</label>
                                                     <div className="flex gap-2 flex-wrap">
                                                         <select
                                                             value={settings.generalPurposeModel?.provider === ProviderType.External
@@ -362,7 +403,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 });
                                                             }}
-                                                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                            className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
                                                                 <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
@@ -380,7 +421,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
                                                                     model: settings.generalPurposeModel?.model || ''
                                                                 })}
-                                                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                                                 title="API Type: chat=completions, responses=responses API"
                                                             >
                                                                 <option value="chat">Chat</option>
@@ -409,7 +450,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             className="flex-1 min-w-[120px]"
                                                         />
                                                     </div>
-                                                    <p className="text-[10px] text-slate-500">Used for general tasks that don't require specialized prompts (e.g., optimization)</p>
+                                                    <p className="text-[10px] text-slate-400">Used for general tasks that don't require specialized prompts (e.g., optimization)</p>
                                                     <div className="mt-2">
                                                         <GenerationParamsInput
                                                             params={settings.generalPurposeModel?.generationParams}
@@ -431,27 +472,27 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     </div>
 
                                     {/* Generator Section */}
-                                    <div className="bg-slate-900/50 rounded-lg border border-slate-800">
+                                    <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
                                         <button
                                             onClick={() => toggleSection('generator')}
-                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-800/50 rounded-t-lg"
+                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
                                         >
                                             <div className="flex items-center gap-2">
                                                 <Zap className="w-4 h-4 text-amber-400" />
                                                 <span className="text-sm font-bold text-white">Generator</span>
                                             </div>
-                                            {expandedSections['generator'] ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+                                            {expandedSections['generator'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
                                         </button>
                                         {expandedSections['generator'] && (
                                             <div className="p-3 pt-0 space-y-3">
                                                 {/* Regular Mode */}
                                                 <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Regular Mode</label>
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Regular Mode</label>
                                                     <div className="flex gap-2 flex-wrap">
                                                         <select
                                                             value={settings.workflowDefaults?.generator.regular.provider || ProviderType.Gemini}
                                                             onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'provider', e.target.value)}
-                                                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                            className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
                                                                 <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
@@ -462,7 +503,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             <select
                                                                 value={settings.workflowDefaults?.generator.regular.apiType || ApiType.Chat}
                                                                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'apiType', e.target.value)}
-                                                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                                                 title="API Type: chat=completions, responses=responses API"
                                                             >
                                                                 <option value="chat">Chat</option>
@@ -493,15 +534,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
                                                 {/* Deep Mode Steps */}
                                                 <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Deep Mode Steps</label>
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Deep Mode Steps</label>
                                                     {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
-                                                        <div key={step} className="space-y-2 p-2 bg-slate-900/30 rounded border border-slate-800">
+                                                        <div key={step} className="space-y-2 p-2 bg-slate-950/60 rounded border border-slate-800/70">
                                                             <div className="flex items-center gap-2 flex-wrap">
-                                                                <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
+                                                                <span className="w-20 text-[10px] text-slate-400 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
                                                                 <select
                                                                     value={settings.workflowDefaults?.generator.deep[step]?.provider || ProviderType.Gemini}
                                                                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'provider', e.target.value)}
-                                                                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                    className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
                                                                         <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
@@ -512,7 +553,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     <select
                                                                         value={settings.workflowDefaults?.generator.deep[step]?.apiType || ApiType.Chat}
                                                                         onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'apiType', e.target.value)}
-                                                                        className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                        className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
                                                                         title="API Type: chat=completions, responses=responses API"
                                                                     >
                                                                         <option value="chat">Chat</option>
@@ -548,27 +589,27 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     </div>
 
                                     {/* Converter Section */}
-                                    <div className="bg-slate-900/50 rounded-lg border border-slate-800">
+                                    <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
                                         <button
                                             onClick={() => toggleSection('converter')}
-                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-800/50 rounded-t-lg"
+                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
                                         >
                                             <div className="flex items-center gap-2">
                                                 <Zap className="w-4 h-4 text-cyan-400" />
                                                 <span className="text-sm font-bold text-white">Converter</span>
                                             </div>
-                                            {expandedSections['converter'] ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+                                            {expandedSections['converter'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
                                         </button>
                                         {expandedSections['converter'] && (
                                             <div className="p-3 pt-0 space-y-3">
                                                 {/* Regular Mode */}
                                                 <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Regular Mode</label>
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Regular Mode</label>
                                                     <div className="flex gap-2 flex-wrap">
                                                         <select
                                                             value={settings.workflowDefaults?.converter.regular.provider || ProviderType.Gemini}
                                                             onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'provider', e.target.value)}
-                                                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                            className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                                         >
                                                             {allProviders.map(p => (
                                                                 <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
@@ -579,7 +620,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             <select
                                                                 value={settings.workflowDefaults?.converter.regular.apiType || ApiType.Chat}
                                                                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'apiType', e.target.value)}
-                                                                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                                                 title="API Type: chat=completions, responses=responses API"
                                                             >
                                                                 <option value="chat">Chat</option>
@@ -610,15 +651,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
                                                 {/* Deep Mode Steps */}
                                                 <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Deep Mode Steps</label>
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Deep Mode Steps</label>
                                                     {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
-                                                        <div key={step} className="space-y-2 p-2 bg-slate-900/30 rounded border border-slate-800">
+                                                        <div key={step} className="space-y-2 p-2 bg-slate-950/60 rounded border border-slate-800/70">
                                                             <div className="flex items-center gap-2 flex-wrap">
-                                                                <span className="w-20 text-[10px] text-slate-500 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
+                                                                <span className="w-20 text-[10px] text-slate-400 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
                                                                 <select
                                                                     value={settings.workflowDefaults?.converter.deep[step]?.provider || ProviderType.Gemini}
                                                                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'provider', e.target.value)}
-                                                                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                    className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
                                                                 >
                                                                     {allProviders.map(p => (
                                                                         <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
@@ -629,7 +670,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     <select
                                                                         value={settings.workflowDefaults?.converter.deep[step]?.apiType || ApiType.Chat}
                                                                         onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'apiType', e.target.value)}
-                                                                        className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-indigo-500 outline-none"
+                                                                        className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
                                                                         title="API Type: chat=completions, responses=responses API"
                                                                     >
                                                                         <option value="chat">Chat</option>
@@ -666,16 +707,23 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                 </div>
                             )}
                         </div>
+                        </CollapsibleSection>
                     )}
 
                     {activeTab === SettingsPanelTab.Generation && (
+                        <CollapsibleSection
+                            title="Generation Defaults"
+                            icon={<Sliders className="w-3.5 h-3.5 text-sky-400" />}
+                            summary="Timeouts and default params"
+                            defaultExpanded={false}
+                        >
                         <div className="space-y-6">
-                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
                                 <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
-                                    <Timer className="w-4 h-4 text-indigo-400" />
+                                    <Timer className="w-4 h-4 text-sky-400" />
                                     Generation Timeout
                                 </h3>
-                                <p className="text-xs text-slate-500 mb-3">
+                                <p className="text-xs text-slate-400 mb-3">
                                     Stop streaming if a response does not arrive within this window.
                                 </p>
                                 <div className="flex items-center gap-3">
@@ -688,23 +736,23 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             const nextValue = e.target.value ? Math.max(1, parseInt(e.target.value)) : 300;
                                             updateSetting('generationTimeoutSeconds', nextValue);
                                         }}
-                                        className="w-28 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                        className="w-28 bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                     />
-                                    <span className="text-xs text-slate-500">seconds</span>
+                                    <span className="text-xs text-slate-400">seconds</span>
                                 </div>
                             </div>
 
-                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                    <Sliders className="w-4 h-4 text-purple-400" />
+                                    <Sliders className="w-4 h-4 text-blue-400" />
                                     Default Generation Parameters
                                 </h3>
-                                <p className="text-xs text-slate-500 mb-4">
+                                <p className="text-xs text-slate-400 mb-4">
                                     Configure default parameters for LLM generation. These can be overridden per-request in the chat interface.
                                 </p>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="space-y-1">
-                                        <label htmlFor="temperature" className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label htmlFor="temperature" className="text-[10px] text-slate-300 font-bold uppercase">
                                             Temperature: {((settings.defaultGenerationParams?.temperature ?? 0.8)).toFixed(2)}
                                         </label>
                                         <input
@@ -719,13 +767,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 temperature: parseFloat(e.target.value)
                                             })}
                                             aria-valuetext={`Temperature: ${((settings.defaultGenerationParams?.temperature ?? 0.8)).toFixed(2)}`}
-                                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                            className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                         />
-                                        <p className="text-[9px] text-slate-500">Lower = more focused, Higher = more creative</p>
+                                        <p className="text-[9px] text-slate-400">Lower = more focused, Higher = more creative</p>
                                     </div>
 
                                     <div className="space-y-1">
-                                        <label htmlFor="topP" className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label htmlFor="topP" className="text-[10px] text-slate-300 font-bold uppercase">
                                             Top P: {((settings.defaultGenerationParams?.topP ?? 0.9)).toFixed(2)}
                                         </label>
                                         <input
@@ -740,13 +788,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 topP: parseFloat(e.target.value)
                                             })}
                                             aria-valuetext={`Top P: ${((settings.defaultGenerationParams?.topP ?? 0.9)).toFixed(2)}`}
-                                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                            className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                         />
-                                        <p className="text-[9px] text-slate-500">Nucleus sampling threshold (0-1)</p>
+                                        <p className="text-[9px] text-slate-400">Nucleus sampling threshold (0-1)</p>
                                     </div>
 
                                     <div className="space-y-1">
-                                        <label htmlFor="topK" className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label htmlFor="topK" className="text-[10px] text-slate-300 font-bold uppercase">
                                             Top K
                                         </label>
                                         <input
@@ -761,13 +809,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 topK: e.target.value ? parseInt(e.target.value) : undefined
                                             })}
                                             placeholder="Leave empty for default"
-                                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-purple-500 outline-none"
+                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-blue-500 outline-none"
                                         />
-                                        <p className="text-[9px] text-slate-500">Sample from top K tokens (optional)</p>
+                                        <p className="text-[9px] text-slate-400">Sample from top K tokens (optional)</p>
                                     </div>
 
                                     <div className="space-y-1">
-                                        <label htmlFor="presencePenalty" className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label htmlFor="presencePenalty" className="text-[10px] text-slate-300 font-bold uppercase">
                                             Presence Penalty: {((settings.defaultGenerationParams?.presencePenalty ?? 0)).toFixed(2)}
                                         </label>
                                         <input
@@ -782,13 +830,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 presencePenalty: parseFloat(e.target.value)
                                             })}
                                             aria-valuetext={`Presence Penalty: ${((settings.defaultGenerationParams?.presencePenalty ?? 0)).toFixed(2)}`}
-                                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                            className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                         />
-                                        <p className="text-[9px] text-slate-500">Penalize new topics (-2 to 2)</p>
+                                        <p className="text-[9px] text-slate-400">Penalize new topics (-2 to 2)</p>
                                     </div>
 
                                     <div className="space-y-1">
-                                        <label htmlFor="frequencyPenalty" className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label htmlFor="frequencyPenalty" className="text-[10px] text-slate-300 font-bold uppercase">
                                             Frequency Penalty: {((settings.defaultGenerationParams?.frequencyPenalty ?? 0)).toFixed(2)}
                                         </label>
                                         <input
@@ -803,13 +851,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 frequencyPenalty: parseFloat(e.target.value)
                                             })}
                                             aria-valuetext={`Frequency Penalty: ${((settings.defaultGenerationParams?.frequencyPenalty ?? 0)).toFixed(2)}`}
-                                            className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                            className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                         />
-                                        <p className="text-[9px] text-slate-500">Penalize repetition (-2 to 2)</p>
+                                        <p className="text-[9px] text-slate-400">Penalize repetition (-2 to 2)</p>
                                     </div>
 
                                     <div className="space-y-1">
-                                        <label htmlFor="maxTokens" className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label htmlFor="maxTokens" className="text-[10px] text-slate-300 font-bold uppercase">
                                             Max Tokens
                                         </label>
                                         <input
@@ -824,17 +872,17 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 maxTokens: e.target.value ? parseInt(e.target.value) : undefined
                                             })}
                                             placeholder="Leave empty for default"
-                                            className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-purple-500 outline-none"
+                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-blue-500 outline-none"
                                         />
-                                        <p className="text-[9px] text-slate-500">Maximum tokens per response (optional)</p>
+                                        <p className="text-[9px] text-slate-400">Maximum tokens per response (optional)</p>
                                     </div>
                                 </div>
 
                                 {/* Force Structured Output Toggle */}
-                                <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800">
+                                <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800/70">
                                     <div className="flex items-center gap-2">
-                                        <label htmlFor="forceStructuredOutput" className="text-xs text-slate-300">Force Structured Output</label>
-                                        <span className="text-[9px] text-slate-500" title="When enabled, requests JSON response format from the model">
+                                        <label htmlFor="forceStructuredOutput" className="text-xs text-slate-200">Force Structured Output</label>
+                                        <span className="text-[9px] text-slate-400" title="When enabled, requests JSON response format from the model">
                                             (JSON mode)
                                         </span>
                                     </div>
@@ -849,11 +897,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             })}
                                             className="sr-only peer"
                                         />
-                                        <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                                        <div className="w-9 h-5 bg-slate-800/70 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
                                     </label>
                                 </div>
 
-                                <div className="mt-4 pt-4 border-t border-slate-800">
+                                <div className="mt-4 pt-4 border-t border-slate-800/70">
                                     <button
                                         onClick={() => updateSetting('defaultGenerationParams', {
                                             temperature: 0.8,
@@ -864,28 +912,35 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             maxTokens: undefined,
                                             forceStructuredOutput: true
                                         })}
-                                        className="text-[10px] text-purple-400 hover:text-purple-300 underline"
+                                        className="text-[10px] text-blue-400 hover:text-blue-300 underline"
                                     >
                                         Reset to defaults
                                     </button>
                                 </div>
                             </div>
                         </div>
+                        </CollapsibleSection>
                     )}
 
                     {activeTab === SettingsPanelTab.HuggingFace && (
+                        <CollapsibleSection
+                            title="HuggingFace"
+                            icon={<Cloud className="w-3.5 h-3.5 text-sky-400" />}
+                            summary="Token and default repo"
+                            defaultExpanded={false}
+                        >
                         <div className="space-y-6">
-                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                    <Cloud className="w-4 h-4 text-amber-400" />
+                                    <Cloud className="w-4 h-4 text-sky-400" />
                                     HuggingFace Settings
                                 </h3>
-                                <p className="text-xs text-slate-500 mb-4">
+                                <p className="text-xs text-slate-400 mb-4">
                                     Configure your HuggingFace token for uploading datasets to the Hub.
                                 </p>
                                 <div className="space-y-4">
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
                                             HuggingFace Token
                                             {import.meta.env.VITE_HF_TOKEN && !settings.huggingFaceToken && (
                                                 <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
@@ -897,54 +952,61 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 value={settings.huggingFaceToken || ''}
                                                 onChange={(e) => updateSetting('huggingFaceToken', e.target.value)}
                                                 placeholder={import.meta.env.VITE_HF_TOKEN ? '●●●●●●●● (env configured)' : 'hf_...'}
-                                                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 outline-none pr-10"
+                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none pr-10"
                                             />
                                             <button
                                                 onClick={() => toggleShowKey('hf')}
-                                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
                                             >
                                                 {showKeys['hf'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                                             </button>
                                         </div>
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-400 font-bold uppercase">Default Repository</label>
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Default Repository</label>
                                         <input
                                             type="text"
                                             value={settings.huggingFaceDefaultRepo || ''}
                                             onChange={(e) => updateSetting('huggingFaceDefaultRepo', e.target.value)}
                                             placeholder="username/dataset-name"
-                                            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                         />
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
-                                <p className="text-xs text-amber-200">
+                            <div className="bg-sky-500/10 border border-sky-500/20 rounded-lg p-4">
+                                <p className="text-xs text-sky-200">
                                     <strong>Get a token:</strong> Visit{' '}
-                                    <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-100">
+                                    <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="underline hover:text-sky-100">
                                         huggingface.co/settings/tokens
                                     </a>
                                     {' '}and create a token with "write" access.
                                 </p>
                             </div>
                         </div>
+                        </CollapsibleSection>
                     )}
 
                     {activeTab === SettingsPanelTab.Firebase && (
+                        <CollapsibleSection
+                            title="Firebase"
+                            icon={<Database className="w-3.5 h-3.5 text-sky-400" />}
+                            summary="Cloud storage config"
+                            defaultExpanded={false}
+                        >
                         <div className="space-y-6">
-                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                                     <Database className="w-4 h-4 text-orange-400" />
                                     Firebase Configuration
                                 </h3>
-                                <p className="text-xs text-slate-500 mb-4">
+                                <p className="text-xs text-slate-400 mb-4">
                                     Configure Firebase for cloud storage of sessions and logs. All fields are required to connect.
                                 </p>
                                 <div className="grid grid-cols-1 gap-3">
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
                                             API Key
                                             {import.meta.env.VITE_FIREBASE_API_KEY && !settings.firebaseApiKey && (
                                                 <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
@@ -956,18 +1018,18 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 value={settings.firebaseApiKey || ''}
                                                 onChange={(e) => updateSetting('firebaseApiKey', e.target.value)}
                                                 placeholder={import.meta.env.VITE_FIREBASE_API_KEY ? '●●●●●●●● (env configured)' : 'AIza...'}
-                                                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-pink-500 outline-none pr-10"
+                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none pr-10"
                                             />
                                             <button
                                                 onClick={() => toggleShowKey('firebase')}
-                                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
                                             >
                                                 {showKeys['firebase'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                                             </button>
                                         </div>
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
                                             Auth Domain
                                             {import.meta.env.VITE_FIREBASE_AUTH_DOMAIN && !settings.firebaseAuthDomain && (
                                                 <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
@@ -978,11 +1040,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             value={settings.firebaseAuthDomain || ''}
                                             onChange={(e) => updateSetting('firebaseAuthDomain', e.target.value)}
                                             placeholder={import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'your-app.firebaseapp.com'}
-                                            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-pink-500 outline-none"
+                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
                                             Project ID
                                             {import.meta.env.VITE_FIREBASE_PROJECT_ID && !settings.firebaseProjectId && (
                                                 <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
@@ -993,11 +1055,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             value={settings.firebaseProjectId || ''}
                                             onChange={(e) => updateSetting('firebaseProjectId', e.target.value)}
                                             placeholder={import.meta.env.VITE_FIREBASE_PROJECT_ID || 'your-project-id'}
-                                            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-pink-500 outline-none"
+                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
                                             Storage Bucket
                                             {import.meta.env.VITE_FIREBASE_STORAGE_BUCKET && !settings.firebaseStorageBucket && (
                                                 <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
@@ -1008,11 +1070,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             value={settings.firebaseStorageBucket || ''}
                                             onChange={(e) => updateSetting('firebaseStorageBucket', e.target.value)}
                                             placeholder={import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'your-app.appspot.com'}
-                                            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-pink-500 outline-none"
+                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
                                             Messaging Sender ID
                                             {import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID && !settings.firebaseMessagingSenderId && (
                                                 <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
@@ -1023,11 +1085,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             value={settings.firebaseMessagingSenderId || ''}
                                             onChange={(e) => updateSetting('firebaseMessagingSenderId', e.target.value)}
                                             placeholder={import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '123456789012'}
-                                            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-pink-500 outline-none"
+                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-400 font-bold uppercase">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
                                             App ID
                                             {import.meta.env.VITE_FIREBASE_APP_ID && !settings.firebaseAppId && (
                                                 <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
@@ -1038,29 +1100,90 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             value={settings.firebaseAppId || ''}
                                             onChange={(e) => updateSetting('firebaseAppId', e.target.value)}
                                             placeholder={import.meta.env.VITE_FIREBASE_APP_ID || '1:123456789012:web:abc123'}
-                                            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-xs text-slate-200 focus:border-pink-500 outline-none"
+                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
                                         />
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="bg-pink-500/10 border border-pink-500/20 rounded-lg p-4">
-                                <p className="text-xs text-pink-200">
+                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                    <Server className="w-4 h-4 text-sky-400" />
+                                    Backend Admin Credentials
+                                </h3>
+                                <p className="text-xs text-slate-400 mb-4">
+                                    Use a Firebase Service Account JSON for backend operations (recommended for Electron).
+                                </p>
+                                <div className="space-y-3">
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Backend URL</label>
+                                        <input
+                                            type="text"
+                                            value={import.meta.env.VITE_BACKEND_URL || 'Not configured'}
+                                            readOnly
+                                            className="w-full bg-slate-950 border border-slate-800/70 rounded px-3 py-2 text-xs text-slate-400"
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Service Account Path</label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="text"
+                                                value={settings.backendServiceAccountPath || ''}
+                                                onChange={(e) => updateSetting('backendServiceAccountPath', e.target.value)}
+                                                placeholder="/absolute/path/to/service-account.json"
+                                                className="flex-1 bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                            />
+                                            <label className="inline-flex items-center gap-2 px-3 py-2 rounded border border-slate-700/70 text-xs text-slate-200 hover:bg-slate-900/60 cursor-pointer">
+                                                <FolderOpen className="w-3.5 h-3.5" />
+                                                Choose
+                                                <input type="file" accept=".json" className="hidden" onChange={handleServiceAccountFile} />
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            onClick={handleApplyBackendServiceAccount}
+                                            className="inline-flex items-center gap-2 px-4 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                                            disabled={backendApplyStatus === BackendApplyStatus.Pending}
+                                        >
+                                            {backendApplyStatus === BackendApplyStatus.Pending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Server className="w-3.5 h-3.5" />}
+                                            Apply to Backend
+                                        </button>
+                                        {backendApplyStatus === BackendApplyStatus.Success && (
+                                            <span className="text-xs text-emerald-400">Applied</span>
+                                        )}
+                                        {backendApplyStatus === BackendApplyStatus.Error && (
+                                            <span className="text-xs text-red-400">{backendApplyError}</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
+                                <p className="text-xs text-amber-200">
                                     <strong>Note:</strong> Firebase configuration is saved when you click "Save Settings" and will be used to connect on next app load.
                                     If you have values in <code>.env</code>, those will be used as defaults.
                                 </p>
                             </div>
                         </div>
+                        </CollapsibleSection>
                     )}
 
                     {activeTab === SettingsPanelTab.Storage && (
+                        <CollapsibleSection
+                            title="Storage"
+                            icon={<Cpu className="w-3.5 h-3.5 text-sky-400" />}
+                            summary="Local data management"
+                            defaultExpanded={false}
+                        >
                         <div className="space-y-6">
-                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                                     <Cpu className="w-4 h-4 text-cyan-400" />
                                     Local Storage
                                 </h3>
-                                <p className="text-xs text-slate-500 mb-4">
+                                <p className="text-xs text-slate-400 mb-4">
                                     Manage locally stored data including sessions, logs, and settings.
                                 </p>
 
@@ -1069,7 +1192,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                         <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
                                         <div className="flex-1">
                                             <h4 className="text-sm font-bold text-red-400 mb-1">Clear All Data</h4>
-                                            <p className="text-xs text-slate-400 mb-3">
+                                            <p className="text-xs text-slate-300 mb-3">
                                                 This will permanently delete all stored settings, API keys, session data, and logs from this browser. This action cannot be undone.
                                             </p>
                                             <button
@@ -1085,7 +1208,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                             {confirmClear && (
                                                 <button
                                                     onClick={() => setConfirmClear(false)}
-                                                    className="ml-2 text-xs text-slate-500 hover:text-slate-300"
+                                                    className="ml-2 text-xs text-slate-400 hover:text-slate-200"
                                                 >
                                                     Cancel
                                                 </button>
@@ -1095,16 +1218,23 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                 </div>
                             </div>
                         </div>
+                        </CollapsibleSection>
                     )}
 
                     {activeTab === SettingsPanelTab.Prompts && (
+                        <CollapsibleSection
+                            title="Prompt Sets"
+                            icon={<FileText className="w-3.5 h-3.5 text-sky-400" />}
+                            summary="Active set and auto-routing"
+                            defaultExpanded={false}
+                        >
                         <div className="space-y-6">
-                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
                                 <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                                     <FileText className="w-4 h-4 text-emerald-400" />
                                     Prompt Configuration
                                 </h3>
-                                <p className="text-xs text-slate-500 mb-4">
+                                <p className="text-xs text-slate-400 mb-4">
                                     Select the prompt set to use for generating reasoning traces. Each set produces different reasoning formats.
                                 </p>
 
@@ -1120,18 +1250,18 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 key={setId}
                                                 onClick={() => updateSetting('promptSet', setId)}
                                                 className={`w-full text-left p-3 rounded-lg border transition-all ${isSelected
-                                                    ? 'bg-indigo-500/10 border-indigo-500/50 ring-1 ring-indigo-500/30'
-                                                    : 'bg-slate-900/50 border-slate-700 hover:border-slate-600 hover:bg-slate-800/50'
+                                                    ? 'bg-sky-500/10 border-sky-500/50 ring-1 ring-sky-500/30'
+                                                    : 'bg-slate-950/70 border-slate-700/70 hover:border-slate-600 hover:bg-slate-900/60'
                                                     }`}
                                             >
                                                 <div className="flex items-start justify-between gap-2">
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center gap-2">
-                                                            <span className={`text-sm font-semibold ${isSelected ? 'text-indigo-300' : 'text-slate-200'}`}>
+                                                            <span className={`text-sm font-semibold ${isSelected ? 'text-sky-300' : 'text-slate-100'}`}>
                                                                 {meta?.name || setId}
                                                             </span>
                                                             {isSelected && (
-                                                                <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase bg-indigo-500/20 text-indigo-300 rounded">
+                                                                <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase bg-sky-500/20 text-sky-300 rounded">
                                                                     Active
                                                                 </span>
                                                             )}
@@ -1142,13 +1272,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">
+                                                        <p className="text-[11px] text-slate-300 mt-1 line-clamp-2">
                                                             {meta?.description || `Prompt set: ${setId}`}
                                                         </p>
                                                         {meta?.symbols && meta.symbols.length > 0 && (
                                                             <div className="flex items-center gap-1 mt-2">
-                                                                <span className="text-[9px] text-slate-500 uppercase">Symbols:</span>
-                                                                <span className="text-[11px] text-slate-400 font-mono">
+                                                                <span className="text-[9px] text-slate-400 uppercase">Symbols:</span>
+                                                                <span className="text-[11px] text-slate-300 font-mono">
                                                                     {meta.symbols.slice(0, 8).join(' ')}
                                                                     {meta.symbols.length > 8 && '...'}
                                                                 </span>
@@ -1156,17 +1286,17 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         )}
                                                     </div>
                                                     <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${isSelected
-                                                        ? 'border-indigo-500 bg-indigo-500'
+                                                        ? 'border-sky-500 bg-sky-500'
                                                         : 'border-slate-600'
                                                         }`}>
                                                         {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
                                                     </div>
                                                 </div>
                                                 {meta?.features && meta.features.length > 0 && isSelected && (
-                                                    <div className="mt-3 pt-2 border-t border-slate-700/50">
+                                                    <div className="mt-3 pt-2 border-t border-slate-700/70">
                                                         <div className="flex flex-wrap gap-1">
                                                             {meta.features.map((feature, i) => (
-                                                                <span key={i} className="px-1.5 py-0.5 text-[9px] bg-slate-800 text-slate-400 rounded">
+                                                                <span key={i} className="px-1.5 py-0.5 text-[9px] bg-slate-900/60 text-slate-300 rounded">
                                                                     {feature}
                                                                 </span>
                                                             ))}
@@ -1178,15 +1308,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     })}
                                 </div>
 
-                                <p className="text-[10px] text-slate-600 mt-4">
-                                    Custom prompt sets can be added by creating new folders in the <code className="text-slate-500">prompts/</code> directory with a <code className="text-slate-500">meta.json</code> file.
+                                <p className="text-[10px] text-slate-500 mt-4">
+                                    Custom prompt sets can be added by creating new folders in the <code className="text-slate-400">prompts/</code> directory with a <code className="text-slate-400">meta.json</code> file.
                                 </p>
                             </div>
 
                             {/* Auto-routing section */}
-                            <div className="bg-slate-950/50 rounded-lg p-4 border border-slate-800">
+                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
                                 <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                                    <Cpu className="w-4 h-4 text-purple-400" />
+                                    <Cpu className="w-4 h-4 text-blue-400" />
                                     Auto-Routing (Experimental)
                                 </h3>
 
@@ -1194,15 +1324,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     {/* Enable toggle */}
                                     <label className="flex items-center justify-between cursor-pointer">
                                         <div>
-                                            <span className="text-xs text-slate-300">Enable auto-routing</span>
-                                            <p className="text-[10px] text-slate-500">Automatically select prompt set based on query type</p>
+                                            <span className="text-xs text-slate-200">Enable auto-routing</span>
+                                            <p className="text-[10px] text-slate-400">Automatically select prompt set based on query type</p>
                                         </div>
                                         <button
                                             role="switch"
                                             aria-checked={settings.autoRouteEnabled}
                                             aria-label="Enable auto-routing"
                                             onClick={() => updateSetting('autoRouteEnabled', !settings.autoRouteEnabled)}
-                                            className={`relative w-10 h-5 rounded-full transition-colors ${settings.autoRouteEnabled ? 'bg-purple-600' : 'bg-slate-700'
+                                            className={`relative w-10 h-5 rounded-full transition-colors ${settings.autoRouteEnabled ? 'bg-blue-600' : 'bg-slate-800/70'
                                                 }`}
                                         >
                                             <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${settings.autoRouteEnabled ? 'translate-x-5' : 'translate-x-0.5'
@@ -1214,13 +1344,13 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                     {settings.autoRouteEnabled && (
                                         <>
                                             <div className="space-y-1">
-                                                <label className="text-[10px] text-slate-400 font-bold uppercase">Classification Method</label>
+                                                <label className="text-[10px] text-slate-300 font-bold uppercase">Classification Method</label>
                                                 <div className="flex gap-2">
                                                     <button
                                                         onClick={() => updateSetting('autoRouteMethod', 'heuristic')}
                                                         className={`flex-1 px-3 py-2 rounded text-xs transition-colors ${settings.autoRouteMethod === 'heuristic'
-                                                            ? 'bg-purple-600 text-white'
-                                                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                                            ? 'bg-blue-600 text-white'
+                                                            : 'bg-slate-900/60 text-slate-300 hover:bg-slate-800/70'
                                                             }`}
                                                     >
                                                         <div className="font-semibold">Heuristic</div>
@@ -1229,8 +1359,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     <button
                                                         onClick={() => updateSetting('autoRouteMethod', 'llm')}
                                                         className={`flex-1 px-3 py-2 rounded text-xs transition-colors ${settings.autoRouteMethod === 'llm'
-                                                            ? 'bg-purple-600 text-white'
-                                                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                                            ? 'bg-blue-600 text-white'
+                                                            : 'bg-slate-900/60 text-slate-300 hover:bg-slate-800/70'
                                                             }`}
                                                     >
                                                         <div className="font-semibold">LLM</div>
@@ -1241,7 +1371,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
                                             {/* Confidence threshold - applies to both methods */}
                                             <div className="space-y-1">
-                                                <label htmlFor="confidence-threshold" className="text-[10px] text-slate-400 font-bold uppercase">
+                                                <label htmlFor="confidence-threshold" className="text-[10px] text-slate-300 font-bold uppercase">
                                                     Confidence Threshold: {((settings.autoRouteConfidenceThreshold ?? 0.3) * 100).toFixed(0)}%
                                                 </label>
                                                 <input
@@ -1252,24 +1382,24 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     value={(settings.autoRouteConfidenceThreshold ?? 0.3) * 100}
                                                     onChange={(e) => updateSetting('autoRouteConfidenceThreshold', parseInt(e.target.value) / 100)}
                                                     aria-valuetext={`${((settings.autoRouteConfidenceThreshold ?? 0.3) * 100).toFixed(0)} percent`}
-                                                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                                    className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                                 />
-                                                <p className="text-[9px] text-slate-500">Routes to recommended prompt set when confidence exceeds this threshold</p>
+                                                <p className="text-[9px] text-slate-400">Routes to recommended prompt set when confidence exceeds this threshold</p>
                                             </div>
 
                                             {/* LLM-specific options */}
                                             {settings.autoRouteMethod === 'llm' && (
-                                                <div className="space-y-3 p-3 bg-slate-900/50 rounded-lg border border-slate-800">
-                                                    <h4 className="text-[10px] text-slate-400 font-bold uppercase">LLM Classifier Configuration</h4>
+                                                <div className="space-y-3 p-3 bg-slate-950/70 rounded-lg border border-slate-800/70">
+                                                    <h4 className="text-[10px] text-slate-300 font-bold uppercase">LLM Classifier Configuration</h4>
 
                                                     {/* Provider selector */}
                                                     <div className="grid grid-cols-2 gap-3">
                                                         <div className="space-y-1">
-                                                            <label className="text-[10px] text-slate-500 font-bold uppercase">Provider</label>
+                                                            <label className="text-[10px] text-slate-400 font-bold uppercase">Provider</label>
                                                             <select
                                                                 value={settings.autoRouteLlmProvider || ProviderType.Gemini}
                                                                 onChange={e => updateSetting('autoRouteLlmProvider', e.target.value as ProviderType)}
-                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-purple-500 outline-none"
+                                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
                                                             >
                                                                 <option value={ProviderType.Gemini}>Gemini</option>
                                                                 <option value={ProviderType.External}>External</option>
@@ -1277,11 +1407,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                         </div>
                                                         {settings.autoRouteLlmProvider === ProviderType.External && (
                                                             <div className="space-y-1">
-                                                                <label className="text-[10px] text-slate-500 font-bold uppercase">Service</label>
+                                                                <label className="text-[10px] text-slate-400 font-bold uppercase">Service</label>
                                                                 <select
                                                                     value={settings.autoRouteLlmExternalProvider || ''}
                                                                     onChange={e => updateSetting('autoRouteLlmExternalProvider', e.target.value)}
-                                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-purple-500 outline-none"
+                                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
                                                                 >
                                                                     <option value="">Select provider...</option>
                                                                     {AVAILABLE_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}
@@ -1294,33 +1424,33 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 {settings.autoRouteLlmProvider === ProviderType.External && (
                                                         <>
                                                             <div className="space-y-1">
-                                                                <label className="text-[10px] text-slate-500 font-bold uppercase">API Key</label>
+                                                                <label className="text-[10px] text-slate-400 font-bold uppercase">API Key</label>
                                                                 <input
                                                                     type="password"
                                                                     value={settings.autoRouteLlmApiKey || ''}
                                                                     onChange={e => updateSetting('autoRouteLlmApiKey', e.target.value)}
-                                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-purple-500 outline-none"
+                                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
                                                                     placeholder={settings.autoRouteLlmExternalProvider && SettingsService.getApiKey(settings.autoRouteLlmExternalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
                                                                 />
                                                             </div>
                                                             <div className="space-y-1">
-                                                                <label className="text-[10px] text-slate-500 font-bold uppercase">Model ID</label>
+                                                                <label className="text-[10px] text-slate-400 font-bold uppercase">Model ID</label>
                                                                 <input
                                                                     type="text"
                                                                     value={settings.autoRouteLlmModel || ''}
                                                                     onChange={e => updateSetting('autoRouteLlmModel', e.target.value)}
-                                                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-purple-500 outline-none"
+                                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
                                                                     placeholder="e.g., gpt-4o-mini, claude-3-haiku"
                                                                 />
                                                             </div>
                                                     {settings.autoRouteLlmExternalProvider === ExternalProvider.Other && (
                                                                 <div className="space-y-1">
-                                                                    <label className="text-[10px] text-slate-500 font-bold uppercase">Base URL</label>
+                                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Base URL</label>
                                                                     <input
                                                                         type="text"
                                                                         value={settings.autoRouteLlmCustomBaseUrl || ''}
                                                                         onChange={e => updateSetting('autoRouteLlmCustomBaseUrl', e.target.value)}
-                                                                        className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-purple-500 outline-none"
+                                                                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
                                                                         placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
                                                                     />
                                                                 </div>
@@ -1331,26 +1461,26 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     {/* Gemini model option */}
                                                 {settings.autoRouteLlmProvider !== ProviderType.External && (
                                                         <div className="space-y-1">
-                                                            <label className="text-[10px] text-slate-500 font-bold uppercase">Model (optional)</label>
+                                                            <label className="text-[10px] text-slate-400 font-bold uppercase">Model (optional)</label>
                                                             <input
                                                                 type="text"
                                                                 value={settings.autoRouteLlmModel || ''}
                                                                 onChange={e => updateSetting('autoRouteLlmModel', e.target.value)}
-                                                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-purple-500 outline-none"
+                                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
                                                                 placeholder="Leave empty to use default"
                                                             />
                                                         </div>
                                                     )}
 
-                                                    <p className="text-[9px] text-slate-500">Use a fast/cheap model for classification (e.g., gemini-1.5-flash, gpt-4o-mini)</p>
+                                                    <p className="text-[9px] text-slate-400">Use a fast/cheap model for classification (e.g., gemini-1.5-flash, gpt-4o-mini)</p>
                                                 </div>
                                             )}
 
                                             {/* Task → Prompt mapping (editable) */}
                                             <div className="space-y-1">
-                                                <label className="text-[10px] text-slate-400 font-bold uppercase">Task → Prompt Mapping</label>
-                                                <p className="text-[9px] text-slate-500 mb-2">Customize which prompt set handles each task type</p>
-                                                <div className="bg-slate-900 rounded p-2 space-y-1.5">
+                                                <label className="text-[10px] text-slate-300 font-bold uppercase">Task → Prompt Mapping</label>
+                                                <p className="text-[9px] text-slate-400 mb-2">Customize which prompt set handles each task type</p>
+                                                <div className="bg-slate-950/70 rounded p-2 space-y-1.5">
                                                     {TaskClassifierService.getTaskTypes().map(task => {
                                                         const effectiveMapping = TaskClassifierService.getEffectiveMapping(settings.taskPromptMapping);
                                                         const currentValue = effectiveMapping[task as keyof typeof effectiveMapping];
@@ -1359,8 +1489,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
 
                                                         return (
                                                             <div key={task} className="flex items-center gap-2">
-                                                                <span className="text-[10px] text-slate-400 font-mono w-24">{task}</span>
-                                                                <span className="text-slate-600">→</span>
+                                                                <span className="text-[10px] text-slate-300 font-mono w-24">{task}</span>
+                                                                <span className="text-slate-500">→</span>
                                                                 <select
                                                                     aria-label={`Prompt set for ${task} tasks`}
                                                                     value={currentValue}
@@ -1374,8 +1504,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                         updateSetting('taskPromptMapping', Object.keys(newMapping).length > 0 ? newMapping : undefined);
                                                                     }}
                                                                     className={`flex-1 bg-slate-950 border rounded px-2 py-1 text-[10px] focus:outline-none ${isCustomized
-                                                                        ? 'border-purple-500/50 text-purple-300'
-                                                                        : 'border-slate-700 text-slate-300'
+                                                                        ? 'border-blue-500/50 text-blue-300'
+                                                                        : 'border-slate-700/70 text-slate-200'
                                                                         }`}
                                                                 >
                                                                     {availablePromptSets.map(set => (
@@ -1391,7 +1521,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                             delete newMapping[task];
                                                                             updateSetting('taskPromptMapping', Object.keys(newMapping).length > 0 ? newMapping : undefined);
                                                                         }}
-                                                                        className="text-slate-500 hover:text-slate-300 text-[10px]"
+                                                                        className="text-slate-400 hover:text-slate-200 text-[10px]"
                                                                         title="Reset to default"
                                                                         aria-label={`Reset ${task} mapping to default`}
                                                                     >
@@ -1401,10 +1531,10 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             </div>
                                                         );
                                                     })}
-                                                    <div className="flex items-center gap-2 pt-1.5 border-t border-slate-800">
-                                                        <span className="text-[10px] text-slate-500 font-mono w-24">unknown</span>
-                                                        <span className="text-slate-600">→</span>
-                                                        <span className="text-[10px] text-slate-500 flex-1">{settings.promptSet || 'default'} (your default)</span>
+                                                    <div className="flex items-center gap-2 pt-1.5 border-t border-slate-800/70">
+                                                        <span className="text-[10px] text-slate-400 font-mono w-24">unknown</span>
+                                                        <span className="text-slate-500">→</span>
+                                                        <span className="text-[10px] text-slate-400 flex-1">{settings.promptSet || 'default'} (your default)</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1413,14 +1543,15 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                 </div>
                             </div>
                         </div>
+                        </CollapsibleSection>
                     )}
                 </div>
 
                 {/* Footer */}
-                <div className="flex items-center justify-between p-4 border-t border-slate-800 bg-slate-900">
+                <div className="flex items-center justify-between p-4 border-t border-slate-800/70 bg-slate-950/70">
                     <button
                         onClick={onClose}
-                        className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+                        className="px-4 py-2 text-sm text-slate-300 hover:text-white transition-colors"
                     >
                         Cancel
                     </button>
@@ -1428,7 +1559,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         onClick={handleSave}
                         className={`flex items-center gap-2 px-6 py-2 rounded text-sm font-bold transition-colors ${saved
                             ? 'bg-emerald-600 text-white'
-                            : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                            : 'bg-sky-600 hover:bg-sky-500 text-white'
                             }`}
                     >
                         {saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}

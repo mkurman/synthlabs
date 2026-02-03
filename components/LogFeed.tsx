@@ -116,11 +116,11 @@ const LogFeed: React.FC<LogFeedProps> = ({
     : logs.slice(0, remainingSlots);
 
   // Show loading state
-  if (isLoading) {
+  if (isLoading && totalLogCount == 0 && !hasActiveStreams) {
     return (
-      <div className="flex flex-col items-center justify-center h-96 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/30">
-        <Loader2 className="w-12 h-12 text-teal-500 mb-4 animate-spin" />
-        <p className="text-slate-400 font-medium">Loading logs...</p>
+      <div className="flex flex-col items-center justify-center h-96 border-2 border-dashed border-slate-800/70 rounded-xl bg-slate-950/60">
+        <Loader2 className="w-12 h-12 text-sky-400 mb-4 animate-spin" />
+        <p className="text-slate-300 font-medium">Loading logs...</p>
       </div>
     );
   }
@@ -128,10 +128,10 @@ const LogFeed: React.FC<LogFeedProps> = ({
   // Show empty state only if no logs AND no active streaming
   if (totalLogCount === 0 && logs.length === 0 && !hasActiveStreams) {
     return (
-      <div className="flex flex-col items-center justify-center h-96 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/30">
-        <Terminal className="w-12 h-12 text-slate-700 mb-4" />
-        <p className="text-slate-500 font-medium">No data generated yet.</p>
-        <p className="text-sm text-slate-600 mt-1">Configure the engine and press Start.</p>
+      <div className="flex flex-col items-center justify-center h-96 border-2 border-dashed border-slate-800/70 rounded-xl bg-slate-950/60">
+        <Terminal className="w-12 h-12 text-slate-500 mb-4" />
+        <p className="text-slate-400 font-medium">No data generated yet.</p>
+        <p className="text-sm text-slate-500 mt-1">Configure the engine and press Start.</p>
       </div>
     );
   }
@@ -163,7 +163,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Streaming Conversation Cards - Show active generations */}
       {hasActiveStreams && visibleStreaming.length > 0 && (
         <div className="space-y-4 mb-4">
@@ -175,15 +175,15 @@ const LogFeed: React.FC<LogFeedProps> = ({
 
       {/* List View - Compact expandable rows */}
       {displayMode === FeedDisplayMode.List && (
-        <div className="bg-slate-900/50 rounded-xl border border-slate-800 overflow-hidden">
+        <div className="bg-slate-950/60 rounded-xl border border-slate-800/70 overflow-hidden shadow-sm">
           <table className="w-full">
             <thead>
-              <tr className="bg-slate-950/50 border-b border-slate-800">
+              <tr className="bg-slate-950/70 border-b border-slate-800/70">
                 <th className="w-8 p-2"></th>
-                <th className="text-left text-[10px] font-bold text-slate-500 uppercase p-2">Query</th>
-                <th className="text-left text-[10px] font-bold text-slate-500 uppercase p-2 w-32">Model</th>
-                <th className="text-left text-[10px] font-bold text-slate-500 uppercase p-2 w-24">Time</th>
-                <th className="text-right text-[10px] font-bold text-slate-500 uppercase p-2 w-20">Actions</th>
+                <th className="text-left text-[10px] font-bold text-slate-400 uppercase p-2">Query</th>
+                <th className="text-left text-[10px] font-bold text-slate-400 uppercase p-2 w-32">Model</th>
+                <th className="text-left text-[10px] font-bold text-slate-400 uppercase p-2 w-24">Time</th>
+                <th className="text-right text-[10px] font-bold text-slate-400 uppercase p-2 w-20">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -194,20 +194,20 @@ const LogFeed: React.FC<LogFeedProps> = ({
                 return (
                   <React.Fragment key={item.id}>
                     <tr
-                      className={`border-b border-slate-800/50 hover:bg-slate-800/30 cursor-pointer transition-colors ${isInvalid ? 'bg-red-950/10' : ''}`}
+                      className={`border-b border-slate-800/70 hover:bg-slate-900/40 cursor-pointer transition-colors ${isInvalid ? 'bg-red-950/10' : ''}`}
                       onClick={() => toggleExpand(item.id)}
                     >
                       <td className="p-2 text-center">
-                        <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                       </td>
                       <td className="p-2">
-                        <span className="text-sm text-slate-300 line-clamp-1">{renderSafeContent(item.query)}</span>
+                        <span className="text-sm text-slate-200 line-clamp-1">{renderSafeContent(item.query)}</span>
                       </td>
                       <td className="p-2">
-                        <span className="text-[10px] text-slate-400">{item.modelUsed}</span>
+                        <span className="text-[10px] text-slate-300">{item.modelUsed}</span>
                       </td>
                       <td className="p-2">
-                        <span className="text-[10px] font-mono text-slate-500">
+                        <span className="text-[10px] font-mono text-slate-400">
                           {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
                         </span>
                       </td>
@@ -215,7 +215,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                         {onDelete && (
                           <button
                             onClick={() => window.confirm("Delete?") && onDelete(item.id)}
-                            className="p-1 hover:bg-red-950/30 rounded text-slate-500 hover:text-red-400"
+                            className="p-1 hover:bg-red-950/30 rounded text-slate-400 hover:text-red-400"
                           >
                             <Trash2 className="w-3 h-3" />
                           </button>
@@ -227,12 +227,12 @@ const LogFeed: React.FC<LogFeedProps> = ({
                         <td colSpan={5} className="p-4">
                           {item.isMultiTurn && item.messages ? (
                             <div className="space-y-2 max-h-60 overflow-y-auto">
-                              <h5 className="text-[10px] uppercase text-slate-500 font-bold mb-2 flex items-center gap-1">
+                              <h5 className="text-[10px] uppercase text-slate-400 font-bold mb-2 flex items-center gap-1">
                                 <MessageCircle className="w-3 h-3" />
                                 {item.messages.length} messages
                               </h5>
                               {item.messages.map((msg, idx) => (
-                                <div key={idx} className={`text-xs p-2 rounded ${msg.role === 'user' ? 'bg-slate-800/50 text-slate-300' : 'bg-slate-900/50 text-slate-400'}`}>
+                                <div key={idx} className={`text-xs p-2 rounded ${msg.role === 'user' ? 'bg-slate-900/60 text-slate-200' : 'bg-slate-950/70 text-slate-300'}`}>
                                   <span className={`text-[9px] font-bold uppercase ${msg.role === 'user' ? 'text-cyan-400' : 'text-emerald-400'}`}>
                                     {msg.role}
                                   </span>
@@ -243,12 +243,12 @@ const LogFeed: React.FC<LogFeedProps> = ({
                           ) : (
                             <div className="grid md:grid-cols-2 gap-4">
                               <div>
-                                <h5 className="text-[10px] uppercase text-slate-500 font-bold mb-2 flex items-start gap-1"><Brain className="w-3 h-3" /><span className="font-medium">Thoughts</span></h5>
-                                <p className="text-xs text-slate-400 whitespace-pre-wrap max-h-40 overflow-y-auto">{displayReasoning || 'N/A'}</p>
+                                <h5 className="text-[10px] uppercase text-slate-400 font-bold mb-2 flex items-start gap-1"><Brain className="w-3 h-3" /><span className="font-medium">Thoughts</span></h5>
+                                <p className="text-xs text-slate-300 whitespace-pre-wrap max-h-40 overflow-y-auto">{displayReasoning || 'N/A'}</p>
                               </div>
                               <div>
-                                <h5 className="text-[10px] uppercase text-slate-500 font-bold mb-2">Answer</h5>
-                                <p className="text-xs text-slate-300 whitespace-pre-wrap max-h-40 overflow-y-auto">{renderSafeContent(displayAnswer) || 'N/A'}</p>
+                                <h5 className="text-[10px] uppercase text-slate-400 font-bold mb-2">Answer</h5>
+                                <p className="text-xs text-slate-200 whitespace-pre-wrap max-h-40 overflow-y-auto">{renderSafeContent(displayAnswer) || 'N/A'}</p>
                               </div>
                             </div>
                           )}
@@ -277,25 +277,25 @@ const LogFeed: React.FC<LogFeedProps> = ({
             const { displayReasoning, displayAnswer } = getDisplayFields(item.answer || '', item.reasoning || '');
 
             return (
-              <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg">
+              <div key={item.id} className="bg-slate-950/70 backdrop-blur-sm rounded-xl border border-slate-800/70 overflow-hidden hover:border-sky-500/30 transition-colors group shadow-lg">
                 {/* Card Header */}
-                <div className="bg-slate-950/50 p-2.5 border-b border-slate-800 flex justify-between items-start gap-2">
+                <div className="bg-slate-950/70 p-2.5 border-b border-slate-800/70 flex justify-between items-start gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-slate-200 line-clamp-2 font-sans">
+                    <div className="text-xs font-medium text-slate-100 line-clamp-2 font-sans">
                       {renderSafeContent(item.query)}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[9px] text-slate-500">
+                    <span className="text-[9px] text-slate-400">
                       {item.modelUsed.length > 15 ? item.modelUsed.slice(0, 15) + '...' : item.modelUsed}
                     </span>
-                    <span className="text-[9px] font-mono text-slate-600">
+                    <span className="text-[9px] font-mono text-slate-500">
                       {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
                     </span>
                     {onDelete && (
                       <button
                         onClick={() => window.confirm("Delete?") && onDelete(item.id)}
-                        className="p-1 hover:bg-red-950/30 rounded text-slate-500 hover:text-red-400"
+                        className="p-1 hover:bg-red-950/30 rounded text-slate-400 hover:text-red-400"
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
@@ -305,14 +305,14 @@ const LogFeed: React.FC<LogFeedProps> = ({
 
                 {/* Content Area */}
                 {item.isMultiTurn && item.messages ? (
-                  <div className="p-3 bg-slate-950/20 max-h-64 overflow-y-auto">
-                    <h4 className="text-[9px] uppercase tracking-wider text-slate-500 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
+                  <div className="p-3 bg-slate-950/40 max-h-64 overflow-y-auto">
+                    <h4 className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
                       <MessageCircle className="w-3 h-3" />
                       {item.messages.length} messages
                     </h4>
                     <div className="space-y-2">
                       {item.messages.map((msg, idx) => (
-                        <div key={idx} className={`text-[11px] p-2 rounded ${msg.role === 'user' ? 'bg-slate-800/50 text-slate-300' : 'bg-slate-900/50 text-slate-400'}`}>
+                        <div key={idx} className={`text-[11px] p-2 rounded ${msg.role === 'user' ? 'bg-slate-900/60 text-slate-200' : 'bg-slate-950/70 text-slate-300'}`}>
                           <span className={`text-[9px] font-bold uppercase ${msg.role === 'user' ? 'text-cyan-400' : 'text-emerald-400'}`}>
                             {msg.role}
                           </span>
@@ -324,19 +324,19 @@ const LogFeed: React.FC<LogFeedProps> = ({
                 ) : (
                   <div className="grid grid-cols-2 divide-x divide-slate-800">
                     {/* Reasoning */}
-                    <div className="p-3 py-0 bg-slate-950/20 max-h-64 overflow-y-auto">
-                      <h4 className="text-[9px] uppercase tracking-wider text-slate-500 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
+                    <div className="p-3 py-0 bg-slate-950/40 max-h-64 overflow-y-auto">
+                      <h4 className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
                         <Brain className="w-3 h-3" />Thoughts
                       </h4>
-                      <p className="text-[11px] text-slate-400 whitespace-pre-wrap">{displayReasoning || 'N/A'}</p>
+                      <p className="text-[11px] text-slate-300 whitespace-pre-wrap">{displayReasoning || 'N/A'}</p>
                     </div>
 
                     {/* Answer */}
                     <div className="p-3 py-0 bg-slate-950/10 max-h-64 overflow-y-auto">
-                      <h4 className="text-[9px] uppercase tracking-wider text-slate-500 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
+                      <h4 className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
                         Answer
                       </h4>
-                      <p className="text-[11px] text-slate-300 whitespace-pre-wrap">{renderSafeContent(displayAnswer) || 'N/A'}</p>
+                      <p className="text-[11px] text-slate-200 whitespace-pre-wrap">{renderSafeContent(displayAnswer) || 'N/A'}</p>
                     </div>
                   </div>
                 )}
@@ -360,13 +360,13 @@ const LogFeed: React.FC<LogFeedProps> = ({
         const isTimeout = item.status === 'TIMEOUT';
 
         return (
-          <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div key={item.id} className="bg-slate-950/70 backdrop-blur-sm rounded-xl border border-slate-800/70 overflow-hidden hover:border-sky-500/30 transition-colors group shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
 
             {/* Card Header */}
-            <div className="bg-slate-950/50 p-3 border-b border-slate-800 flex justify-between items-start gap-4">
+            <div className="bg-slate-950/70 p-3 border-b border-slate-800/70 flex justify-between items-start gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Query</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Query</span>
                   <div className="flex items-center gap-1">
                     {editingField?.itemId === item.id && editingField.field === LogFeedRewriteTarget.Query ? (
                       <>
@@ -380,7 +380,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                     ) : (
                       <>
                         {onStartEditing && (
-                          <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Query, item.query || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                          <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Query, item.query || '')} className="p-1 text-slate-400 hover:text-white hover:bg-slate-900/60 rounded" title="Edit">
                             <Edit3 className="w-3 h-3" />
                           </button>
                         )}
@@ -388,7 +388,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                           <button
                             onClick={() => onRewrite(item.id, LogFeedRewriteTarget.Query)}
                             disabled={rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Query}
-                            className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                            className="p-1 text-slate-400 hover:text-sky-400 hover:bg-sky-900/30 rounded disabled:opacity-50"
                             title="AI Rewrite"
                           >
                             {rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Query ? (
@@ -407,15 +407,15 @@ const LogFeed: React.FC<LogFeedProps> = ({
                     value={editValue}
                     onChange={e => onEditValueChange?.(e.target.value)}
                     autoFocus
-                    className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-sm text-slate-200 outline-none min-h-[40px]"
+                    className="w-full bg-slate-950/70 border border-sky-500/50 rounded p-2 text-sm text-slate-100 outline-none min-h-[40px]"
                     placeholder="Enter query..."
                   />
                 ) : rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Query ? (
-                  <div className="text-sm font-medium text-teal-300 font-sans animate-pulse">
+                  <div className="text-sm font-medium text-sky-300 font-sans animate-pulse">
                     {streamingContent || 'Rewriting...'}
                   </div>
                 ) : (
-                  <div className="text-sm font-medium text-slate-200 truncate font-sans">
+                  <div className="text-sm font-medium text-slate-100 truncate font-sans">
                     {renderSafeContent(item.query)}
                   </div>
                 )}
@@ -423,7 +423,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
               <div className="flex flex-col items-end gap-1">
                 <div className="flex items-center gap-2 shrink-0">
                   {item.modelUsed.includes('Gemini') || item.modelUsed.includes('DEEP') ? (
-                    <span className="text-[10px] text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 flex items-center gap-1">
+                    <span className="text-[10px] text-sky-300 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20 flex items-center gap-1">
                       {item.deepMetadata ? <Layers className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
                       {item.modelUsed.replace("DEEP: ", "Deep ")}
                     </span>
@@ -432,11 +432,11 @@ const LogFeed: React.FC<LogFeedProps> = ({
                       <MessageCircle className="w-3 h-3" /> Multi-Turn ({item.messages?.length || 0} msgs)
                     </span>
                   ) : (
-                    <span className="text-[10px] text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20 flex items-center gap-1">
+                    <span className="text-[10px] text-blue-300 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20 flex items-center gap-1">
                       <Zap className="w-3 h-3" /> {item.modelUsed}
                     </span>
                   )}
-                  <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1">
+                  <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     {(() => {
                       if (!item.timestamp) return '--:--:--';
@@ -499,7 +499,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                         onDelete(item.id);
                       }
                     }}
-                    className="flex items-center gap-1.5 bg-slate-800/50 hover:bg-red-950/30 text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-500/30 text-[10px] px-2 py-1 rounded-md transition-all"
+                    className="flex items-center gap-1.5 bg-slate-900/60 hover:bg-red-950/30 text-slate-300 hover:text-red-400 border border-slate-700/70 hover:border-red-500/30 text-[10px] px-2 py-1 rounded-md transition-all"
                     title="Delete Log"
                   >
                     <Trash2 className="w-3 h-3" />
@@ -510,30 +510,30 @@ const LogFeed: React.FC<LogFeedProps> = ({
 
             {/* Deep Metadata Toggle / Info */}
             {item.deepMetadata && (
-              <div className="bg-slate-950/30 border-b border-slate-800 px-4 py-2 flex gap-4 overflow-x-auto no-scrollbar">
+              <div className="bg-slate-950/30 border-b border-slate-800/70 px-4 py-2 flex gap-4 overflow-x-auto no-scrollbar">
                 <div className="flex flex-col">
-                  <span className="text-[9px] text-slate-600 font-bold uppercase">Meta-Analysis</span>
-                  <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.meta}>{item.deepMetadata.meta}</span>
+                  <span className="text-[9px] text-slate-500 font-bold uppercase">Meta-Analysis</span>
+                  <span className="text-[10px] text-slate-300 truncate max-w-[100px]" title={item.deepMetadata.meta}>{item.deepMetadata.meta}</span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-[9px] text-slate-600 font-bold uppercase">Retrieval</span>
-                  <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.retrieval}>{item.deepMetadata.retrieval}</span>
+                  <span className="text-[9px] text-slate-500 font-bold uppercase">Retrieval</span>
+                  <span className="text-[10px] text-slate-300 truncate max-w-[100px]" title={item.deepMetadata.retrieval}>{item.deepMetadata.retrieval}</span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-[9px] text-slate-600 font-bold uppercase">Derivation</span>
-                  <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.derivation}>{item.deepMetadata.derivation}</span>
+                  <span className="text-[9px] text-slate-500 font-bold uppercase">Derivation</span>
+                  <span className="text-[10px] text-slate-300 truncate max-w-[100px]" title={item.deepMetadata.derivation}>{item.deepMetadata.derivation}</span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-[9px] text-slate-600 font-bold uppercase">Writer</span>
-                  <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={item.deepMetadata.writer}>{item.deepMetadata.writer}</span>
+                  <span className="text-[9px] text-slate-500 font-bold uppercase">Writer</span>
+                  <span className="text-[10px] text-slate-300 truncate max-w-[100px]" title={item.deepMetadata.writer}>{item.deepMetadata.writer}</span>
                 </div>
               </div>
             )}
 
             {/* Content Area - Multi-turn uses ConversationView, single-turn uses grid */}
             {item.isMultiTurn && item.messages ? (
-              <div className="p-4 bg-slate-950/20">
-                <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-4 flex items-center gap-2">
+              <div className="p-4 bg-slate-950/40">
+                <h4 className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-4 flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-cyan-500"></span>
                   Conversation ({item.messages.length} messages)
                 </h4>
@@ -545,9 +545,9 @@ const LogFeed: React.FC<LogFeedProps> = ({
                 return (
                   <div className="grid lg:grid-cols-2">
                     {/* Left: Reasoning Trace */}
-                    <div className="p-4 border-r border-slate-800 bg-slate-950/20">
+                    <div className="p-4 border-r border-slate-800/70 bg-slate-950/40">
                       <div className="flex items-center justify-between mb-3">
-                        <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-2">
+                        <h4 className="text-[10px] uppercase tracking-wider text-slate-400 font-bold flex items-center gap-2">
                           <Brain className="w-3 h-3" /><span className="font-medium">Thoughts</span>
                         </h4>
                         <div className="flex items-center gap-1">
@@ -563,7 +563,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                           ) : (
                             <>
                               {onStartEditing && (
-                                <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Reasoning, item.reasoning || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Reasoning, item.reasoning || '')} className="p-1 text-slate-400 hover:text-white hover:bg-slate-900/60 rounded" title="Edit">
                                   <Edit3 className="w-3 h-3" />
                                 </button>
                               )}
@@ -571,7 +571,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                                 <button
                                   onClick={() => onRewrite(item.id, LogFeedRewriteTarget.Reasoning)}
                                   disabled={rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Reasoning}
-                                  className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                  className="p-1 text-slate-400 hover:text-sky-400 hover:bg-sky-900/30 rounded disabled:opacity-50"
                                   title="AI Rewrite"
                                 >
                                   {rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Reasoning ? (
@@ -590,11 +590,11 @@ const LogFeed: React.FC<LogFeedProps> = ({
                           value={editValue}
                           onChange={e => onEditValueChange?.(e.target.value)}
                           autoFocus
-                          className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-sm text-slate-300 outline-none min-h-[100px]"
+                          className="w-full bg-slate-950/70 border border-sky-500/50 rounded p-2 text-sm text-slate-200 outline-none min-h-[100px]"
                           placeholder="Enter reasoning..."
                         />
                       ) : rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Reasoning ? (
-                        <div className="text-sm text-teal-300 whitespace-pre-wrap animate-pulse">
+                        <div className="text-sm text-sky-300 whitespace-pre-wrap animate-pulse">
                           {streamingContent || 'Rewriting...'}
                         </div>
                       ) : (
@@ -606,7 +606,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                     <div className="flex flex-col">
                       <div className="p-4 flex-1">
                         <div className="flex items-center justify-between mb-3">
-                          <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold flex items-center gap-2">
+                          <h4 className="text-[10px] uppercase tracking-wider text-slate-400 font-bold flex items-center gap-2">
                             Answer
                           </h4>
                           <div className="flex items-center gap-1">
@@ -622,7 +622,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                             ) : (
                               <>
                                 {onStartEditing && (
-                                  <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Answer, item.answer || '')} className="p-1 text-slate-500 hover:text-white hover:bg-slate-800 rounded" title="Edit">
+                                  <button onClick={() => onStartEditing(item.id, LogFeedRewriteTarget.Answer, item.answer || '')} className="p-1 text-slate-400 hover:text-white hover:bg-slate-900/60 rounded" title="Edit">
                                     <Edit3 className="w-3 h-3" />
                                   </button>
                                 )}
@@ -630,7 +630,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                                   <button
                                     onClick={() => onRewrite(item.id, LogFeedRewriteTarget.Answer)}
                                     disabled={rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Answer}
-                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                    className="p-1 text-slate-400 hover:text-sky-400 hover:bg-sky-900/30 rounded disabled:opacity-50"
                                     title="AI Rewrite"
                                   >
                                     {rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Answer ? (
@@ -649,23 +649,23 @@ const LogFeed: React.FC<LogFeedProps> = ({
                             value={editValue}
                             onChange={e => onEditValueChange?.(e.target.value)}
                             autoFocus
-                            className="w-full bg-slate-900 border border-teal-500/50 rounded p-2 text-sm text-slate-300 outline-none min-h-[100px]"
+                            className="w-full bg-slate-950/70 border border-sky-500/50 rounded p-2 text-sm text-slate-200 outline-none min-h-[100px]"
                             placeholder="Enter answer..."
                           />
                         ) : rewritingField?.itemId === item.id && rewritingField.field === LogFeedRewriteTarget.Answer ? (
-                          <div className="text-sm text-teal-300 whitespace-pre-wrap animate-pulse">
+                          <div className="text-sm text-sky-300 whitespace-pre-wrap animate-pulse">
                             {streamingContent || 'Rewriting...'}
                           </div>
                         ) : (
-                          <p className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+                          <p className="text-sm text-slate-200 leading-relaxed font-sans whitespace-pre-wrap">
                             {renderSafeContent(displayAnswer)}
                           </p>
                         )}
                       </div>
 
-                      <div className="p-3 bg-slate-950/50 border-t border-slate-800">
-                        <h5 className="text-[10px] text-slate-500 mb-1">Seed Context</h5>
-                        <p className="text-xs text-slate-600 italic line-clamp-2 font-serif opacity-70">
+                      <div className="p-3 bg-slate-950/70 border-t border-slate-800/70">
+                        <h5 className="text-[10px] text-slate-400 mb-1">Seed Context</h5>
+                        <p className="text-xs text-slate-500 italic line-clamp-2 font-serif opacity-70">
                           "{renderSafeContent(item.seed_preview)}"
                         </p>
                       </div>
@@ -696,11 +696,11 @@ const LogFeed: React.FC<LogFeedProps> = ({
 
       {/* Pagination Controls - Hidden if Show Latest Only is active or Page Size is All */}
       {!showLatestOnly && pageSize !== -1 && totalPages > 1 && (
-        <div className="flex items-center justify-center gap-4 mt-6 p-3 bg-slate-900/50 rounded-xl border border-slate-800">
+        <div className="flex items-center justify-center gap-4 mt-6 p-3 bg-slate-950/70 rounded-xl border border-slate-800/70">
           <button
             onClick={() => onPageChange(1)}
             disabled={safeCurrentPage === 1}
-            className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
+            className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
             title="First Page"
           >
             <ChevronsLeft className="w-5 h-5" />
@@ -708,20 +708,20 @@ const LogFeed: React.FC<LogFeedProps> = ({
           <button
             onClick={() => onPageChange(Math.max(1, safeCurrentPage - 1))}
             disabled={safeCurrentPage === 1}
-            className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
+            className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
             title="Previous Page"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
 
-          <span className="text-xs font-mono text-slate-400">
+          <span className="text-xs font-mono text-slate-300">
             Page <span className="text-white font-bold">{safeCurrentPage}</span> of {totalPages}
           </span>
 
           <button
             onClick={() => onPageChange(Math.min(totalPages, safeCurrentPage + 1))}
             disabled={safeCurrentPage === totalPages}
-            className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
+            className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
             title="Next Page"
           >
             <ChevronRight className="w-5 h-5" />
@@ -729,7 +729,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
           <button
             onClick={() => onPageChange(totalPages)}
             disabled={safeCurrentPage === totalPages}
-            className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400 transition-colors"
+            className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
             title="Last Page"
           >
             <ChevronsRight className="w-5 h-5" />

@@ -9,4 +9,14 @@ export interface ChatMessage {
   reasoning_content?: string;
   toolCalls?: any[];
   toolCallId?: string;
+  usage?: ChatUsageSummary;
+}
+
+export interface ChatUsageSummary {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cost: number;
+  tps: number;
+  durationMs: number;
 }

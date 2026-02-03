@@ -46,7 +46,7 @@ export default function CreatorControls(props: CreatorControlsProps) {
     ];
 
     return (
-        <div className="h-full flex flex-col bg-slate-900 overflow-hidden">
+        <div className="h-full flex flex-col bg-slate-950/70 overflow-hidden">
             {/* 1. Top Status Section - Always visible */}
             <div className="flex-shrink-0">
                 <GeneratorStatus
@@ -70,7 +70,7 @@ export default function CreatorControls(props: CreatorControlsProps) {
             </div>
 
             {/* 2. Tab Bar */}
-            <div className="flex-shrink-0 border-b border-slate-800 bg-slate-950/50">
+            <div className="flex-shrink-0 border-b border-slate-800/70 bg-slate-950/70">
                 <div className="flex">
                     {tabs.map(tab => {
                         const Icon = tab.icon;
@@ -79,11 +79,10 @@ export default function CreatorControls(props: CreatorControlsProps) {
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${
-                                    isActive
-                                        ? 'text-indigo-400 border-b-2 border-indigo-500 bg-indigo-500/5'
-                                        : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'
-                                }`}
+                                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] font-bold uppercase tracking-wider transition-all ${isActive
+                                        ? 'text-slate-900 bg-slate-100'
+                                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                                    }`}
                             >
                                 <Icon className="w-3.5 h-3.5" />
                                 {tab.label}
@@ -123,7 +122,7 @@ export default function CreatorControls(props: CreatorControlsProps) {
                                 onRewriterConfigChange={props.onFeedRewriterConfigChange}
                             />
                         ) : (
-                            <div className="text-xs text-slate-500 bg-slate-800/50 rounded-lg p-4 text-center">
+                            <div className="text-xs text-slate-400 bg-slate-900/60 rounded-lg p-4 text-center">
                                 Rewriter not configured.
                             </div>
                         )}

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 
 import type { VerifierItem } from '../types';
 import { OutputFieldName, VerifierRewriteTarget } from '../interfaces/enums';
+import { VerifierDataSource } from '../interfaces/enums/VerifierDataSource';
 
 interface UseVerifierInlineEditingOptions {
     editingField: { itemId: string; field: OutputFieldName.Query | OutputFieldName.Reasoning | OutputFieldName.Answer | VerifierRewriteTarget.MessageAnswer; messageIndex?: number; originalValue: string } | null;
@@ -10,7 +11,7 @@ interface UseVerifierInlineEditingOptions {
     setEditValue: (value: string) => void;
     setData: (items: VerifierItem[] | ((prev: VerifierItem[]) => VerifierItem[])) => void;
     autoSaveEnabled: boolean;
-    dataSource: 'file' | 'db' | null;
+    dataSource: VerifierDataSource | null;
     handleDbUpdate: (item: VerifierItem) => Promise<void>;
 }
 
@@ -77,7 +78,7 @@ export function useVerifierInlineEditing({
         setEditingField(null);
         setEditValue('');
 
-        if (autoSaveEnabled && dataSource === 'db' && updatedItem) {
+        if (autoSaveEnabled && dataSource === VerifierDataSource.Database && updatedItem) {
             handleDbUpdate(updatedItem);
         }
     }, [autoSaveEnabled, dataSource, editValue, editingField, handleDbUpdate, setData, setEditValue, setEditingField]);

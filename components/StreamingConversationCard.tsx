@@ -18,16 +18,16 @@ const getRoleStyles = (role: ChatRole) => {
     switch (role) {
         case ChatRole.User:
             return {
-                avatar: 'bg-indigo-500/20 text-indigo-400',
-                bubble: 'bg-indigo-600/30 text-indigo-100 border border-indigo-500/30',
+                avatar: 'bg-sky-500/15 text-sky-300',
+                bubble: 'bg-slate-950/70 text-slate-100 border border-slate-700/70',
                 icon: User,
                 label: 'User'
             };
         case ChatRole.Assistant:
         default:
             return {
-                avatar: 'bg-emerald-500/20 text-emerald-400',
-                bubble: 'bg-slate-800 text-slate-200 border border-slate-700',
+                avatar: 'bg-slate-900/60 text-slate-100',
+                bubble: 'bg-slate-950/70 text-slate-100 border border-slate-800/70',
                 icon: Bot,
                 label: 'Assistant'
             };
@@ -86,7 +86,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                             <div className="mb-2">
                                 <button
                                     onClick={() => toggleReasoning(idx)}
-                                    className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-slate-400 uppercase font-bold"
+                                    className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-slate-300 uppercase font-bold"
                                 >
 
                                     <Brain className="w-3 h-3" />
@@ -94,7 +94,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                     {expandedReasoning.has(idx) ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
                                 </button>
                                 {expandedReasoning.has(idx) && (
-                                    <div className="mt-2 bg-slate-900/50 border border-slate-800 rounded p-2">
+                                    <div className="mt-2 bg-slate-950/70 border border-slate-800/70 rounded p-2">
                                         <ReasoningHighlighter text={msg.reasoning_content} />
                                     </div>
                                 )}
@@ -102,7 +102,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                         )}
                         <p className="whitespace-pre-wrap">{msg.content}</p>
                     </div>
-                    <div className={`text-[8px] text-slate-600 uppercase font-bold mt-0.5 ${msg.role === ChatRole.User ? 'text-right mr-1' : 'ml-1'}`}>
+                    <div className={`text-[8px] text-slate-500 uppercase font-bold mt-0.5 ${msg.role === ChatRole.User ? 'text-right mr-1' : 'ml-1'}`}>
                         {styles.label}
                     </div>
                 </div>
@@ -113,20 +113,20 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
     // Single-prompt mode: render simpler card without conversation bubbles
     if (streamState.isSinglePrompt) {
         return (
-            <div className="bg-gradient-to-br from-indigo-950/40 to-slate-900/80 backdrop-blur-sm rounded-xl border border-indigo-500/30 overflow-hidden shadow-lg shadow-indigo-500/5">
+            <div className="bg-gradient-to-br from-slate-950/60 via-slate-950/40 to-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800/70 overflow-hidden shadow-2xl shadow-slate-950/40">
                 {/* Header */}
-                <div className="bg-slate-950/50 p-3 border-b border-indigo-500/20 flex items-center gap-3">
-                    <Loader className="w-4 h-4 text-indigo-400 animate-spin" />
-                    <span className="text-xs font-medium text-indigo-300">
+                <div className="bg-slate-950/70 p-3 border-b border-slate-800/70 flex items-center gap-3">
+                    <Loader className="w-4 h-4 text-sky-300 animate-spin" />
+                    <span className="text-xs font-medium text-slate-100">
                         Generating Response
                     </span>
-                    <span className="text-[10px] text-slate-500 ml-auto font-mono capitalize">
+                    <span className="text-[10px] text-slate-400 ml-auto font-mono capitalize">
                         {phase.replace(/_/g, ' ')}
                     </span>
                     {onHalt && isStreaming && (
                         <button
                             onClick={() => onHalt(streamState.id)}
-                            className="ml-2 text-amber-400 hover:text-amber-300 transition-colors"
+                            className="ml-2 text-amber-300 hover:text-amber-200 transition-colors"
                             title="Halt"
                         >
                             <Square className="w-4 h-4" />
@@ -135,7 +135,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                     {onDelete && (
                         <button
                             onClick={() => onDelete(streamState.id)}
-                            className="ml-2 text-slate-500 hover:text-red-400 transition-colors"
+                            className="ml-2 text-slate-400 hover:text-red-300 transition-colors"
                             title="Remove"
                         >
                             <X className="w-4 h-4" />
@@ -146,9 +146,9 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                 {/* Two-column layout like log cards */}
                 <div className="grid lg:grid-cols-2">
                     {/* Left: Reasoning Trace */}
-                    <div className="p-4 border-r border-slate-800 bg-slate-950/20">
-                        <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
-                            <Brain className="w-3 h-3 text-emerald-400 animate-pulse" />
+                    <div className="p-4 border-r border-slate-800/70 bg-slate-950/40">
+                        <h4 className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-3 flex items-center gap-2">
+                            <Brain className="w-3 h-3 text-sky-300 animate-pulse" />
                             {phase === StreamingPhase.ExtractingReasoning ? (
                                 <>
                                     Thinking...
@@ -157,49 +157,49 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                 'Thoughts'
                             )}
                         </h4>
-                        <div className="text-sm text-slate-300 font-mono">
+                        <div className="text-sm text-slate-200 font-mono">
                             {currentReasoning ? (
                                 <>
                                     <ReasoningHighlighter text={currentReasoning} />
                                     {phase === StreamingPhase.ExtractingReasoning && (
-                                        <span className="inline-block w-1.5 h-4 bg-emerald-400/60 ml-0.5 animate-pulse" />
+                                        <span className="inline-block w-1.5 h-4 bg-sky-400/60 ml-0.5 animate-pulse" />
                                     )}
                                 </>
                             ) : phase === StreamingPhase.WaitingForResponse ? (
-                                <div className="flex items-center gap-2 text-slate-500">
+                                <div className="flex items-center gap-2 text-slate-400">
                                     <Loader className="w-3 h-3 animate-spin" />
                                     <span>Waiting for thoughts...</span>
                                 </div>
                             ) : (
-                                <span className="text-slate-600 italic">No thoughts yet...</span>
+                                <span className="text-slate-500 italic">No thoughts yet...</span>
                             )}
                         </div>
                     </div>
 
                     {/* Right: Final Answer */}
-                    <div className="p-4 bg-slate-950/20">
-                        <h4 className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 flex items-center gap-2">
+                    <div className="p-4 bg-slate-950/40">
+                        <h4 className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-3 flex items-center gap-2">
                             {phase === StreamingPhase.ExtractingAnswer ? (
                                 <>
-                                    <Sparkles className="w-3 h-3 text-emerald-400 animate-pulse" />
+                                    <Sparkles className="w-3 h-3 text-sky-300 animate-pulse" />
                                     Extracting Answer...
                                 </>
                             ) : (
                                 'Answer'
                             )}
                         </h4>
-                        <div className="text-sm text-slate-300 leading-relaxed font-sans whitespace-pre-wrap">
+                        <div className="text-sm text-slate-200 leading-relaxed font-sans whitespace-pre-wrap">
                             {currentAnswer ? (
                                 <>
                                     {currentAnswer}
                                     {phase === StreamingPhase.ExtractingAnswer && (
-                                        <span className="inline-block w-1.5 h-4 bg-emerald-400/60 ml-0.5 animate-pulse" />
+                                        <span className="inline-block w-1.5 h-4 bg-sky-400/60 ml-0.5 animate-pulse" />
                                     )}
                                 </>
                             ) : phase === StreamingPhase.ExtractingAnswer ? (
-                                <span className="text-slate-600 italic">Generating answer...</span>
+                                <span className="text-slate-500 italic">Generating answer...</span>
                             ) : (
-                                <span className="text-slate-600 italic">Waiting...</span>
+                                <span className="text-slate-500 italic">Waiting...</span>
                             )}
                         </div>
                     </div>
@@ -209,20 +209,20 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
     }
 
     return (
-        <div className="bg-gradient-to-br from-indigo-950/40 to-slate-900/80 backdrop-blur-sm rounded-xl border border-indigo-500/30 overflow-hidden shadow-lg shadow-indigo-500/5">
+        <div className="bg-gradient-to-br from-slate-950/60 via-slate-950/40 to-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800/70 overflow-hidden shadow-2xl shadow-slate-950/40">
             {/* Header */}
-            <div className="bg-slate-950/50 p-3 border-b border-indigo-500/20 flex items-center gap-3">
-                <Loader className="w-4 h-4 text-indigo-400 animate-spin" />
-                <span className="text-xs font-medium text-indigo-300">
+            <div className="bg-slate-950/70 p-3 border-b border-slate-800/70 flex items-center gap-3">
+                <Loader className="w-4 h-4 text-sky-300 animate-spin" />
+                <span className="text-xs font-medium text-slate-100">
                     Processing Message {currentMessageIndex + 1} of {totalMessages}
                 </span>
-                <span className="text-[10px] text-slate-500 ml-auto font-mono capitalize">
+                <span className="text-[10px] text-slate-400 ml-auto font-mono capitalize">
                     {phase.replace(/_/g, ' ')}
                 </span>
                 {onHalt && isStreaming && (
                     <button
                         onClick={() => onHalt(streamState.id)}
-                        className="ml-2 text-amber-400 hover:text-amber-300 transition-colors"
+                        className="ml-2 text-amber-300 hover:text-amber-200 transition-colors"
                         title="Halt"
                     >
                         <Square className="w-4 h-4" />
@@ -231,7 +231,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                 {onDelete && (
                     <button
                         onClick={() => onDelete(streamState.id)}
-                        className="ml-2 text-slate-500 hover:text-red-400 transition-colors"
+                        className="ml-2 text-slate-400 hover:text-red-300 transition-colors"
                         title="Remove"
                     >
                         <X className="w-4 h-4" />
@@ -252,15 +252,15 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                 {/* Current assistant response - streaming */}
                 {(phase === StreamingPhase.WaitingForResponse || phase === StreamingPhase.ExtractingReasoning || phase === StreamingPhase.ExtractingAnswer) && (
                     <div className="flex gap-3">
-                        <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-emerald-500/20 text-emerald-400">
+                        <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-slate-900/60 text-slate-100 ring-1 ring-slate-700/50">
                             <Bot className="w-3.5 h-3.5" />
                         </div>
                         <div className="flex-1 max-w-[85%]">
-                            <div className="inline-block w-full text-left rounded-lg px-3 py-2 text-xs leading-relaxed bg-slate-800 text-slate-200 border border-emerald-500/30">
+                            <div className="inline-block w-full text-left rounded-lg px-3 py-2 text-xs leading-relaxed bg-slate-950/70 text-slate-100 border border-slate-800/70">
 
                                 {/* Waiting state */}
                                 {phase === StreamingPhase.WaitingForResponse && (
-                                    <div className="flex items-center gap-2 text-slate-400">
+                                    <div className="flex items-center gap-2 text-slate-300">
                                         <Loader className="w-3 h-3 animate-spin" />
                                         <span>Generating response...</span>
                                     </div>
@@ -269,18 +269,18 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                 {/* Extracting reasoning */}
                                 {phase === StreamingPhase.ExtractingReasoning && (
                                     <>
-                                        <div className="flex items-center gap-1 text-[9px] text-emerald-400 uppercase font-bold mb-1">
+                                        <div className="flex items-center gap-1 text-[9px] text-sky-300 uppercase font-bold mb-1">
                                             <Sparkles className="w-2.5 h-2.5 animate-pulse" />
                                             Reasoning...
                                         </div>
-                                        <div className="bg-slate-900/50 border border-emerald-500/20 rounded p-2 mb-2">
+                                        <div className="bg-slate-950/60 border border-slate-800/70 rounded p-2 mb-2">
                                             {currentReasoning ? (
                                                 <>
                                                     <ReasoningHighlighter text={currentReasoning} />
-                                                    <span className="inline-block w-1.5 h-3 bg-emerald-400/60 ml-0.5 animate-pulse" />
+                                                    <span className="inline-block w-1.5 h-3 bg-sky-400/60 ml-0.5 animate-pulse" />
                                                 </>
                                             ) : (
-                                                <span className="text-slate-500 italic">Extracting reasoning...</span>
+                                                <span className="text-slate-400 italic">Extracting reasoning...</span>
                                             )}
                                         </div>
                                     </>
@@ -294,14 +294,14 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                             <div className="mb-2">
                                                 <button
                                                     onClick={() => toggleReasoning(-1)}
-                                                    className="flex items-center gap-1 text-[9px] text-slate-500 hover:text-slate-400 uppercase font-bold"
+                                                    className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-slate-300 uppercase font-bold"
                                                 >
                                                     <Sparkles className="w-2.5 h-2.5" />
                                                     Reasoning Complete
                                                     {expandedReasoning.has(-1) ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
                                                 </button>
                                                 {expandedReasoning.has(-1) && (
-                                                    <div className="mt-2 bg-slate-900/50 border border-slate-800 rounded p-2">
+                                                    <div className="mt-2 bg-slate-950/60 border border-slate-800/70 rounded p-2">
                                                         <ReasoningHighlighter text={currentReasoning} />
                                                     </div>
                                                 )}
@@ -313,14 +313,14 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                             <p className="whitespace-pre-wrap">{originalAnswer}</p>
                                         ) : (
                                             <p className="whitespace-pre-wrap">
-                                                {currentAnswer || <span className="text-slate-500 italic">Generating answer...</span>}
-                                                {currentAnswer && <span className="inline-block w-1.5 h-3 bg-emerald-400/60 ml-0.5 animate-pulse" />}
+                                                {currentAnswer || <span className="text-slate-400 italic">Generating answer...</span>}
+                                                {currentAnswer && <span className="inline-block w-1.5 h-3 bg-sky-400/60 ml-0.5 animate-pulse" />}
                                             </p>
                                         )}
                                     </>
                                 )}
                             </div>
-                            <div className="text-[8px] text-emerald-400 uppercase font-bold mt-0.5 ml-1 flex items-center gap-1">
+                            <div className="text-[8px] text-sky-300 uppercase font-bold mt-0.5 ml-1 flex items-center gap-1">
                                 <Loader className="w-2 h-2 animate-spin" /> Streaming
                             </div>
                         </div>

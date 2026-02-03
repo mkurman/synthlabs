@@ -17,7 +17,7 @@ export default function ControlPanel({
     children
 }: ControlPanelProps) {
     return (
-        <aside className="w-80 bg-slate-900 border-l border-slate-800 flex flex-col overflow-hidden">
+        <aside className="w-80 bg-slate-950/70 border-l border-slate-800/70 flex flex-col overflow-hidden">
             {/* Session Controls */}
             <SessionControls
                 currentSession={currentSession}
@@ -29,7 +29,7 @@ export default function ControlPanel({
             <div className="flex-1 overflow-y-auto p-4">
                 {children || (
                     <div className="flex items-center justify-center h-full">
-                        <div className="text-center text-slate-500 text-sm">
+                        <div className="text-center text-slate-400 text-sm">
                             <p>No session selected</p>
                             <p className="text-xs mt-1">Create a new session to get started</p>
                         </div>

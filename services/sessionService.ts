@@ -93,7 +93,8 @@ export const SessionService = {
         session: Partial<SessionData>,
         savedSessionUid: string | undefined,
         setters: SessionSetters,
-        callbacks: { setSessionUid?: (uid: string) => void; setError?: (error: string | null) => void }
+        callbacks: { setSessionUid?: (uid: string) => void; setError?: (error: string | null) => void },
+        options?: { preserveEnvironment?: boolean }
     ): void {
         try {
             // Restore sessionUid if provided (for cloud sessions)
@@ -107,7 +108,9 @@ export const SessionService = {
                 // Restore each configuration field if present
                 if (c.appMode !== undefined) setters.setAppMode(c.appMode);
                 if (c.engineMode !== undefined) setters.setEngineMode(c.engineMode);
-                if (c.environment !== undefined) setters.setEnvironment(c.environment);
+                if (!options?.preserveEnvironment && c.environment !== undefined) {
+                    setters.setEnvironment(c.environment);
+                }
                 if (c.provider !== undefined) setters.setProvider(c.provider);
                 if (c.externalProvider !== undefined) setters.setExternalProvider(c.externalProvider);
                 if (c.externalApiKey !== undefined) setters.setExternalApiKey(c.externalApiKey);
@@ -284,7 +287,8 @@ export const SessionService = {
             throw new Error('Firebase not configured');
         }
 
-        return await FirebaseService.getSessionsFromFirebase();
+        const { sessions } = await FirebaseService.getSessionsFromFirebase();
+        return sessions;
     },
 
     /**

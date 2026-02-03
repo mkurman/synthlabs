@@ -1,10 +1,11 @@
-import { ExternalProvider, ChatMessage, ApiType, ProviderType } from '../types';
+import { ExternalProvider, ApiType, ProviderType } from '../types';
+import type { ChatMessage, ChatUsageSummary } from '../types';
 import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 import { ToolExecutor } from './toolService';
 import { ChatRole } from '../interfaces/enums';
 
-export type { ChatMessage };
+export type { ChatMessage, ChatUsageSummary };
 
 export interface ToolCall {
     id: string;

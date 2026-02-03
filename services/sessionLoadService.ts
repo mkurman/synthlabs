@@ -12,6 +12,7 @@ import { logger } from '../utils/logger';
 import { DataSource } from '../types';
 import { CreatorMode, Environment } from '../interfaces/enums';
 import { toast } from './toastService';
+import type { SessionListFilters } from '../types';
 
 // Interface for a lightweight session list item
 export interface SessionSummary {
@@ -31,19 +32,58 @@ class SessionLoadService {
     private cache: Map<string, SessionData> = new Map();
     private listCache: SessionData[] | null = null;
     private listCacheTimestamp: number = 0;
-    private CACHE_DURATION = 60 * 1000; // 1 minute cache for lists
+    private listCacheEnvironment: Environment | null = null;
+    private listCursor: string | null = null;
+    private listHasMore: boolean = true;
+    private CACHE_DURATION = Number(import.meta.env.VITE_SESSION_LIST_TTL_MS || 60000);
+    private PAGE_SIZE = Number(import.meta.env.VITE_SESSION_LIST_PAGE_SIZE || 50);
+
+    // Deduplication: track pending requests per environment
+    private pendingListRequest: Map<Environment, Promise<SessionData[]>> = new Map();
 
     /**
      * Load the list of available sessions.
      * Merges cloud sessions and local sessions.
+     * Deduplicates concurrent calls for the same environment.
      */
-    async loadSessionList(forceRefresh = false, environment: Environment): Promise<SessionData[]> {
-        if (!forceRefresh && this.listCache && (Date.now() - this.listCacheTimestamp < this.CACHE_DURATION)) {
-            return this.listCache;
+    async loadSessionList(forceRefresh = false, environment: Environment, filters?: SessionListFilters): Promise<SessionData[]> {
+        // Check cache validity (must match environment)
+        const cacheValid = !forceRefresh
+            && this.listCache
+            && this.listCacheEnvironment === environment
+            && (Date.now() - this.listCacheTimestamp < this.CACHE_DURATION)
+            && !filters;
+
+        if (cacheValid) {
+            return this.listCache!;
         }
 
+        // Deduplicate: if there's already a pending request for this environment, wait for it
+        const pendingRequest = this.pendingListRequest.get(environment);
+        if (pendingRequest) {
+            return pendingRequest;
+        }
+
+        // Create and track the new request
+        const request = this.doLoadSessionList(environment, filters, forceRefresh);
+        this.pendingListRequest.set(environment, request);
+
+        try {
+            return await request;
+        } finally {
+            // Clean up pending request tracking
+            this.pendingListRequest.delete(environment);
+        }
+    }
+
+    /**
+     * Internal method that actually loads sessions.
+     */
+    private async doLoadSessionList(environment: Environment, filters?: SessionListFilters, forceRefresh?: boolean): Promise<SessionData[]> {
         try {
             const summaries: SessionData[] = [];
+            this.listCursor = null;
+            this.listHasMore = true;
 
             // 1. Load Cloud Sessions (only if configured and explicitly not disabled, or if we want to mix)
             // CURRENT LOGIC: Mix both if available.
@@ -52,8 +92,10 @@ class SessionLoadService {
                     if (!isFirebaseConfigured()) {
                         throw new Error('Firebase is not configured');
                     }
-                    const cloudSessions = await getSessionsFromFirebase();
-                    summaries.push(...cloudSessions);
+                    const { sessions, nextCursor, hasMore } = await getSessionsFromFirebase(filters, null, this.PAGE_SIZE, forceRefresh);
+                    summaries.push(...sessions);
+                    this.listCursor = nextCursor || null;
+                    this.listHasMore = Boolean(hasMore);
                 } catch (e) {
                     logger.warn('Failed to load cloud sessions', e);
                     toast.error('Failed to load cloud sessions');
@@ -68,7 +110,9 @@ class SessionLoadService {
                     // Filter out local sessions that might be duplicates of cloud ones if needed?
                     // For now, assume IDs are unique enough or user manages them.
 
-                    summaries.push(...localSessions);
+                    const filteredLocal = filters ? applySessionFilters(localSessions, filters) : localSessions;
+                    summaries.push(...filteredLocal);
+                    this.listHasMore = false;
                 } catch (e) {
                     logger.warn('Failed to load local sessions', e);
                     toast.error('Failed to load local sessions');
@@ -80,10 +124,43 @@ class SessionLoadService {
 
             this.listCache = summaries;
             this.listCacheTimestamp = Date.now();
+            this.listCacheEnvironment = environment;
             return summaries;
         } catch (e) {
             logger.error('Failed to load session list', e);
             return []; // Return empty list on error
+        }
+    }
+
+    async loadMoreSessions(environment: Environment, filters?: SessionListFilters): Promise<SessionData[]> {
+        if (environment !== Environment.Production) {
+            return [];
+        }
+        if (!this.listHasMore) {
+            return [];
+        }
+        const cursor = this.listCursor;
+        const { sessions, nextCursor, hasMore } = await getSessionsFromFirebase(filters, cursor, this.PAGE_SIZE);
+        this.listCursor = nextCursor || null;
+        this.listHasMore = Boolean(hasMore);
+        const merged = [...(this.listCache || []), ...sessions];
+        this.listCache = merged;
+        this.listCacheTimestamp = Date.now();
+        return sessions;
+    }
+
+    hasMoreSessions(): boolean {
+        return this.listHasMore;
+    }
+
+    /**
+     * Invalidate list cache for a specific environment or all.
+     */
+    invalidateListCache(environment?: Environment) {
+        if (!environment || this.listCacheEnvironment === environment) {
+            this.listCache = null;
+            this.listCacheTimestamp = 0;
+            this.listCacheEnvironment = null;
         }
     }
 
@@ -148,6 +225,7 @@ class SessionLoadService {
         this.cache.clear();
         this.listCache = null;
         this.listCacheTimestamp = 0;
+        this.listCacheEnvironment = null;
     }
 
     /**
@@ -174,5 +252,30 @@ class SessionLoadService {
         }
     }
 }
+
+const getRowCount = (session: SessionData): number => {
+    return session.logCount ?? session.itemCount ?? 0;
+};
+
+const applySessionFilters = (sessions: SessionData[], filters: SessionListFilters): SessionData[] => {
+    const searchTerm = filters.search.trim().toLowerCase();
+    const modelTerm = filters.model.trim().toLowerCase();
+    return sessions.filter(session => {
+        const rowCount = getRowCount(session);
+        if (filters.onlyWithLogs && rowCount <= 0) return false;
+        if (filters.minRows !== null && rowCount < filters.minRows) return false;
+        if (filters.maxRows !== null && rowCount > filters.maxRows) return false;
+        const resolvedAppMode = session.config?.appMode;
+        const resolvedEngineMode = session.config?.engineMode;
+        if (filters.appMode && resolvedAppMode !== filters.appMode) return false;
+        if (filters.engineMode && resolvedEngineMode !== filters.engineMode) return false;
+        if (searchTerm && !(session.name || '').toLowerCase().includes(searchTerm)) return false;
+        if (modelTerm) {
+            const model = (session.config?.externalModel || '').toLowerCase();
+            if (!model.includes(modelTerm)) return false;
+        }
+        return true;
+    });
+};
 
 export const sessionLoadService = new SessionLoadService();

@@ -1,9 +1,25 @@
 import { initializeApp, getApps, deleteApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, updateDoc, increment, getDoc, setDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, Firestore, getDocs, query, orderBy, deleteDoc, doc, getCountFromServer, where, limit, writeBatch, updateDoc, increment, getDoc, setDoc, startAfter, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 
-// ... (existing imports)
+import { SynthLogItem, FirebaseConfig, VerifierItem, SessionListFilters } from '../types';
+import { CloudSessionResult, SessionData } from '../interfaces/services/SessionConfig';
+import { SessionVerificationStatus } from '../interfaces/enums/SessionVerificationStatus';
+import * as backendClient from './backendClient';
+import * as jobStorageService from './jobStorageService';
+import { logger } from '../utils/logger';
 
 export const fetchLogItem = async (logId: string): Promise<VerifierItem | null> => {
+    if (backendClient.isBackendEnabled()) {
+        const log = await backendClient.fetchLog(logId);
+        if (!log) return null;
+        const logData = log as SynthLogItem & { id: string };
+        return {
+            ...logData,
+            id: logData.id,
+            score: logData.score || 0,
+            hasUnsavedChanges: false
+        };
+    }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
@@ -25,9 +41,6 @@ export const fetchLogItem = async (logId: string): Promise<VerifierItem | null> 
         throw e;
     }
 };
-import { SynthLogItem, FirebaseConfig, VerifierItem } from '../types';
-import { CloudSessionResult, SessionData } from '../interfaces/services/SessionConfig';
-import { logger } from '../utils/logger';
 
 let db: Firestore | null = null;
 let app: FirebaseApp | null = null;
@@ -166,7 +179,7 @@ if (envConfig.apiKey) {
     initializeFirebase(envConfig);
 }
 
-export const isFirebaseConfigured = () => !!db;
+export const isFirebaseConfigured = () => backendClient.isBackendEnabled() || !!db;
 
 // Wait for any pending initialization before saving (with timeout)
 const ensureInitialized = async (): Promise<boolean> => {
@@ -181,6 +194,44 @@ const ensureInitialized = async (): Promise<boolean> => {
 };
 
 export const saveLogToFirebase = async (log: SynthLogItem, collectionName: string = 'synth_logs') => {
+    if (backendClient.isBackendEnabled()) {
+        const docData: any = {
+            sessionUid: log.sessionUid || 'unknown',
+            source: log.source,
+            seed_preview: log.seed_preview,
+            full_seed: log.full_seed,
+            query: log.query,
+            reasoning: log.reasoning,
+            reasoning_content: log.reasoning_content,
+            answer: log.answer,
+            timestamp: log.timestamp,
+            duration: log.duration || 0,
+            tokenCount: log.tokenCount || 0,
+            modelUsed: log.modelUsed,
+            createdAt: log.timestamp
+        };
+        if (log.deepMetadata) {
+            const cleanMetadata: any = { ...log.deepMetadata };
+            Object.keys(cleanMetadata).forEach(key => {
+                if (cleanMetadata[key] === undefined) {
+                    delete cleanMetadata[key];
+                }
+            });
+            docData.deepMetadata = cleanMetadata;
+        }
+        if (log.deepTrace) {
+            docData.deepTrace = log.deepTrace;
+        }
+        if (log.messages && log.messages.length > 0) {
+            docData.messages = log.messages;
+            docData.isMultiTurn = true;
+        }
+        if (log.sessionName) {
+            docData.sessionName = log.sessionName;
+        }
+        await backendClient.createLog(sanitizeForFirestore(docData) as unknown as Record<string, unknown>);
+        return;
+    }
     // Wait for initialization to complete
     const isReady = await ensureInitialized();
     if (!isReady || !db) {
@@ -282,6 +333,10 @@ export const saveLogToFirebase = async (log: SynthLogItem, collectionName: strin
 };
 
 export const updateLogItem = async (logId: string, updates: Partial<SynthLogItem>) => {
+    if (backendClient.isBackendEnabled()) {
+        await backendClient.updateLog(logId, updates as Record<string, unknown>);
+        return;
+    }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
 
@@ -297,7 +352,13 @@ export const updateLogItem = async (logId: string, updates: Partial<SynthLogItem
     }
 };
 
+export const isDbEnabled = () => backendClient.isBackendEnabled() || isFirebaseConfigured();
+
 export const deleteLogItem = async (logId: string) => {
+    if (backendClient.isBackendEnabled()) {
+        await backendClient.deleteLog(logId);
+        return;
+    }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
 
@@ -311,6 +372,17 @@ export const deleteLogItem = async (logId: string) => {
 };
 
 export const getDbStats = async (currentSessionUid?: string): Promise<{ total: number, session: number }> => {
+    // Use backend API if enabled
+    if (backendClient.isBackendEnabled()) {
+        try {
+            return await backendClient.fetchDbStats(currentSessionUid);
+        } catch (e) {
+            console.error("Failed to fetch DB stats from backend", e);
+            return { total: 0, session: 0 };
+        }
+    }
+
+    // Fall back to direct Firebase
     await ensureInitialized();
     if (!db) return { total: 0, session: 0 };
     try {
@@ -410,17 +482,30 @@ export const createSessionInFirebase = async (name?: string, source?: string, co
     }
 };
 
-export const getSessionsFromFirebase = async (): Promise<SessionData[]> => {
+export const getSessionsFromFirebase = async (
+    filters?: SessionListFilters,
+    cursor?: string | null,
+    limit?: number,
+    forceRefresh?: boolean
+): Promise<{ sessions: SessionData[]; nextCursor?: string | null; hasMore?: boolean }> => {
+    if (backendClient.isBackendEnabled()) {
+        const result = await backendClient.fetchSessions(filters, cursor, limit, forceRefresh);
+        return {
+            sessions: result.sessions as SessionData[],
+            nextCursor: result.nextCursor,
+            hasMore: result.hasMore
+        };
+    }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
         const q = query(collection(db, 'synth_sessions'), orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
-        // Only extract minimal fields - avoid spreading large config objects
-        return snapshot.docs.map(d => {
+        const sessions = snapshot.docs.map(d => {
             const data = d.data();
             return { ...data, id: d.id } as SessionData;
         });
+        return { sessions };
     } catch (e) {
         console.error("Error fetching sessions", e);
         throw e;
@@ -438,7 +523,82 @@ export const deleteSessionFromFirebase = async (id: string) => {
     }
 };
 
+export const updateSessionVerificationStatus = async (sessionId: string, status: SessionVerificationStatus) => {
+    if (backendClient.isBackendEnabled()) {
+        await backendClient.updateSessionVerificationStatus(sessionId, status);
+        return;
+    }
+    await ensureInitialized();
+    if (!db) throw new Error("Firebase not initialized");
+    try {
+        await updateDoc(doc(db, 'synth_sessions', sessionId), {
+            verificationStatus: status,
+            updatedAt: Date.now()
+        });
+    } catch (e) {
+        console.error("Error updating session verification status", e);
+        throw e;
+    }
+};
+
+export const deleteSessionWithLogs = async (sessionId: string): Promise<{ deletedLogs: number }> => {
+    if (backendClient.isBackendEnabled()) {
+        return backendClient.deleteSessionWithLogs(sessionId);
+    }
+    await ensureInitialized();
+    if (!db) throw new Error("Firebase not initialized");
+    try {
+        let deletedLogs = 0;
+        let lastDoc: any = null;
+        const logsCollection = collection(db, 'synth_logs');
+
+        while (true) {
+            const constraints: any[] = [
+                where('sessionUid', '==', sessionId),
+                orderBy('createdAt', 'desc'),
+                limit(500)
+            ];
+            if (lastDoc) {
+                constraints.push(startAfter(lastDoc));
+            }
+
+            const q = query(logsCollection, ...constraints);
+            const snapshot = await getDocs(q);
+            if (snapshot.empty) {
+                break;
+            }
+
+            const batch = writeBatch(db);
+            snapshot.docs.forEach(docSnap => {
+                batch.delete(docSnap.ref);
+            });
+            await batch.commit();
+
+            deletedLogs += snapshot.size;
+            lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        }
+
+        await deleteDoc(doc(db, 'synth_sessions', sessionId));
+
+        return { deletedLogs };
+    } catch (e) {
+        console.error("Error deleting session with logs", e);
+        throw e;
+    }
+};
+
 export const loadFromCloud = async (sessionId: string): Promise<CloudSessionResult | null> => {
+    if (backendClient.isBackendEnabled()) {
+        const data = await backendClient.fetchSession(sessionId) as SessionData;
+        if (!data) return null;
+        const sessionUid = (data as any).sessionUid || (data as any).id;
+        return {
+            id: (data as any).id || sessionId,
+            name: (data as any).name || 'Unknown Session',
+            sessionData: data,
+            sessionUid
+        };
+    }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
@@ -488,6 +648,10 @@ export const loadFromCloud = async (sessionId: string): Promise<CloudSessionResu
 // --- Verifier Functions ---
 
 export const fetchAllLogs = async (limitCount?: number, sessionUid?: string): Promise<VerifierItem[]> => {
+    if (backendClient.isBackendEnabled()) {
+        const logs = await backendClient.fetchLogs(sessionUid, limitCount ?? 200);
+        return logs as VerifierItem[];
+    }
     return fetchLogsAfter({ limitCount, sessionUid });
 };
 
@@ -496,6 +660,10 @@ export const fetchLogsAfter = async (options: {
     sessionUid?: string;
     lastDoc?: any; // QueryDocumentSnapshot
 }): Promise<VerifierItem[]> => {
+    if (backendClient.isBackendEnabled()) {
+        const logs = await backendClient.fetchLogs(options.sessionUid, options.limitCount ?? 200);
+        return logs as VerifierItem[];
+    }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
     try {
@@ -591,11 +759,30 @@ export interface OrphanedLogsInfo {
     scannedCount?: number;    // How many logs we scanned
 }
 
+export interface OrphanScanProgress {
+    scannedCount: number;
+    orphanedSessionCount: number;
+    totalOrphanedLogs: number;
+}
+
 // Check if there are orphaned logs (logs with sessionUids not in synth_sessions)
 // Uses chunked scanning to avoid OOM - stops early when orphans are found
-const ORPHAN_SCAN_CHUNK_SIZE = 100;
+const ORPHAN_SCAN_CHUNK_SIZE = 50;
+const ORPHAN_SCAN_MAX_LOGS = 50000;
+const ORPHANED_LOGS_DEFAULT_COUNT_PER_SESSION = 1;
 
-export const getOrphanedLogsInfo = async (): Promise<OrphanedLogsInfo> => {
+export const getOrphanedLogsInfo = async (onProgress?: (progress: OrphanScanProgress) => void): Promise<OrphanedLogsInfo> => {
+    if (backendClient.isBackendEnabled()) {
+        const result = await backendClient.checkOrphans() as OrphanedLogsInfo;
+        if (onProgress) {
+            onProgress({
+                scannedCount: result.scannedCount || 0,
+                orphanedSessionCount: result.orphanedSessionCount || 0,
+                totalOrphanedLogs: result.totalOrphanedLogs || 0
+            });
+        }
+        return result;
+    }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
 
@@ -645,7 +832,7 @@ export const getOrphanedLogsInfo = async (): Promise<OrphanedLogsInfo> => {
 
             // Process this chunk
             snapshot.docs.forEach(d => {
-                const data = d.data();
+                const data = d.data() as { sessionUid?: string };
                 const uid = data.sessionUid || 'unknown';
 
                 if (uid !== 'unknown' && !existingSessionUids.has(uid)) {
@@ -655,7 +842,10 @@ export const getOrphanedLogsInfo = async (): Promise<OrphanedLogsInfo> => {
             });
 
             // Check if we should continue
-            if (snapshot.docs.length < ORPHAN_SCAN_CHUNK_SIZE) {
+            if (scannedCount >= ORPHAN_SCAN_MAX_LOGS) {
+                logger.warn(`Orphan scan stopped after ${scannedCount} logs to avoid memory pressure.`);
+                hasMore = false;
+            } else if (snapshot.docs.length < ORPHAN_SCAN_CHUNK_SIZE) {
                 hasMore = false;
             } else if (orphanedUids.size > 0) {
                 // Found orphans - stop early to save memory
@@ -664,6 +854,22 @@ export const getOrphanedLogsInfo = async (): Promise<OrphanedLogsInfo> => {
             } else {
                 lastDoc = snapshot.docs[snapshot.docs.length - 1];
             }
+
+            let totalOrphanedLogs = 0;
+            logCounts.forEach(count => {
+                totalOrphanedLogs += count;
+            });
+            if (totalOrphanedLogs === 0 && orphanedUids.size > 0) {
+                totalOrphanedLogs = orphanedUids.size * ORPHANED_LOGS_DEFAULT_COUNT_PER_SESSION;
+            }
+            onProgress?.({
+                scannedCount,
+                orphanedSessionCount: orphanedUids.size,
+                totalOrphanedLogs
+            });
+
+            // Yield to keep UI responsive during large scans
+            await new Promise(resolve => setTimeout(resolve, 0));
         }
 
         // Calculate totals
@@ -671,13 +877,16 @@ export const getOrphanedLogsInfo = async (): Promise<OrphanedLogsInfo> => {
         logCounts.forEach(count => {
             totalOrphanedLogs += count;
         });
+        if (totalOrphanedLogs === 0 && orphanedUids.size > 0) {
+            totalOrphanedLogs = orphanedUids.size * ORPHANED_LOGS_DEFAULT_COUNT_PER_SESSION;
+        }
 
         return {
             hasOrphanedLogs: orphanedUids.size > 0,
             orphanedSessionCount: orphanedUids.size,
             totalOrphanedLogs,
             orphanedUids: Array.from(orphanedUids),
-            isPartialScan: orphanedUids.size > 0,  // We stopped early
+            isPartialScan: scannedCount >= ORPHAN_SCAN_MAX_LOGS || orphanedUids.size > 0,  // We stopped early or hit cap
             scannedCount
         };
     } catch (e) {
@@ -696,15 +905,47 @@ export interface SyncResult {
     sessionsCreated: number;
     logsAssigned: number;
     orphanedUids: string[];
+    isPartialScan?: boolean;
+    scannedCount?: number;
+}
+
+export interface OrphanSyncProgress {
+    phase: 'scan' | 'reassign';
+    scannedCount: number;
+    orphanedSessions: number;
+    updatedLogs: number;
 }
 
 // Chunk size for sync operation
-const SYNC_CHUNK_SIZE = 100;
-const BATCH_WRITE_LIMIT = 450;  // Firestore limit is 500, leave some margin
+const SYNC_CHUNK_SIZE = 200;
+const BATCH_WRITE_LIMIT = 200;  // Smaller batches reduce memory pressure in the browser.
+const SYNC_MAX_LOG_UPDATES = 20000; // Hard cap per sync run to avoid OOM.
 
 // Find orphaned synth_logs (logs with sessionUids not in synth_sessions) and create sessions for them
-// Uses chunked scanning to avoid OOM
-export const syncOrphanedLogsToSessions = async (): Promise<SyncResult> => {
+// Uses chunked scanning with on-the-fly updates to avoid OOM
+export const syncOrphanedLogsToSessions = async (onProgress?: (progress: OrphanSyncProgress) => void): Promise<SyncResult> => {
+    if (backendClient.isBackendEnabled()) {
+        const jobId = await backendClient.startOrphanSync();
+        await jobStorageService.addJob({ id: jobId, type: 'orphan-sync', createdAt: Date.now() });
+        const result = await backendClient.pollJob(jobId, (progress) => {
+            onProgress?.({
+                phase: 'reassign',
+                scannedCount: progress.scannedCount,
+                orphanedSessions: progress.orphanedSessions,
+                updatedLogs: progress.updatedLogs
+            });
+        }) as SyncResult;
+        await jobStorageService.removeJob(jobId);
+        if (onProgress) {
+            onProgress({
+                phase: 'reassign',
+                scannedCount: result.scannedCount || 0,
+                orphanedSessions: result.orphanedUids?.length || 0,
+                updatedLogs: result.logsAssigned || 0
+            });
+        }
+        return result;
+    }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");
 
@@ -729,127 +970,152 @@ export const syncOrphanedLogsToSessions = async (): Promise<SyncResult> => {
 
         logger.log(`Found ${existingSessionUids.size} existing sessions`);
 
-        // 2. Scan logs in chunks and collect orphaned session info
-        const logGroups = new Map<string, {
-            count: number;
-            earliestTimestamp: string;
-            source?: string;
-            sessionName?: string;
-        }>();
+        // 2. Scan logs in chunks and update orphaned logs on the fly
+        const orphanedSessionUids = new Set<string>();
+        let recoveredSessionId: string | null = null;
+        const recoveredName = `Recovered Orphaned Logs ${new Date().toLocaleString()}`;
 
-        let lastDoc: any = null;
+        let lastDoc: QueryDocumentSnapshot<DocumentData> | null = null;
         let hasMore = true;
         let scannedCount = 0;
+        let totalUpdated = 0;
+        let shouldStop = false;
 
         while (hasMore) {
-            // Build query with pagination
-            let q;
-            if (lastDoc) {
-                const { startAfter: startAfterFn } = await import('firebase/firestore');
-                q = query(
+            const q = lastDoc
+                ? query(
                     collection(db!, 'synth_logs'),
-                    orderBy('createdAt', 'asc'),  // Ascending to find earliest timestamp
-                    startAfterFn(lastDoc),
+                    orderBy('createdAt', 'asc'),
+                    startAfter(lastDoc),
                     limit(SYNC_CHUNK_SIZE)
-                );
-            } else {
-                q = query(
+                )
+                : query(
                     collection(db!, 'synth_logs'),
                     orderBy('createdAt', 'asc'),
                     limit(SYNC_CHUNK_SIZE)
                 );
-            }
 
             const snapshot = await getDocs(q);
+            if (snapshot.empty) {
+                break;
+            }
+
             scannedCount += snapshot.docs.length;
-
-            // Process this chunk - only track orphaned UIDs
-            snapshot.docs.forEach(d => {
-                const data = d.data();
+            const orphanedDocs = snapshot.docs.filter(docSnap => {
+                const data = docSnap.data() as { sessionUid?: string };
                 const uid = data.sessionUid || 'unknown';
-                const timestamp = data.createdAt || data.timestamp || new Date().toISOString();
-
-                // Only track if it's a potential orphan
                 if (uid !== 'unknown' && !existingSessionUids.has(uid)) {
-                    if (logGroups.has(uid)) {
-                        const group = logGroups.get(uid)!;
-                        group.count++;
-                        if (timestamp < group.earliestTimestamp) {
-                            group.earliestTimestamp = timestamp;
-                        }
-                    } else {
-                        logGroups.set(uid, {
-                            count: 1,
-                            earliestTimestamp: timestamp,
-                            source: data.source,
-                            sessionName: data.sessionName
-                        });
-                    }
+                    orphanedSessionUids.add(uid);
+                    return true;
                 }
+                return false;
             });
 
-            // Check if we should continue
+            onProgress?.({
+                phase: 'scan',
+                scannedCount,
+                orphanedSessions: orphanedSessionUids.size,
+                updatedLogs: totalUpdated
+            });
+
+            if (orphanedDocs.length > 0) {
+                if (!recoveredSessionId) {
+                    recoveredSessionId = await createSessionInFirebase(recoveredName, 'orphaned', undefined);
+                    result.sessionsCreated = 1;
+                }
+
+                for (let i = 0; i < orphanedDocs.length; i += BATCH_WRITE_LIMIT) {
+                    if (totalUpdated >= SYNC_MAX_LOG_UPDATES) {
+                        shouldStop = true;
+                        break;
+                    }
+                    const batchDocs = orphanedDocs.slice(i, i + BATCH_WRITE_LIMIT);
+                    const batch = writeBatch(db);
+                    batchDocs.forEach(docSnap => {
+                        batch.update(docSnap.ref, {
+                            sessionUid: recoveredSessionId,
+                            sessionName: recoveredName
+                        });
+                    });
+                    await batch.commit();
+                    totalUpdated += batchDocs.length;
+                    onProgress?.({
+                        phase: 'reassign',
+                        scannedCount,
+                        orphanedSessions: orphanedSessionUids.size,
+                        updatedLogs: totalUpdated
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+            }
+
+            lastDoc = snapshot.docs[snapshot.docs.length - 1];
             if (snapshot.docs.length < SYNC_CHUNK_SIZE) {
                 hasMore = false;
-            } else {
-                lastDoc = snapshot.docs[snapshot.docs.length - 1];
             }
 
-            logger.log(`Scanned ${scannedCount} logs, found ${logGroups.size} orphaned sessions so far`);
-        }
-
-        // 3. Get list of orphaned UIDs
-        const orphanedUids = Array.from(logGroups.keys());
-        result.orphanedUids = orphanedUids;
-        logger.log(`Found ${orphanedUids.length} orphaned session UIDs total`);
-
-        if (orphanedUids.length === 0) {
-            return result;
-        }
-
-        // 4. Create sessions in batches (Firestore has 500 operation limit per batch)
-        let currentBatch = writeBatch(db);
-        let batchCount = 0;
-
-        for (const uid of orphanedUids) {
-            const group = logGroups.get(uid)!;
-            const sessionRef = doc(db, 'synth_sessions', uid);
-
-            const sessionData = {
-                name: group.sessionName || `Recovered Session ${new Date(group.earliestTimestamp).toLocaleDateString()}`,
-                source: group.source || 'unknown',
-                createdAt: group.earliestTimestamp,
-                sessionUid: uid,
-                logCount: group.count,
-                isAutoRecovered: true,
-                isAutoCreated: true
-            };
-
-            currentBatch.set(sessionRef, sessionData);
-            result.sessionsCreated++;
-            result.logsAssigned += group.count;
-            batchCount++;
-
-            // Commit batch if we hit the limit
-            if (batchCount >= BATCH_WRITE_LIMIT) {
-                await currentBatch.commit();
-                logger.log(`Committed batch of ${batchCount} sessions`);
-                currentBatch = writeBatch(db);
-                batchCount = 0;
+            if (shouldStop) {
+                break;
             }
+
+            await new Promise(resolve => setTimeout(resolve, 200));
         }
 
-        // Commit remaining batch
-        if (batchCount > 0) {
-            await currentBatch.commit();
-            logger.log(`Committed final batch of ${batchCount} sessions`);
+        result.orphanedUids = Array.from(orphanedSessionUids.values());
+        result.scannedCount = scannedCount;
+        result.logsAssigned = totalUpdated;
+        if (shouldStop) {
+            result.isPartialScan = true;
         }
 
-        logger.log(`Created ${result.sessionsCreated} sessions for ${result.logsAssigned} orphaned logs`);
+        if (recoveredSessionId) {
+            await updateDoc(doc(db, 'synth_sessions', recoveredSessionId), {
+                logCount: totalUpdated,
+                updatedAt: Date.now()
+            });
+            logger.log(`Created 1 recovered session for ${totalUpdated} orphaned logs`);
+        }
 
         return result;
     } catch (e) {
         console.error("Error syncing orphaned logs to sessions", e);
         throw e;
     }
+};
+
+export const resumeOrphanSyncJobs = async (onProgress?: (progress: OrphanSyncProgress) => void): Promise<boolean> => {
+    if (!backendClient.isBackendEnabled()) {
+        return false;
+    }
+    const jobs = await jobStorageService.listJobs();
+    const orphanJobs = jobs.filter(job => job.type === 'orphan-sync');
+    if (orphanJobs.length === 0) {
+        return false;
+    }
+    for (const job of orphanJobs) {
+        const result = await backendClient.pollJob(job.id, (progress) => {
+            onProgress?.({
+                phase: 'reassign',
+                scannedCount: progress.scannedCount,
+                orphanedSessions: progress.orphanedSessions,
+                updatedLogs: progress.updatedLogs
+            });
+        }) as SyncResult;
+        await jobStorageService.removeJob(job.id);
+        onProgress?.({
+            phase: 'reassign',
+            scannedCount: result.scannedCount || 0,
+            orphanedSessions: result.orphanedUids?.length || 0,
+            updatedLogs: result.logsAssigned || 0
+        });
+    }
+    return true;
+};
+
+export const hasOrphanSyncJobs = async (): Promise<boolean> => {
+    if (!backendClient.isBackendEnabled()) {
+        return false;
+    }
+    const jobs = await jobStorageService.listJobs();
+    return jobs.some(job => job.type === 'orphan-sync');
 };

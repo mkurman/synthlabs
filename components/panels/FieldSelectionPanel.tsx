@@ -38,43 +38,43 @@ export default function FieldSelectionPanel({
   }
 
   return (
-    <div className="mt-3 bg-slate-800/50 border border-slate-700 rounded-lg overflow-hidden">
+    <div className="mt-3 bg-slate-900/60 border border-slate-700/70 rounded-lg overflow-hidden">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-3 py-2 flex items-center justify-between bg-slate-800/80 hover:bg-slate-700/80 transition-colors"
+        className="w-full px-3 py-2 flex items-center justify-between bg-slate-900/60 hover:bg-slate-800/70 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-slate-300 font-bold uppercase">
+          <span className="text-[10px] text-slate-200 font-bold uppercase">
             Output Fields
           </span>
-          <span className="text-[9px] text-slate-400 bg-slate-700/50 px-1.5 py-0.5 rounded">
+          <span className="text-[9px] text-slate-300 bg-slate-800/60 px-1.5 py-0.5 rounded">
             {selectedCount}/{totalCount}
           </span>
         </div>
         {isExpanded ? (
-          <ChevronUp className="w-3 h-3 text-slate-400" />
+          <ChevronUp className="w-3 h-3 text-slate-300" />
         ) : (
-          <ChevronDown className="w-3 h-3 text-slate-400" />
+          <ChevronDown className="w-3 h-3 text-slate-300" />
         )}
       </button>
 
       {isExpanded && (
         <div className="p-3 space-y-3">
-          <p className="text-[9px] text-slate-500 leading-relaxed">
+          <p className="text-[9px] text-slate-400 leading-relaxed">
             Uncheck fields you don't want to generate. Unselected fields will use existing values from the data source.
           </p>
 
           {showNativeToggle && (
-            <label className="flex items-center justify-between bg-slate-900/40 border border-slate-800/60 rounded px-2 py-1.5">
-              <div className="text-[9px] text-slate-300">
+            <label className="flex items-center justify-between bg-slate-950/60 border border-slate-800/70 rounded px-2 py-1.5">
+              <div className="text-[9px] text-slate-200">
                 Get native
-                <span className="text-[9px] text-slate-500 ml-1">(ignore schema, parse &lt;think&gt; or reasoning_content)</span>
+                <span className="text-[9px] text-slate-400 ml-1">(ignore schema, parse &lt;think&gt; or reasoning_content)</span>
               </div>
               <input
                 type="checkbox"
                 checked={useNativeOutput}
                 onChange={(e) => onToggleNativeOutput?.(e.target.checked)}
-                className="accent-indigo-500"
+                className="accent-sky-500"
               />
             </label>
           )}
@@ -83,20 +83,20 @@ export default function FieldSelectionPanel({
             <button
               onClick={onSelectAll}
               disabled={allSelected}
-              className="flex items-center gap-1 bg-slate-700/50 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-300 text-[9px] px-2 py-1 rounded transition-colors"
+              className="flex items-center gap-1 bg-slate-800/60 hover:bg-slate-800/70 disabled:opacity-50 disabled:cursor-not-allowed text-slate-200 text-[9px] px-2 py-1 rounded transition-colors"
             >
               <Check className="w-2.5 h-2.5" /> Select All
             </button>
             <button
               onClick={onDeselectAll}
               disabled={noneSelected}
-              className="flex items-center gap-1 bg-slate-700/50 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-300 text-[9px] px-2 py-1 rounded transition-colors"
+              className="flex items-center gap-1 bg-slate-800/60 hover:bg-slate-800/70 disabled:opacity-50 disabled:cursor-not-allowed text-slate-200 text-[9px] px-2 py-1 rounded transition-colors"
             >
               <X className="w-2.5 h-2.5" /> Deselect All
             </button>
             <button
               onClick={onResetToDefault}
-              className="flex items-center gap-1 bg-slate-700/50 hover:bg-slate-700 text-slate-300 text-[9px] px-2 py-1 rounded transition-colors"
+              className="flex items-center gap-1 bg-slate-800/60 hover:bg-slate-800/70 text-slate-200 text-[9px] px-2 py-1 rounded transition-colors"
             >
               <RotateCcw className="w-2.5 h-2.5" /> Reset
             </button>
@@ -111,14 +111,14 @@ export default function FieldSelectionPanel({
                 <label
                   key={field.name}
                   className={`flex items-start gap-2 p-2 rounded cursor-pointer transition-colors ${
-                    isSelected ? 'bg-slate-700/50' : 'bg-slate-800/50 hover:bg-slate-700/30'
+                    isSelected ? 'bg-slate-800/60' : 'bg-slate-900/60 hover:bg-slate-800/40'
                   }`}
                 >
                   <div className="mt-0.5 flex-shrink-0">
                     {isSelected ? (
-                      <CheckSquare className="w-3.5 h-3.5 text-indigo-400" />
+                      <CheckSquare className="w-3.5 h-3.5 text-sky-400" />
                     ) : (
-                      <Square className="w-3.5 h-3.5 text-slate-500" />
+                      <Square className="w-3.5 h-3.5 text-slate-400" />
                     )}
                   </div>
                   <input
@@ -129,7 +129,7 @@ export default function FieldSelectionPanel({
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-medium text-slate-300">
+                      <span className="text-[10px] font-medium text-slate-200">
                         {field.name}
                       </span>
                       {isRequired && (
@@ -138,13 +138,13 @@ export default function FieldSelectionPanel({
                         </span>
                       )}
                       {field.optional && (
-                        <span className="text-[8px] text-slate-500 bg-slate-500/10 px-1 py-0.5 rounded">
+                        <span className="text-[8px] text-slate-400 bg-slate-500/10 px-1 py-0.5 rounded">
                           Optional
                         </span>
                       )}
                     </div>
                     {field.description && (
-                      <p className="text-[9px] text-slate-500 mt-0.5 leading-relaxed">
+                      <p className="text-[9px] text-slate-400 mt-0.5 leading-relaxed">
                         {field.description}
                       </p>
                     )}

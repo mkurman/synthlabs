@@ -11,8 +11,8 @@ interface UseVerifierDbActionsOptions {
 
 export function useVerifierDbActions({ setItemStates, setData, toast }: UseVerifierDbActionsOptions) {
     const handleDbUpdate = useCallback(async (item: VerifierItem) => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error('Firebase not configured.');
+        if (!FirebaseService.isDbEnabled()) {
+            toast.error('DB backend not configured.');
             return;
         }
 
@@ -22,7 +22,10 @@ export function useVerifierDbActions({ setItemStates, setData, toast }: UseVerif
             await FirebaseService.updateLogItem(item.id, {
                 query: item.query,
                 reasoning: item.reasoning,
-                answer: item.answer
+                answer: item.answer,
+                score: item.score,
+                isDuplicate: item.isDuplicate,
+                isDiscarded: item.isDiscarded
             });
             setData(prev => prev.map(i => i.id === item.id ? { ...i, hasUnsavedChanges: false } : i));
             setItemStates(prev => ({ ...prev, [item.id]: 'saved' }));
@@ -37,8 +40,8 @@ export function useVerifierDbActions({ setItemStates, setData, toast }: UseVerif
     }, [setData, setItemStates, toast]);
 
     const handleDbRollback = useCallback(async (item: VerifierItem) => {
-        if (!FirebaseService.isFirebaseConfigured()) {
-            toast.error('Firebase not configured.');
+        if (!FirebaseService.isDbEnabled()) {
+            toast.error('DB backend not configured.');
             return;
         }
 

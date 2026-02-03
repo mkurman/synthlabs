@@ -1,5 +1,5 @@
 import { ReactNode, useState, useEffect } from 'react';
-import { PanelRightOpen, PanelLeftOpen, X } from 'lucide-react';
+import { PanelRightOpen, PanelLeftOpen, X, Cpu } from 'lucide-react';
 
 interface LayoutContainerProps {
     leftSidebar: ReactNode;
@@ -39,11 +39,11 @@ export default function LayoutContainer({
     // Desktop Layout
     if (!isMobile && !isTablet) {
         return (
-            <div className="flex h-screen w-screen overflow-hidden bg-slate-900 text-slate-50">
+            <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
                 {/* Left Sidebar - Collapsible */}
                 <aside
                     className={`
-                        flex-shrink-0 border-r border-slate-800 bg-slate-900 flex flex-col transition-all duration-300 ease-in-out relative
+                        flex-shrink-0 border-r border-slate-800/70 bg-slate-950/80 flex flex-col transition-all duration-300 ease-in-out relative backdrop-blur-xl
                         ${isLeftSidebarOpen ? 'w-[280px]' : 'w-0 overflow-hidden border-r-0'}
                     `}
                 >
@@ -54,7 +54,7 @@ export default function LayoutContainer({
                     {isLeftSidebarOpen && onLeftSidebarToggle && (
                         <button
                             onClick={() => onLeftSidebarToggle(false)}
-                            className="absolute top-4 right-2 p-1.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded-lg transition-colors z-10"
+                            className="absolute top-4 right-2 p-1.5 text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-lg transition-colors z-10"
                             title="Collapse sidebar"
                         >
                             <X className="w-4 h-4" />
@@ -66,7 +66,7 @@ export default function LayoutContainer({
                 {!isLeftSidebarOpen && onLeftSidebarToggle && (
                     <button
                         onClick={() => onLeftSidebarToggle(true)}
-                        className="fixed top-4 left-4 z-30 p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg shadow-lg transition-all border border-slate-700"
+                        className="fixed top-4 left-4 z-30 p-2 bg-slate-950/70 hover:bg-slate-900/60 text-slate-100 hover:text-white rounded-lg shadow-lg transition-all border border-slate-700/70 backdrop-blur"
                         title="Open sessions panel"
                     >
                         <PanelLeftOpen className="w-5 h-5" />
@@ -74,14 +74,19 @@ export default function LayoutContainer({
                 )}
 
                 {/* Main Content - Flex Grow */}
-                <main className="flex-grow flex flex-col min-w-0 bg-slate-900 relative">
+                <main className="flex-grow flex flex-col min-w-0 bg-slate-950/60 relative">
                     {mainContent}
                 </main>
 
-                {/* Right Sidebar - Fixed Width */}
+                {/* Right Sidebar - Collapsible */}
                 {rightSidebar && (
-                    <aside className="w-[420px] flex-shrink-0 border-l border-slate-800 bg-slate-900 flex flex-col">
-                        {rightSidebar}
+                    <aside
+                        className={`flex-shrink-0 border-l border-slate-800/70 bg-slate-950/80 flex flex-col backdrop-blur-xl transition-all duration-300 ease-in-out ${isRightSidebarOpen ? 'w-[420px]' : 'w-14'
+                            }`}
+                    >
+                        <div className="h-full w-full">
+                            {rightSidebar}
+                        </div>
                     </aside>
                 )}
             </div>
@@ -91,11 +96,11 @@ export default function LayoutContainer({
     // Tablet Layout (Right sidebar collapsed/hidden or moved)
     if (isTablet) {
         return (
-            <div className="flex h-screen w-screen overflow-hidden bg-slate-900 text-slate-50">
+            <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
                 {/* Left Sidebar slide-over panel */}
                 <aside
                     className={`
-                        fixed inset-y-0 left-0 z-40 w-[280px] bg-slate-900 border-r border-slate-800 transition-transform duration-300 ease-in-out shadow-xl
+                        fixed inset-y-0 left-0 z-40 w-[280px] bg-slate-950/90 border-r border-slate-800/70 transition-transform duration-300 ease-in-out shadow-2xl backdrop-blur-xl
                         ${isLeftSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
                     `}
                 >
@@ -103,7 +108,7 @@ export default function LayoutContainer({
                     {onLeftSidebarToggle && (
                         <button
                             onClick={() => onLeftSidebarToggle(false)}
-                            className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                            className="absolute top-4 right-4 p-2 text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-lg transition-colors"
                             title="Close panel"
                         >
                             <X className="w-4 h-4" />
@@ -112,14 +117,14 @@ export default function LayoutContainer({
                 </aside>
 
                 {/* Main Content */}
-                <main className="flex-grow flex flex-col min-w-0 bg-slate-900 relative w-full">
+                <main className="flex-grow flex flex-col min-w-0 bg-slate-950/60 relative w-full">
                     {mainContent}
 
                     {/* Floating button to open left sidebar when closed */}
                     {!isLeftSidebarOpen && onLeftSidebarToggle && (
                         <button
                             onClick={() => onLeftSidebarToggle(true)}
-                            className="fixed bottom-4 left-4 z-30 p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg transition-all hover:scale-105"
+                            className="fixed bottom-4 left-4 z-30 p-3 bg-sky-600 hover:bg-sky-500 text-white rounded-full shadow-lg transition-all hover:scale-105"
                             title="Open sessions panel"
                         >
                             <PanelLeftOpen className="w-5 h-5" />
@@ -129,7 +134,7 @@ export default function LayoutContainer({
                     {/* Right Sidebar slide-over panel */}
                     <div
                         className={`
-                            fixed inset-y-0 right-0 z-40 w-[320px] bg-slate-900 border-l border-slate-800 transition-transform duration-300 ease-in-out shadow-xl
+                            fixed inset-y-0 right-0 z-40 w-[320px] bg-slate-950/90 border-l border-slate-800/70 transition-transform duration-300 ease-in-out shadow-2xl backdrop-blur-xl
                             ${isRightSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
                         `}
                     >
@@ -137,7 +142,7 @@ export default function LayoutContainer({
                         {onRightSidebarToggle && (
                             <button
                                 onClick={() => onRightSidebarToggle(false)}
-                                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                                className="absolute top-4 right-4 p-2 text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-lg transition-colors"
                                 title="Close panel"
                             >
                                 <X className="w-4 h-4" />
@@ -149,7 +154,7 @@ export default function LayoutContainer({
                     {!isRightSidebarOpen && onRightSidebarToggle && (
                         <button
                             onClick={() => onRightSidebarToggle(true)}
-                            className="fixed bottom-4 right-4 z-30 p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg transition-all hover:scale-105"
+                            className="fixed bottom-4 right-4 z-30 p-3 bg-sky-600 hover:bg-sky-500 text-white rounded-full shadow-lg transition-all hover:scale-105"
                             title="Open controls panel"
                         >
                             <PanelRightOpen className="w-5 h-5" />
@@ -162,7 +167,7 @@ export default function LayoutContainer({
 
     // Mobile Layout
     return (
-        <div className="flex h-screen w-screen overflow-hidden bg-slate-900 text-slate-50 relative">
+        <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 relative">
             {/* Left Sidebar Drawer Overlay */}
             <div
                 className={`
@@ -173,7 +178,7 @@ export default function LayoutContainer({
             />
             <aside
                 className={`
-                    fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[300px] bg-slate-900 border-r border-slate-800 transition-transform duration-300 ease-in-out
+                    fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[300px] bg-slate-950/95 border-r border-slate-800/70 transition-transform duration-300 ease-in-out backdrop-blur-xl
                     ${isLeftSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
                 `}
             >
@@ -181,7 +186,7 @@ export default function LayoutContainer({
                 {onLeftSidebarToggle && (
                     <button
                         onClick={() => onLeftSidebarToggle(false)}
-                        className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                        className="absolute top-4 right-4 p-2 text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-lg transition-colors"
                         title="Close panel"
                     >
                         <X className="w-4 h-4" />
@@ -190,10 +195,10 @@ export default function LayoutContainer({
             </aside>
 
             {/* Main Content with Stacked Right Sidebar */}
-            <main className="flex-grow flex flex-col min-w-0 bg-slate-900 w-full relative">
+            <main className="flex-grow flex flex-col min-w-0 bg-slate-950/60 w-full relative">
                 {/* Right Sidebar (Controls) - Stacked on top for mobile */}
                 {rightSidebar && (
-                    <div className="flex-shrink-0 border-b border-slate-800 bg-slate-900/50 max-h-[40vh] overflow-y-auto">
+                    <div className="flex-shrink-0 border-b border-slate-800/70 bg-slate-950/70 max-h-[40vh] overflow-y-auto backdrop-blur-lg">
                         {rightSidebar}
                     </div>
                 )}
@@ -206,7 +211,7 @@ export default function LayoutContainer({
                 {!isLeftSidebarOpen && onLeftSidebarToggle && (
                     <button
                         onClick={() => onLeftSidebarToggle(true)}
-                        className="fixed bottom-4 left-4 z-30 p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-lg transition-all hover:scale-105"
+                        className="fixed bottom-4 left-4 z-30 p-3 bg-sky-600 hover:bg-sky-500 text-white rounded-full shadow-lg transition-all hover:scale-105"
                         title="Open sessions panel"
                     >
                         <PanelLeftOpen className="w-5 h-5" />

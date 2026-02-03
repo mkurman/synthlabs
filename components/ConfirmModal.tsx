@@ -36,7 +36,7 @@ export const ConfirmModalContainer: React.FC = () => {
 
     return (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="bg-slate-950/70 border border-slate-700/70 rounded-xl shadow-2xl max-w-md w-full p-6">
                 <div className="flex items-center gap-3 mb-4">
                     <div className={`p-3 rounded-full ${styles.iconBg}`}>
                         {styles.icon}
@@ -46,7 +46,7 @@ export const ConfirmModalContainer: React.FC = () => {
                     </h3>
                 </div>
 
-                <p className="text-slate-300 mb-6 whitespace-pre-wrap">
+                <p className="text-slate-200 mb-6 whitespace-pre-wrap">
                     {request.message}
                 </p>
 
@@ -54,14 +54,14 @@ export const ConfirmModalContainer: React.FC = () => {
                     {request.showCancel && (
                         <button
                             onClick={() => confirmService.resolveActive(false)}
-                            className="px-4 py-2 text-sm font-bold text-slate-400 hover:text-white transition-colors"
+                            className="px-4 py-2 text-sm font-bold text-slate-300 hover:text-white transition-colors"
                         >
                             {request.cancelLabel}
                         </button>
                     )}
                     <button
                         onClick={() => confirmService.resolveActive(true)}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-bold bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition-colors"
                     >
                         {request.confirmLabel || 'OK'}
                         {!request.showCancel && <HelpCircle className="w-4 h-4" />}

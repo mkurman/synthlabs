@@ -64,6 +64,7 @@ export { LogFilter } from './enums/LogFilter';
 export { DeepPhase } from './enums/DeepPhase';
 export { ResponderPhase } from './enums/ResponderPhase';
 export { ChatRole } from './enums/ChatRole';
+export { ToolApprovalAction } from './enums/ToolApprovalAction';
 
 // Prompt-related enums
 export { PromptCategory } from './enums/PromptCategory';
@@ -112,3 +113,6 @@ export { LogFeedRewriteTarget } from './enums/LogFeedRewriteTarget';
 
 // Creator controls tab enum
 export { CreatorControlsTab } from './enums/CreatorControlsTab';
+export { SessionVerificationStatus } from './enums/SessionVerificationStatus';
+export { VerifierDataSource } from './enums/VerifierDataSource';
+export { BackendApplyStatus } from './enums/BackendApplyStatus';

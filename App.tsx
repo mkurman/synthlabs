@@ -4,7 +4,7 @@ import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider, ApiType,
     ProgressStats, HuggingFaceConfig, DetectedColumns, DEFAULT_HF_PREFETCH_CONFIG,
     EngineMode, DeepConfig, GenerationParams, UserAgentConfig,
-    StreamingConversationState
+    StreamingConversationState, SessionListFilters
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
 import { PromptService } from './services/promptService';
@@ -16,8 +16,9 @@ import { buildGenerationConfig as buildGenerationConfigService, GenerationServic
 import { DataTransformService } from './services/dataTransformService';
 import { SessionService } from './services/sessionService';
 import { FileService } from './services/fileService';
+import * as backendClient from './services/backendClient';
 import { useLogManagement } from './hooks/useLogManagement';
-import { DataSource, Environment, ProviderType as ProviderTypeEnum, ExternalProvider as ExternalProviderEnum, ApiType as ApiTypeEnum, AppView, ViewMode, DeepPhase, ResponderPhase, PromptCategory, PromptRole, FeedDisplayMode } from './interfaces/enums';
+import { DataSource, Environment, ProviderType as ProviderTypeEnum, ExternalProvider as ExternalProviderEnum, ApiType as ApiTypeEnum, AppView, ViewMode, DeepPhase, ResponderPhase, PromptCategory, PromptRole, FeedDisplayMode, ThemeMode } from './interfaces/enums';
 import type { CompleteGenerationConfig, SessionData } from './interfaces';
 import { SessionStatus, StorageMode } from './interfaces';
 import { toast } from './services/toastService';
@@ -49,6 +50,7 @@ import AppOverlays from './components/layout/AppOverlays';
 import FeedAnalyticsPanel from './components/layout/FeedAnalyticsPanel';
 import VerifierPanel from './components/VerifierPanel';
 import { useAppViewProps } from './hooks/useAppViewProps';
+import { getInitialAppView, getInitialEnvironment, useAppRouting } from './hooks/useAppRouting';
 
 // New Layout Components
 import LayoutContainer from './components/LayoutContainer';
@@ -65,31 +67,160 @@ import { useSessionAnalytics } from './hooks/useSessionAnalytics';
 
 export default function App() {
     // --- State: Modes ---
-    const [appView, setAppView] = useState<AppView>(AppView.Creator); // Top Level View
+    const [appView, setAppView] = useState<AppView>(getInitialAppView); // Top Level View
     const [appMode, setAppMode] = useState<AppMode>(AppMode.Generator);
     const [engineMode, setEngineMode] = useState<EngineMode>(EngineMode.Regular);
-    const [environment, setEnvironment] = useState<Environment>(Environment.Development);
+    const [environment, setEnvironment] = useState<Environment>(getInitialEnvironment);
+    const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+        const settings = SettingsService.getSettings();
+        return settings.theme ?? ThemeMode.Dark;
+    });
     const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.Feed);
     const [feedDisplayMode, setFeedDisplayMode] = useState<FeedDisplayMode>(FeedDisplayMode.Default);
+    const [hasSessionStarted, setHasSessionStarted] = useState(false);
+
+    const applyThemeMode = useCallback((mode: ThemeMode) => {
+        const root = document.documentElement;
+        const isDark = mode === ThemeMode.Dark;
+        root.classList.toggle(ThemeMode.Dark, isDark);
+        root.classList.toggle(ThemeMode.Light, !isDark);
+        root.setAttribute('data-theme', mode);
+    }, []);
+
+    useEffect(() => {
+        applyThemeMode(themeMode);
+    }, [applyThemeMode, themeMode]);
+
+    useEffect(() => {
+        SettingsService.waitForSettingsInit().then(() => {
+            const settings = SettingsService.getSettings();
+            if (settings.theme && settings.theme !== themeMode) {
+                setThemeMode(settings.theme);
+            }
+        });
+    }, []);
+
+    const handleThemeModeChange = useCallback((mode: ThemeMode) => {
+        setThemeMode(mode);
+        SettingsService.updateSettings({ theme: mode });
+    }, []);
 
     // --- State: Session & DB ---
-    const [sessionUid, setSessionUid] = useState<string>(crypto.randomUUID());
+    const [sessionUid, setSessionUid] = useState<string>('');
     const sessionUidRef = useSyncedRef(sessionUid);
+    const [pendingRouteSessionId, setPendingRouteSessionId] = useState<string | null>(null);
+    const loadingRouteSessionRef = useRef<string | null>(null);
+
+    // Memoize routing callbacks to prevent unnecessary re-renders
+    const handleSessionNavigate = useCallback((sessionId: string) => {
+        setPendingRouteSessionId(sessionId);
+    }, []);
+
+    const handleSessionRouteClear = useCallback(() => {
+        setPendingRouteSessionId(null);
+    }, []);
+
+    useAppRouting({
+        appView,
+        environment,
+        sessionUid,
+        includeSessionUid: hasSessionStarted,
+        setAppView,
+        setEnvironment,
+        onSessionNavigate: handleSessionNavigate,
+        onSessionRouteClear: handleSessionRouteClear
+    });
 
     // --- State: Layout & Sessions ---
     const [isLeftSidebarOpen, setLeftSidebarOpen] = useState(true);
     const [isRightSidebarOpen, setRightSidebarOpen] = useState(true);
+    const [isVerifierAssistantOpen, setVerifierAssistantOpen] = useState(true);
     const [sessionsList, setSessionsList] = useState<SessionData[]>([]);
+    const [sessionFilters, setSessionFilters] = useState<SessionListFilters>({
+        search: '',
+        onlyWithLogs: false,
+        minRows: null,
+        maxRows: null,
+        appMode: null,
+        engineMode: null,
+        model: ''
+    });
+    const [hasMoreSessions, setHasMoreSessions] = useState(false);
+    const [isLoadingMoreSessions, setIsLoadingMoreSessions] = useState(false);
+
+    const refreshSessionsList = useCallback(async () => {
+        sessionLoadService.clearCache();
+        const list = await sessionLoadService.loadSessionList(true, environment, sessionFilters);
+        setSessionsList(list);
+        setHasMoreSessions(sessionLoadService.hasMoreSessions());
+    }, [environment, sessionFilters]);
+
+    const handleSessionFiltersChange = useCallback((next: SessionListFilters) => {
+        setSessionFilters(next);
+    }, []);
+
+    const handleLoadMoreSessions = useCallback(async () => {
+        if (isLoadingMoreSessions) return;
+        setIsLoadingMoreSessions(true);
+        try {
+            const more = await sessionLoadService.loadMoreSessions(environment, sessionFilters);
+            if (more.length > 0) {
+                setSessionsList(prev => [...prev, ...more]);
+            }
+            setHasMoreSessions(sessionLoadService.hasMoreSessions());
+        } finally {
+            setIsLoadingMoreSessions(false);
+        }
+    }, [environment, isLoadingMoreSessions, sessionFilters]);
+
+    const maxSessionTextLength = Number(import.meta.env.VITE_SESSION_MAX_TEXT_LEN || 10000);
+    const sanitizeSessionForBackend = useCallback((session: SessionData): SessionData => {
+        const sanitized: SessionData = { ...session };
+        delete (sanitized as unknown as { logs?: unknown }).logs;
+        delete (sanitized as unknown as { items?: unknown }).items;
+        delete (sanitized as unknown as { rows?: unknown }).rows;
+        delete (sanitized as unknown as { data?: unknown }).data;
+        delete (sanitized as unknown as { messages?: unknown }).messages;
+        delete (sanitized as unknown as { visibleLogs?: unknown }).visibleLogs;
+
+        if (sanitized.config) {
+            const configCopy = { ...sanitized.config };
+            if (configCopy.converterInputText && configCopy.converterInputText.length > maxSessionTextLength) {
+                delete configCopy.converterInputText;
+            }
+            sanitized.config = configCopy;
+        }
+        if (sanitized.dataset) {
+            if (sanitized.dataset.type === DataSource.Manual) {
+                sanitized.dataset = {
+                    type: sanitized.dataset.type,
+                    path: sanitized.dataset.path
+                };
+            } else {
+                const datasetCopy: SessionData['dataset'] = {
+                    type: sanitized.dataset.type,
+                    hfConfig: sanitized.dataset.hfConfig ? {
+                        dataset: sanitized.dataset.hfConfig.dataset,
+                        config: sanitized.dataset.hfConfig.config,
+                        split: sanitized.dataset.hfConfig.split,
+                        columnName: sanitized.dataset.hfConfig.columnName,
+                        inputColumns: sanitized.dataset.hfConfig.inputColumns,
+                        outputColumns: sanitized.dataset.hfConfig.outputColumns,
+                        reasoningColumns: sanitized.dataset.hfConfig.reasoningColumns,
+                        mcqColumn: sanitized.dataset.hfConfig.mcqColumn,
+                        messageTurnIndex: sanitized.dataset.hfConfig.messageTurnIndex,
+                        maxMultiTurnTraces: sanitized.dataset.hfConfig.maxMultiTurnTraces
+                    } : undefined
+                };
+                sanitized.dataset = datasetCopy;
+            }
+        }
+        return sanitized;
+    }, [maxSessionTextLength]);
 
     useEffect(() => {
-        const loadSessions = async () => {
-            // Clear cache to ensure fresh data when environment changes
-            sessionLoadService.clearCache();
-            const list = await sessionLoadService.loadSessionList(true, environment);
-            setSessionsList(list);
-        };
-        loadSessions();
-    }, [environment]); // Only reload when environment changes, not on session switch
+        refreshSessionsList();
+    }, [refreshSessionsList]);
 
     const [sessionName, setSessionName] = useState<string | null>(null);
     const sessionNameRef = useSyncedRef(sessionName);
@@ -362,13 +493,52 @@ export default function App() {
     // Feed Rewriter Hook
     const feedRewriter = useLogFeedRewriter({ onUpdateLog: updateLog });
 
+    const resetSessionState = useCallback(() => {
+        setSessionUid('');
+        setSessionName(null);
+        setHasSessionStarted(false);
+        setDbStats({ total: 0, session: 0 });
+        setVisibleLogs([]);
+        setTotalLogCount(0);
+        setFilteredLogCount(0);
+        setSparklineHistory([]);
+    }, [
+        setSessionUid,
+        setSessionName,
+        setHasSessionStarted,
+        setDbStats,
+        setVisibleLogs,
+        setTotalLogCount,
+        setFilteredLogCount,
+        setSparklineHistory
+    ]);
+
+    const handleAppViewChange = useCallback((mode: AppView) => {
+        if (mode === appView) {
+            return;
+        }
+        setAppView(mode);
+        resetSessionState();
+    }, [appView, resetSessionState]);
+
+    const previousEnvironmentRef = useRef(environment);
+    useEffect(() => {
+        if (previousEnvironmentRef.current !== environment) {
+            resetSessionState();
+            setSessionsList([]);
+            previousEnvironmentRef.current = environment;
+        }
+    }, [environment, resetSessionState]);
+
     // Session Management
     const sessionManager = useSessionManager({
         environment,
         onSessionChange: (session) => {
             if (session) {
-                setSessionUid(session.id);
-                setSessionName(session.name);
+                if (!sessionUid) {
+                    setSessionUid(session.sessionUid || session.id);
+                    setSessionName(session.name);
+                }
             }
         }
     });
@@ -413,11 +583,6 @@ export default function App() {
 
     // Memoized auto-save callback to prevent timeout cancellation from re-renders
     const handleAutoSave = useCallback(async (savedSession: SessionData) => {
-        // Build the complete SessionData object with correct id and metadata
-        const existingSession = environment === Environment.Development
-            ? await import('./services/session/indexedDBUtils').then(m => m.loadSession(sessionUid)).catch(() => null)
-            : null;
-
         // Create full SessionData with consistent id (sessionUid is the storage key)
         const fullSessionData: SessionData = {
             ...savedSession,
@@ -425,9 +590,9 @@ export default function App() {
             sessionUid: sessionUid,
             name: sessionName || savedSession.name || 'Untitled Session',
             updatedAt: Date.now(),
-            createdAt: existingSession?.createdAt || savedSession.createdAt || new Date().toISOString(),
-            itemCount: existingSession?.itemCount || savedSession.itemCount || 0,
-            analytics: existingSession?.analytics || savedSession.analytics || {
+            createdAt: savedSession.createdAt || new Date().toISOString(),
+            itemCount: savedSession.itemCount || 0,
+            analytics: savedSession.analytics || {
                 totalItems: 0,
                 completedItems: 0,
                 errorCount: 0,
@@ -447,11 +612,22 @@ export default function App() {
         };
 
         // Handle cloud save or local save
-        if (environment === Environment.Production && SessionService.isCloudAvailable()) {
-            try {
-                await SessionService.saveToCloud(fullSessionData, fullSessionData.name);
-            } catch (e) {
-                console.error("Auto-save to cloud failed", e);
+        if (environment === Environment.Production) {
+            // Prefer backend API if enabled
+            if (backendClient.isBackendEnabled() && sessionUid) {
+                try {
+                    const payload = sanitizeSessionForBackend(fullSessionData);
+                    await backendClient.updateSession(sessionUid, payload as unknown as Record<string, unknown>);
+                } catch (e) {
+                    console.error("Auto-save to backend failed", e);
+                }
+            } else if (SessionService.isCloudAvailable()) {
+                // Fall back to direct Firebase if backend not available
+                try {
+                    await SessionService.saveToCloud(fullSessionData, fullSessionData.name);
+                } catch (e) {
+                    console.error("Auto-save to cloud failed", e);
+                }
             }
         } else {
             // Handle local save via IndexedDBUtils - save full SessionData directly
@@ -465,17 +641,17 @@ export default function App() {
 
         // Refresh session list to show updated timestamp/name
         try {
-            const list = await sessionLoadService.loadSessionList(true, environment);
+            const list = await sessionLoadService.loadSessionList(true, environment, sessionFilters);
             setSessionsList(list);
         } catch (e) {
             console.error("Failed to refresh session list", e);
         }
-    }, [environment, sessionUid, sessionName, appMode, hfConfig]);
+    }, [environment, sessionUid, sessionName, appMode, hfConfig, sessionFilters]);
 
     // Auto-save current session
     useSessionAutoSave({
         session: currentFullSession as any, // Cast to avoid legacy type conflict if any
-        enabled: true,
+        enabled: hasSessionStarted,
         debounceMs: 2000,
         disableDefaultPersistence: true,
         onSave: handleAutoSave
@@ -623,7 +799,7 @@ export default function App() {
         return SessionService.getSessionData(sessionConfig, sessionUid);
     };
 
-    const sessionSetters = {
+    const sessionSetters = useMemo(() => ({
         setAppMode,
         setEngineMode,
         setEnvironment,
@@ -650,7 +826,11 @@ export default function App() {
         setConversationRewriteMode,
         setConverterInputText,
         setGenerationParams
-    };
+    }), []);
+
+    const handleSessionLoaded = useCallback(() => {
+        setHasSessionStarted(true);
+    }, []);
 
     const {
         handleSaveSession,
@@ -668,8 +848,53 @@ export default function App() {
         setCloudSessions,
         setDbStats,
         getSessionData,
-        setters: sessionSetters
+        setters: sessionSetters,
+        onSessionLoaded: handleSessionLoaded
     });
+
+    useEffect(() => {
+        if (!pendingRouteSessionId) {
+            return;
+        }
+
+        // Prevent duplicate loads for the same session
+        if (loadingRouteSessionRef.current === pendingRouteSessionId) {
+            return;
+        }
+        loadingRouteSessionRef.current = pendingRouteSessionId;
+
+        let isActive = true;
+        const resolveSessionFromRoute = async () => {
+            try {
+                const session = sessionsList.find(
+                    (item) => item.id === pendingRouteSessionId || item.sessionUid === pendingRouteSessionId
+                );
+                if (session) {
+                    await handleCloudSessionSelect(session as any, { preserveEnvironment: true });
+                    return;
+                }
+
+                const loadedSession = await sessionLoadService.loadSessionDetails(pendingRouteSessionId);
+                if (loadedSession) {
+                    await handleCloudSessionSelect(loadedSession as any, { preserveEnvironment: true });
+                    return;
+                }
+
+                toast.warning('Session not found for the current route.');
+            } finally {
+                if (isActive) {
+                    setPendingRouteSessionId(null);
+                    loadingRouteSessionRef.current = null;
+                }
+            }
+        };
+
+        resolveSessionFromRoute();
+
+        return () => {
+            isActive = false;
+        };
+    }, [handleCloudSessionSelect, pendingRouteSessionId, sessionsList]);
 
     // --- Core Generation Logic ---
     // Build configuration for GenerationService
@@ -813,8 +1038,7 @@ export default function App() {
         startGeneration,
         stopGeneration,
         pauseGeneration,
-        resumeGeneration,
-        handleStart
+        resumeGeneration
     } = useGenerationControl({
         buildGenerationConfig,
         generationServiceRef,
@@ -831,6 +1055,24 @@ export default function App() {
         setShowOverwriteModal
     });
 
+    const handleStartGeneration = useCallback((append: boolean) => {
+        setHasSessionStarted(true);
+        startGeneration(append);
+    }, [startGeneration]);
+
+    const handleStartSession = useCallback(() => {
+        if (totalLogCount > 0) {
+            setShowOverwriteModal(true);
+            return;
+        }
+        handleStartGeneration(false);
+    }, [handleStartGeneration, setShowOverwriteModal, totalLogCount]);
+
+    const handleStartNewSession = useCallback(async () => {
+        setHasSessionStarted(false);
+        await startNewSession();
+    }, [startNewSession]);
+
     const { handleDeleteLog } = useLogActions({
         environment,
         visibleLogs,
@@ -839,6 +1081,14 @@ export default function App() {
         handleDeleteLogFromLogs,
         updateDbStats
     });
+
+    useEffect(() => {
+        if (hasSessionStarted) return;
+        const matchesExisting = sessionsList.some(session => session.id === sessionUid || session.sessionUid === sessionUid);
+        if (matchesExisting) {
+            setHasSessionStarted(true);
+        }
+    }, [hasSessionStarted, sessionUid, sessionsList]);
 
     const exportJsonl = async () => {
         await FileService.exportJsonl({
@@ -872,7 +1122,7 @@ export default function App() {
         error,
         isStreamingEnabled,
         onStreamingChange: setIsStreamingEnabled,
-        onStart: handleStart,
+        onStart: handleStartSession,
         onPause: pauseGeneration,
         onResume: resumeGeneration,
         onStop: stopGeneration,
@@ -886,7 +1136,7 @@ export default function App() {
         unsavedCount: getUnsavedCount(),
         onSyncAll: syncAllUnsavedToDb,
         onRetryAllFailed: retryAllFailed,
-        onStartNewSession: startNewSession,
+        onStartNewSession: handleStartNewSession,
         engineMode,
         onEngineModeChange: setEngineMode,
         sessionPromptSet,
@@ -1029,14 +1279,14 @@ export default function App() {
             if (log) {
                 const currentValue = field === 'query' ? log.query :
                     field === 'reasoning' ? log.reasoning :
-                    log.answer;
+                        log.answer;
                 feedRewriter.handleRewrite(itemId, field, currentValue || '');
             }
         }
     });
 
     return (
-        <div className="h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden">
+        <div className="h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
             <AppOverlays
                 showCloudLoadModal={showCloudLoadModal}
                 cloudSessions={cloudSessions}
@@ -1050,16 +1300,16 @@ export default function App() {
                     exportJsonl();
                     setTimeout(() => {
                         setShowOverwriteModal(false);
-                        startGeneration(true);
+                        handleStartGeneration(true);
                     }, 500);
                 }}
                 onOverwriteContinue={() => {
                     setShowOverwriteModal(false);
-                    startGeneration(true);
+                    handleStartGeneration(true);
                 }}
                 onOverwriteStartNew={() => {
                     setShowOverwriteModal(false);
-                    startGeneration(false);
+                    handleStartGeneration(false);
                 }}
                 onOverwriteCancel={() => setShowOverwriteModal(false)}
                 showSettings={showSettings}
@@ -1072,9 +1322,15 @@ export default function App() {
 
             <LayoutContainer
                 isLeftSidebarOpen={isLeftSidebarOpen}
-                isRightSidebarOpen={isRightSidebarOpen}
+                isRightSidebarOpen={appView === AppView.Verifier ? isVerifierAssistantOpen : isRightSidebarOpen}
                 onLeftSidebarToggle={() => setLeftSidebarOpen(!isLeftSidebarOpen)}
-                onRightSidebarToggle={() => setRightSidebarOpen(!isRightSidebarOpen)}
+                onRightSidebarToggle={() => {
+                    if (appView === AppView.Verifier) {
+                        setVerifierAssistantOpen(prev => !prev);
+                    } else {
+                        setRightSidebarOpen(!isRightSidebarOpen);
+                    }
+                }}
                 leftSidebar={
                     <LeftSidebar
                         sessions={sessionsList}
@@ -1087,7 +1343,7 @@ export default function App() {
                                 confirmLabel: 'Start New',
                                 cancelLabel: 'Cancel'
                             }).then((confirmed) => {
-                                if (confirmed) startNewSession();
+                                if (confirmed) handleStartNewSession();
                             });
                         }}
                         onSessionSelect={async (id) => {
@@ -1095,31 +1351,37 @@ export default function App() {
                             if (session) {
                                 // Both cloud and local sessions use the same handler now due to Service unification
                                 handleCloudSessionSelect(session as any);
+                                setAppView(AppView.Creator);
                             }
                         }}
                         onSessionRename={async (id, name) => {
                             if (sessionManager && sessionManager.renameSession) {
                                 sessionManager.renameSession(id, name);
-                                const list = await sessionLoadService.loadSessionList(true, environment);
-                                setSessionsList(list);
+                                await refreshSessionsList();
                             }
                         }}
                         onSessionDelete={async (id) => {
                             if (sessionManager && sessionManager.deleteSession) {
                                 await sessionManager.deleteSession(id);
-                                const list = await sessionLoadService.loadSessionList(true, environment);
-                                setSessionsList(list);
+                                await refreshSessionsList();
                             } else {
                                 await handleCloudSessionDelete(id, { stopPropagation: () => { } } as any);
-                                const list = await sessionLoadService.loadSessionList(true, environment);
-                                setSessionsList(list);
+                                await refreshSessionsList();
                             }
                         }}
+                        onRefreshSessions={refreshSessionsList}
                         onOpenSettings={() => setShowSettings(true)}
                         currentEnvironment={environment}
                         onEnvironmentChange={(env) => {
                             setEnvironment(env);
                         }}
+                        sessionFilters={sessionFilters}
+                        onSessionFiltersChange={handleSessionFiltersChange}
+                        onLoadMoreSessions={handleLoadMoreSessions}
+                        hasMoreSessions={hasMoreSessions}
+                        isLoadingMoreSessions={isLoadingMoreSessions}
+                        themeMode={themeMode}
+                        onThemeModeChange={handleThemeModeChange}
                     />
                 }
                 mainContent={
@@ -1127,7 +1389,7 @@ export default function App() {
                         <div className="flex-shrink-0 z-20">
                             <ModeNavbar
                                 currentMode={appView as any}
-                                onModeChange={(mode: any) => setAppView(mode)}
+                                onModeChange={(mode: any) => handleAppViewChange(mode)}
                                 sessionName={sessionName}
                                 onSessionNameChange={setSessionName}
                                 isDirty={environment === Environment.Production && getUnsavedCount() > 0} // Only show 'Unsaved' for cloud needing sync
@@ -1135,16 +1397,21 @@ export default function App() {
                         </div>
                         <div className="flex-1 min-h-0 relative">
                             {appView === AppView.Verifier ? (
-                                <VerifierPanel
-                                    currentSessionUid={sessionUid}
-                                    modelConfig={{
-                                        provider,
-                                        externalProvider,
-                                        externalModel,
-                                        apiKey: externalApiKey,
-                                        externalApiKey
-                                    }}
-                                />
+                                <div className="h-full overflow-hidden">
+                                    <VerifierPanel
+                                        currentSessionUid={sessionUid}
+                                        modelConfig={{
+                                            provider,
+                                            externalProvider,
+                                            externalModel,
+                                            apiKey: externalApiKey,
+                                            externalApiKey
+                                        }}
+                                        chatOpen={isVerifierAssistantOpen}
+                                        onChatToggle={setVerifierAssistantOpen}
+                                        onSessionSelect={handleCloudSessionSelect}
+                                    />
+                                </div>
                             ) : (
                                 <div className="h-full overflow-y-auto">
                                     <FeedAnalyticsPanel {...feedProps} />
@@ -1154,7 +1421,25 @@ export default function App() {
                     </div>
                 }
                 rightSidebar={
-                    appView === AppView.Verifier ? null : (
+                    appView === AppView.Verifier ? (
+                        <RightSidebar>
+                            {isVerifierAssistantOpen ? (
+                                <div id="verifier-assistant" className="h-full" />
+                            ) : (
+                                <div className="h-full flex items-center justify-center">
+                                    <button
+                                        onClick={() => setVerifierAssistantOpen(true)}
+                                        className="flex flex-col items-center gap-2 text-slate-300 hover:text-white transition-colors"
+                                        title="Open assistant"
+                                    >
+                                        <div className="w-8 h-24 rounded-full bg-slate-900/60 border border-slate-800/70 flex items-center justify-center">
+                                            <span className="text-[10px] font-bold rotate-90">AI</span>
+                                        </div>
+                                    </button>
+                                </div>
+                            )}
+                        </RightSidebar>
+                    ) : (
                         <RightSidebar>
                             <CreatorControls
                                 {...sidebarProps}

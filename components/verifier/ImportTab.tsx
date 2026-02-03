@@ -1,15 +1,19 @@
-import { RefObject } from 'react';
+import type { Dispatch, RefObject, SetStateAction } from 'react';
 import {
-    FileJson, Database, AlertTriangle, RefreshCcw, Download, GitBranch, Search, Plus
+    FileJson, AlertTriangle, RefreshCcw, GitBranch, Search, Plus
 } from 'lucide-react';
 import * as FirebaseService from '../../services/firebaseService';
+import type { DetectedColumns, HuggingFaceConfig } from '../../types';
+import DatabaseImportCard from './DatabaseImportCard';
+import HuggingFaceImportCard from './HuggingFaceImportCard';
+import { SessionData } from '../../interfaces';
 
 interface ImportTabProps {
     fileInputRef: RefObject<HTMLInputElement | null>;
     handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
     selectedSessionFilter: string;
     setSelectedSessionFilter: (value: string) => void;
-    availableSessions: FirebaseService.SavedSession[];
+    availableSessions: SessionData[];
     customSessionId: string;
     setCustomSessionId: (value: string) => void;
     isLimitEnabled: boolean;
@@ -18,11 +22,37 @@ interface ImportTabProps {
     setImportLimit: (value: number) => void;
     handleDbImport: () => void;
     isImporting: boolean;
+    hfConfig: HuggingFaceConfig;
+    setHfConfig: Dispatch<SetStateAction<HuggingFaceConfig>>;
+    hfStructure: { configs: string[]; splits: Record<string, string[]> };
+    hfSearchResults: string[];
+    isSearchingHF: boolean;
+    showHFResults: boolean;
+    setShowHFResults: (show: boolean) => void;
+    onHFSearch: (value: string) => void;
+    onSelectHFDataset: (dataset: string) => void;
+    onConfigChange: (config: string) => void;
+    onSplitChange: (split: string) => void;
+    prefetchColumns: () => void;
+    isPrefetching: boolean;
+    availableColumns: string[];
+    detectedColumns: DetectedColumns;
+    hfTotalRows: number;
+    hfPreviewData: unknown[];
+    isLoadingHfPreview: boolean;
+    hfRowsToFetch: number;
+    setHfRowsToFetch: (value: number) => void;
+    hfSkipRows: number;
+    setHfSkipRows: (value: number) => void;
+    onHfImport: () => void;
+    hfImportError: string | null;
     isCheckingOrphans: boolean;
     orphanedLogsInfo: FirebaseService.OrphanedLogsInfo | null;
+    orphanScanProgress: FirebaseService.OrphanScanProgress | null;
     handleCheckOrphans: () => void;
     handleSyncOrphanedLogs: () => void;
     isSyncing: boolean;
+    orphanSyncProgress: FirebaseService.OrphanSyncProgress | null;
 }
 
 export default function ImportTab({
@@ -39,128 +69,166 @@ export default function ImportTab({
     setImportLimit,
     handleDbImport,
     isImporting,
+    hfConfig,
+    setHfConfig,
+    hfStructure,
+    hfSearchResults,
+    isSearchingHF,
+    showHFResults,
+    setShowHFResults,
+    onHFSearch,
+    onSelectHFDataset,
+    onConfigChange,
+    onSplitChange,
+    prefetchColumns,
+    isPrefetching,
+    availableColumns,
+    detectedColumns,
+    hfTotalRows,
+    hfPreviewData,
+    isLoadingHfPreview,
+    hfRowsToFetch,
+    setHfRowsToFetch,
+    hfSkipRows,
+    setHfSkipRows,
+    onHfImport,
+    hfImportError,
     isCheckingOrphans,
     orphanedLogsInfo,
+    orphanScanProgress,
     handleCheckOrphans,
     handleSyncOrphanedLogs,
-    isSyncing
+    isSyncing,
+    orphanSyncProgress
 }: ImportTabProps) {
     return (
         <div className="flex-1 flex flex-col items-center justify-center gap-6 animate-in fade-in slide-in-from-bottom-4">
             <div className="text-center">
                 <h2 className="text-2xl font-bold text-white mb-2">Import Data for Verification</h2>
-                <p className="text-slate-400 max-w-md mx-auto">Load raw synthetic logs from local JSON/JSONL files or fetch directly from the generated database.</p>
+                <p className="text-slate-300 max-w-md mx-auto">Load raw synthetic logs from local JSON/JSONL files, fetch directly from the generated database, or import HuggingFace datasets.</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl mt-4">
-                <button onClick={() => fileInputRef.current?.click()} className="group flex flex-col items-center gap-4 p-8 rounded-xl border-2 border-dashed border-slate-700 hover:border-teal-500 hover:bg-slate-800/50 transition-all cursor-pointer relative overflow-hidden">
-                    <div className="absolute inset-0 bg-teal-900/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center group-hover:scale-110 transition-transform relative z-10">
-                        <FileJson className="w-8 h-8 text-teal-400" />
-                    </div>
-                    <div className="text-center relative z-10">
-                        <h3 className="text-white font-bold">Load Files</h3>
-                        <p className="text-xs text-slate-500 mt-1">.json or .jsonl arrays</p>
-                        <div className="mt-2 text-[10px] text-teal-400 font-medium bg-teal-900/30 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+            <div className="w-full max-w-7xl mt-4 space-y-6">
+                <div className="flex flex-col items-center gap-3">
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="group inline-flex items-center gap-3 px-6 py-3 rounded-xl border-2 border-dashed border-slate-700/70 hover:border-sky-500 hover:bg-slate-900/60 transition-all cursor-pointer relative overflow-hidden"
+                    >
+                        <div className="w-10 h-10 rounded-full bg-slate-900/60 flex items-center justify-center group-hover:scale-110 transition-transform">
+                            <FileJson className="w-5 h-5 text-sky-400" />
+                        </div>
+                        <div className="text-left">
+                            <div className="text-white font-bold text-sm">Load from file</div>
+                            <div className="text-[10px] text-slate-400">.json or .jsonl arrays</div>
+                        </div>
+                        <div className="text-[10px] text-sky-400 font-medium bg-sky-900/30 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
                             <Plus className="w-3 h-3" /> Multi-select Supported
                         </div>
-                    </div>
-                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".json,.jsonl" multiple />
-                </button>
+                        <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".json,.jsonl" multiple />
+                    </button>
+                </div>
 
-                <div className="group flex flex-col items-center gap-4 p-8 rounded-xl border-2 border-dashed border-slate-700 hover:border-pink-500 hover:bg-slate-800/50 transition-all relative">
-                    <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-2">
-                        <Database className="w-8 h-8 text-pink-400" />
-                    </div>
-                    <div className="text-center w-full space-y-3">
-                        <h3 className="text-white font-bold">Fetch DB</h3>
+                <div className="flex items-center justify-center gap-3 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                    <div className="h-px w-16 bg-slate-800/70" />
+                    <span>- or -</span>
+                    <div className="h-px w-16 bg-slate-800/70" />
+                </div>
 
-                        {/* Session Selector */}
-                        <div className="w-full text-left">
-                            <label className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Source Session</label>
-                            <select
-                                value={selectedSessionFilter}
-                                onChange={e => setSelectedSessionFilter(e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-white focus:border-pink-500 outline-none mb-2"
-                            >
-                                <option value="all">All Sessions</option>
-                                <option value="current">Current Session</option>
-                                <option value="custom">Specific Session ID...</option>
-                                {availableSessions.length > 0 && <optgroup label="💾 Saved Cloud Sessions">
-                                    {availableSessions.map((s: FirebaseService.SavedSession) => (
-                                        <option key={s.id} value={s.id}>{s.name} ({s.logCount !== undefined ? `${s.logCount} items` : new Date(s.createdAt).toLocaleDateString()})</option>
-                                    ))}
-                                </optgroup>}
-                            </select>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <DatabaseImportCard
+                        selectedSessionFilter={selectedSessionFilter}
+                        setSelectedSessionFilter={setSelectedSessionFilter}
+                        availableSessions={availableSessions}
+                        customSessionId={customSessionId}
+                        setCustomSessionId={setCustomSessionId}
+                        isLimitEnabled={isLimitEnabled}
+                        setIsLimitEnabled={setIsLimitEnabled}
+                        importLimit={importLimit}
+                        setImportLimit={setImportLimit}
+                        handleDbImport={handleDbImport}
+                        isImporting={isImporting}
+                    />
 
-                            {selectedSessionFilter === 'custom' && (
-                                <div className="animate-in fade-in slide-in-from-top-1">
-                                    <input
-                                        type="text"
-                                        value={customSessionId}
-                                        onChange={e => setCustomSessionId(e.target.value)}
-                                        placeholder="Paste Session UID..."
-                                        className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-300 focus:border-pink-500 outline-none"
-                                    />
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Limit Controls */}
-                        <div className="flex items-center justify-between gap-4 w-full bg-slate-900/50 p-2 rounded border border-slate-800">
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="checkbox"
-                                    checked={isLimitEnabled}
-                                    onChange={e => setIsLimitEnabled(e.target.checked)}
-                                    className="accent-pink-500"
-                                    id="limitToggle"
-                                />
-                                <label htmlFor="limitToggle" className="text-xs text-slate-300 cursor-pointer">Limit Rows</label>
-                            </div>
-
-                            <input
-                                type="number"
-                                value={importLimit}
-                                onChange={e => setImportLimit(Number(e.target.value))}
-                                disabled={!isLimitEnabled}
-                                className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white text-right focus:border-pink-500 outline-none disabled:opacity-50"
-                            />
-                        </div>
-
-                        <button
-                            onClick={handleDbImport}
-                            disabled={isImporting}
-                            className="w-full mt-2 bg-pink-600 hover:bg-pink-500 text-white py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                        >
-                            {isImporting ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                            Fetch Data
-                        </button>
-                    </div>
+                    <HuggingFaceImportCard
+                        hfConfig={hfConfig}
+                        setHfConfig={setHfConfig}
+                        hfStructure={hfStructure}
+                        hfSearchResults={hfSearchResults}
+                        isSearchingHF={isSearchingHF}
+                        showHFResults={showHFResults}
+                        setShowHFResults={setShowHFResults}
+                        onHFSearch={onHFSearch}
+                        onSelectHFDataset={onSelectHFDataset}
+                        onConfigChange={onConfigChange}
+                        onSplitChange={onSplitChange}
+                        prefetchColumns={prefetchColumns}
+                        isPrefetching={isPrefetching}
+                        availableColumns={availableColumns}
+                        detectedColumns={detectedColumns}
+                        hfTotalRows={hfTotalRows}
+                        hfPreviewData={hfPreviewData}
+                        isLoadingHfPreview={isLoadingHfPreview}
+                        rowsToFetch={hfRowsToFetch}
+                        onRowsToFetchChange={setHfRowsToFetch}
+                        skipRows={hfSkipRows}
+                        onSkipRowsChange={setHfSkipRows}
+                        isImporting={isImporting}
+                        onImport={onHfImport}
+                        importError={hfImportError}
+                    />
                 </div>
             </div>
 
             {/* Orphaned Logs Section - Manual check button or results */}
             <div className="mt-8 text-center">
-                {!isCheckingOrphans && !orphanedLogsInfo?.hasOrphanedLogs && (
+                {!isCheckingOrphans && !orphanedLogsInfo?.hasOrphanedLogs && !isSyncing && (
                     <div className="animate-in fade-in">
-                        <p className="text-xs text-slate-500 mb-3">Check if there are any logs without matching sessions.</p>
-                        <button
-                            onClick={handleCheckOrphans}
-                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-all border border-slate-700"
-                        >
-                            <Search className="w-3.5 h-3.5" />
-                            Check for Orphaned Logs
-                        </button>
+                        <p className="text-xs text-slate-400 mb-3">Check if there are any logs without matching sessions.</p>
+                        <div className="flex items-center justify-center gap-2">
+                            <button
+                                onClick={handleCheckOrphans}
+                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900/60 hover:bg-slate-800/70 text-slate-200 text-xs font-medium transition-all border border-slate-700/70"
+                            >
+                                <Search className="w-3.5 h-3.5" />
+                                Check for Orphaned Logs
+                            </button>
+                        </div>
+                    </div>
+                )}
+                {!isCheckingOrphans && !orphanedLogsInfo?.hasOrphanedLogs && isSyncing && (
+                    <div className="animate-in fade-in">
+                        <div className="max-w-md mx-auto bg-slate-900/60 border border-slate-700/70 rounded-xl p-4">
+                            <div className="flex items-center justify-center gap-3">
+                                <RefreshCcw className="w-5 h-5 text-slate-300 animate-spin" />
+                                <span className="text-xs text-slate-300">Syncing orphaned logs in background…</span>
+                            </div>
+                            {orphanSyncProgress && (
+                                <div className="mt-3 text-[10px] text-slate-400">
+                                    <div>Scanned {orphanSyncProgress.scannedCount?.toLocaleString?.() || 0} logs</div>
+                                    <div>Orphaned sessions: {orphanSyncProgress.orphanedSessions?.toLocaleString?.() || 0}</div>
+                                    <div>Updated logs: {orphanSyncProgress.updatedLogs?.toLocaleString?.() || 0}</div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
                 {isCheckingOrphans && (
                     <div className="animate-in fade-in">
-                        <div className="max-w-md mx-auto bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+                        <div className="max-w-md mx-auto bg-slate-900/60 border border-slate-700/70 rounded-xl p-4">
                             <div className="flex items-center justify-center gap-3">
-                                <RefreshCcw className="w-5 h-5 text-slate-400 animate-spin" />
-                                <span className="text-xs text-slate-400">Checking for orphaned logs...</span>
+                                <RefreshCcw className="w-5 h-5 text-slate-300 animate-spin" />
+                                <span className="text-xs text-slate-300">Checking for orphaned logs...</span>
                             </div>
+                            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-800/80">
+                                <div className="h-full w-1/2 animate-pulse rounded-full bg-gradient-to-r from-sky-400/40 via-sky-400 to-sky-400/40" />
+                            </div>
+                            {orphanScanProgress && (
+                                <div className="mt-3 text-[10px] text-slate-400">
+                                    <div>Scanned {orphanScanProgress.scannedCount.toLocaleString()} logs</div>
+                                    <div>Orphaned sessions: {orphanScanProgress.orphanedSessionCount.toLocaleString()}</div>
+                                    <div>Orphaned logs: {orphanScanProgress.totalOrphanedLogs.toLocaleString()}</div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -176,6 +244,11 @@ export default function ImportTab({
                                     <p className="text-xs text-amber-200/70 mb-3">
                                         Found <span className="font-bold text-amber-300">{orphanedLogsInfo.totalOrphanedLogs} logs</span> across{' '}
                                         <span className="font-bold text-amber-300">{orphanedLogsInfo.orphanedSessionCount} sessions</span> without matching session records.
+                                        {orphanedLogsInfo.isPartialScan && (
+                                            <span className="block mt-2 text-[10px] text-amber-200/60">
+                                                Partial scan: scanned {orphanedLogsInfo.scannedCount?.toLocaleString() || 0} logs. Results may be incomplete.
+                                            </span>
+                                        )}
                                     </p>
                                     <button
                                         onClick={handleSyncOrphanedLogs}
@@ -185,6 +258,20 @@ export default function ImportTab({
                                         {isSyncing ? <RefreshCcw className="w-3.5 h-3.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5" />}
                                         Sync Now
                                     </button>
+                                    {isSyncing && orphanSyncProgress && (
+                                        <div className="mt-3 text-[10px] text-amber-200/70 space-y-1">
+                                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-amber-900/40">
+                                                <div className="h-full w-1/2 animate-pulse rounded-full bg-gradient-to-r from-amber-400/40 via-amber-400 to-amber-400/40" />
+                                            </div>
+                                            <div>
+                                                {orphanSyncProgress.phase === 'scan' ? 'Scanning logs' : 'Reassigning logs'} • Scanned {(orphanSyncProgress.scannedCount ?? 0).toLocaleString()}
+                                            </div>
+                                            <div>Orphaned sessions: {(orphanSyncProgress.orphanedSessions ?? 0).toLocaleString()}</div>
+                                            {orphanSyncProgress.phase === 'reassign' && (
+                                                <div>Updated logs: {(orphanSyncProgress.updatedLogs ?? 0).toLocaleString()}</div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>

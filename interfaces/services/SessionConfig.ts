@@ -19,6 +19,7 @@ import {
     GenerationParams
 } from '../../types';
 import { SessionStatus } from '../enums/SessionStatus';
+import { SessionVerificationStatus } from '../enums/SessionVerificationStatus';
 import { StorageMode } from '../enums/StorageMode';
 
 /**
@@ -37,6 +38,8 @@ export interface SessionData {
     storageMode: StorageMode;
     /** Session format version for migration support */
     version: number;
+    /** Verification status for the session */
+    verificationStatus?: SessionVerificationStatus;
     /** ISO timestamp when session was created */
     createdAt: string;
     /** Unique session identifier for tracking logs */

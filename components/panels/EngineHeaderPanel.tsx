@@ -21,23 +21,23 @@ export default function EngineHeaderPanel({
     return (
         <>
             <div className="flex items-center justify-between w-full">
-                <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 w-full">
-                    <button onClick={() => onEngineModeChange(EngineMode.Regular)} className={`px-2 py-1 w-full text-[10px] font-bold rounded transition-all ${engineMode === EngineMode.Regular ? 'bg-slate-700 text-white' : 'text-slate-500'}`}>REGULAR</button>
-                    <button onClick={() => onEngineModeChange(EngineMode.Deep)} className={`px-2 py-1 w-full text-[10px] font-bold rounded transition-all gap-1 ${engineMode === EngineMode.Deep ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>
+                <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800/70 w-full">
+                    <button onClick={() => onEngineModeChange(EngineMode.Regular)} className={`px-2 py-1 w-full text-[10px] font-bold rounded transition-all ${engineMode === EngineMode.Regular ? 'bg-slate-800/70 text-white' : 'text-slate-400'}`}>REGULAR</button>
+                    <button onClick={() => onEngineModeChange(EngineMode.Deep)} className={`px-2 py-1 w-full text-[10px] font-bold rounded transition-all gap-1 ${engineMode === EngineMode.Deep ? 'bg-sky-600 text-white' : 'text-slate-400'}`}>
                         DEEP
                     </button>
                 </div>
             </div>
 
             <div className="space-y-1">
-                <label className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1">
+                <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
                     <FileText className="w-3 h-3" /> Prompts (Session)
                 </label>
                 <div className="flex gap-1">
                     <select
                         value={sessionPromptSet || ''}
                         onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onSessionPromptSetChange(e.target.value || null)}
-                        className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                        className="flex-1 bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-sky-500 outline-none"
                     >
                         <option value="">{SettingsService.getSettings().promptSet || 'default'} (your default)</option>
                         {availablePromptSets.filter((s: string) => s !== (SettingsService.getSettings().promptSet || 'default')).map((setId: string) => (
@@ -47,7 +47,7 @@ export default function EngineHeaderPanel({
                     {sessionPromptSet && (
                         <button
                             onClick={() => onSessionPromptSetChange(null)}
-                            className="px-2 py-1 text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded border border-slate-700 transition-colors"
+                            className="px-2 py-1 text-[10px] font-bold bg-slate-900/60 hover:bg-slate-800/70 text-slate-300 hover:text-white rounded border border-slate-700/70 transition-colors"
                             title="Reset to your default prompt set"
                         >
                             Reset

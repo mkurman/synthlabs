@@ -25,7 +25,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
 
   // Get selected fields from config (for field selection feature)
   const selectedFields = config.selectedFields;
-  
+
   logger.log('[callExternalApi] Field selection debug:', {
     selectedFields,
     hasPromptSchema: !!promptSchema,
@@ -165,6 +165,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         }
       } : undefined),
       stream: shouldStream,
+      ...(shouldStream ? { include_usage: true, stream_options: { include_usage: true } } : {}),
       ...cleanGenParams
     };
 
@@ -185,10 +186,11 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       response_format: structuredOutput && provider !== ExternalProvider.Ollama ? { type: responseFormat } : undefined,
       stream: shouldStream,
+      ...(shouldStream ? { include_usage: true, stream_options: { include_usage: true } } : {}),
       ...(tools && tools.length > 0 ? { tools } : {}),
       ...cleanGenParams
     };
-    
+
     if (cleanGenParams.temperature === undefined) {
       const defaults = SettingsService.getSettings().defaultGenerationParams;
       if (defaults && defaults.temperature !== undefined) {
@@ -230,7 +232,6 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           response,
           provider,
           (chunk, accumulated, usage) => {
-            console.log('externalApiService callExternalApi wrapper - usage:', usage);
             onStreamChunk!(chunk, accumulated, streamPhase, usage);
           },
           signal,
@@ -320,7 +321,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
 
     } catch (err: any) {
       if (err.name === 'AbortError') throw err;
-      
+
       // If MissingFieldsError, don't retry - the model returned incomplete data
       if (err instanceof MissingFieldsError) {
         logger.error(`Missing required fields in response: ${err.missingFields.join(', ')}`);

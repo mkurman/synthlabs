@@ -66,10 +66,10 @@ export default function SessionItem({
         <div
             onClick={() => onSelect(session.id)}
             className={`
-        group relative flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all mb-1
+        group relative flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all mb-1 border
         ${isActive
-                    ? 'bg-teal-900/40 border-l-4 border-teal-500'
-                    : 'hover:bg-slate-800 border-l-4 border-transparent'
+                    ? 'bg-slate-900/60 border-sky-500/40 ring-1 ring-sky-500/20'
+                    : 'border-transparent hover:border-slate-800/70 hover:bg-slate-950/60'
                 }
       `}
         >
@@ -83,19 +83,19 @@ export default function SessionItem({
                         onBlur={() => handleRenameSubmit()}
                         onKeyDown={handleKeyDown}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-teal-500"
+                        className="w-full bg-slate-950/60 border border-slate-700/70 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-sky-500/60"
                     />
                 ) : (
                     <div className="flex flex-col">
-                        <h3 className={`text-sm font-medium truncate ${isActive ? 'text-teal-50' : 'text-slate-300'}`}>
+                        <h3 className={`text-sm font-semibold truncate ${isActive ? 'text-white' : 'text-slate-200'}`}>
                             {session.name || 'Untitled Session'}
                         </h3>
                         <div className="flex items-center gap-2 mt-1">
-                            <div className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${session.storageMode === StorageMode.Cloud ? 'border-sky-800 bg-sky-950/50 text-sky-400' : 'border-slate-700 bg-slate-800/50 text-slate-400'}`}>
+                            <div className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${session.storageMode === StorageMode.Cloud ? 'border-sky-700/50 bg-sky-950/40 text-sky-300' : 'border-slate-700/70 bg-slate-950/50 text-slate-300'}`}>
                                 {environment === Environment.Production ? <Cloud className="w-2.5 h-2.5" /> : <HardDrive className="w-2.5 h-2.5" />}
                                 <span>{session.logCount ?? session.itemCount ?? 0}</span>
                             </div>
-                            <span className="text-xs text-slate-500 truncate">
+                            <span className="text-xs text-slate-400 truncate">
                                 {new Date(session.timestamp || session.updatedAt || session.createdAt || Date.now()).toLocaleDateString()} {new Date(session.timestamp || session.updatedAt || session.createdAt || Date.now()).toLocaleTimeString()}
                             </span>
                         </div>
@@ -111,14 +111,14 @@ export default function SessionItem({
                             setNewName(session.name || '');
                             setIsRenaming(true);
                         }}
-                        className="p-1.5 hover:bg-slate-700 rounded text-slate-400 hover:text-white"
+                        className="p-1.5 hover:bg-slate-800/70 rounded text-slate-300 hover:text-white"
                         title="Rename"
                     >
                         <Edit2 className="w-3 h-3" />
                     </button>
                     <button
                         onClick={handleDelete}
-                        className="p-1.5 hover:bg-red-900/50 rounded text-slate-400 hover:text-red-400"
+                        className="p-1.5 hover:bg-red-900/40 rounded text-slate-300 hover:text-red-300"
                         title="Delete"
                     >
                         <Trash2 className="w-3 h-3" />

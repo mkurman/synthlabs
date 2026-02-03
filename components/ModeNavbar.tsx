@@ -34,13 +34,13 @@ export default function ModeNavbar({
     };
 
     return (
-        <nav className="flex items-center justify-between p-2 bg-slate-900 border-b border-slate-800">
-            <div className="flex gap-2">
+        <nav className="flex items-center justify-between px-4 py-3 bg-slate-950/80 border-b border-slate-800/70 backdrop-blur-xl">
+            <div className="flex gap-2 rounded-lg bg-slate-950/70 border border-slate-800/70 p-1">
                 <button
                     onClick={() => handleModeChange(AppMode.Creator)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all font-medium text-sm ${currentMode === AppMode.Creator
-                        ? 'bg-teal-600 text-white shadow-lg shadow-teal-900/20'
-                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all font-semibold text-sm ${currentMode === AppMode.Creator
+                        ? 'bg-slate-100 text-slate-900 shadow-sm'
+                        : 'text-slate-300 hover:text-slate-100 hover:bg-slate-900/60'
                         }`}
                 >
                     <Sparkles className="w-4 h-4" />
@@ -48,9 +48,9 @@ export default function ModeNavbar({
                 </button>
                 <button
                     onClick={() => handleModeChange(AppMode.Verifier)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all font-medium text-sm ${currentMode === AppMode.Verifier
-                        ? 'bg-teal-600 text-white shadow-lg shadow-teal-900/20'
-                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all font-semibold text-sm ${currentMode === AppMode.Verifier
+                        ? 'bg-slate-100 text-slate-900 shadow-sm'
+                        : 'text-slate-300 hover:text-slate-100 hover:bg-slate-900/60'
                         }`}
                 >
                     <ShieldCheck className="w-4 h-4" />
@@ -59,17 +59,17 @@ export default function ModeNavbar({
             </div>
 
             {/* Session Name Display */}
-            <div className="flex items-center px-4">
-                <span className="text-slate-400 text-sm mr-2">Session:</span>
+            <div className="flex items-center px-2">
+                <span className="text-slate-300 text-xs uppercase tracking-wider mr-2">Session</span>
                 <input
                     type="text"
                     value={sessionName || ''}
                     onChange={(e) => onSessionNameChange(e.target.value)}
                     placeholder="Untitled Session"
-                    className="bg-transparent border-b border-transparent hover:border-slate-700 focus:border-teal-500 focus:outline-none text-slate-200 text-sm transition-colors py-1 px-1 w-48 truncate"
+                    className="bg-transparent border-b border-transparent hover:border-slate-700/70 focus:border-sky-500 focus:outline-none text-slate-100 text-sm transition-colors py-1 px-1 w-56 truncate"
                 />
                 {isDirty && (
-                    <span className="ml-2 text-xs text-amber-500 font-medium px-2 py-0.5 bg-amber-950/30 rounded-full">
+                    <span className="ml-2 text-[10px] text-amber-300 font-semibold px-2 py-0.5 bg-amber-950/40 rounded-full border border-amber-900/40">
                         Unsaved
                     </span>
                 )}

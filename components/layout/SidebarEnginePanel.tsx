@@ -1,4 +1,5 @@
 import { GenerationParams, HuggingFaceConfig, UserAgentConfig, DeepConfig } from '../../types';
+import { Layers, Sparkles, Users } from 'lucide-react';
 import { ApiType, CreatorMode, DataSource, DeepPhase, EngineMode, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
 import { OutputField } from '../../interfaces/types/PromptSchema';
 import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
@@ -11,6 +12,7 @@ import DeepPhaseTabsPanel from '../panels/DeepPhaseTabsPanel';
 import ConversationRewritePanel from '../panels/ConversationRewritePanel';
 import UserAgentConfigPanel from '../panels/UserAgentConfigPanel';
 import RetryConfigPanel from '../panels/RetryConfigPanel';
+import CollapsibleSection from './CollapsibleSection';
 
 interface SidebarEnginePanelProps {
     engineMode: EngineMode;
@@ -212,27 +214,45 @@ export default function SidebarEnginePanel({
                 </div>
             ) : (
                 <div className="space-y-4">
-                    <DeepPhaseTabsPanel
-                        activeDeepTab={activeDeepTab}
-                        onActiveDeepTabChange={onActiveDeepTabChange}
-                        deepConfig={deepConfig}
-                        onUpdatePhase={onUpdatePhase}
-                        onCopyToAll={onCopyToAll}
-                    />
-                    <ConversationRewritePanel
-                        appMode={appMode}
-                        dataSourceMode={dataSourceMode}
-                        conversationRewriteMode={conversationRewriteMode}
-                        onConversationRewriteModeChange={onConversationRewriteModeChange}
-                        onDisableUserAgent={onDisableUserAgent}
-                        hfConfig={hfConfig}
-                        onHfConfigChange={onHfConfigChange}
-                    />
-                    <UserAgentConfigPanel
-                        userAgentConfig={userAgentConfig}
-                        onUserAgentConfigChange={onUserAgentConfigChange}
-                        onDisableConversationRewrite={() => onConversationRewriteModeChange(false)}
-                    />
+                    <CollapsibleSection
+                        title="Deep Phases"
+                        icon={<Layers className="w-3.5 h-3.5 text-sky-400" />}
+                        defaultExpanded
+                    >
+                        <DeepPhaseTabsPanel
+                            activeDeepTab={activeDeepTab}
+                            onActiveDeepTabChange={onActiveDeepTabChange}
+                            deepConfig={deepConfig}
+                            onUpdatePhase={onUpdatePhase}
+                            onCopyToAll={onCopyToAll}
+                        />
+                    </CollapsibleSection>
+                    <CollapsibleSection
+                        title="Conversation Rewrite"
+                        icon={<Sparkles className="w-3.5 h-3.5 text-sky-400" />}
+                        summary={conversationRewriteMode ? 'Enabled' : 'Disabled'}
+                    >
+                        <ConversationRewritePanel
+                            appMode={appMode}
+                            dataSourceMode={dataSourceMode}
+                            conversationRewriteMode={conversationRewriteMode}
+                            onConversationRewriteModeChange={onConversationRewriteModeChange}
+                            onDisableUserAgent={onDisableUserAgent}
+                            hfConfig={hfConfig}
+                            onHfConfigChange={onHfConfigChange}
+                        />
+                    </CollapsibleSection>
+                    <CollapsibleSection
+                        title="User Agent"
+                        icon={<Users className="w-3.5 h-3.5 text-sky-400" />}
+                        summary={userAgentConfig?.enabled ? 'Enabled' : 'Disabled'}
+                    >
+                        <UserAgentConfigPanel
+                            userAgentConfig={userAgentConfig}
+                            onUserAgentConfigChange={onUserAgentConfigChange}
+                            onDisableConversationRewrite={() => onConversationRewriteModeChange(false)}
+                        />
+                    </CollapsibleSection>
                 </div>
             )}
 

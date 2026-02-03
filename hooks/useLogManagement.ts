@@ -54,6 +54,8 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
   
   // Refs
   const sessionUidRef = useRef(sessionUid);
+  const totalLogCountRef = useRef(totalLogCount);
+  const isDeletingRef = useRef(false);
   const prefetchedPageRef = useRef<{
     page: number;
     sessionUid: string;
@@ -62,6 +64,11 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
     logs: SynthLogItem[];
     filteredCount: number;
   } | null>(null);
+
+  // Keep totalLogCountRef in sync
+  useEffect(() => {
+    totalLogCountRef.current = totalLogCount;
+  }, [totalLogCount]);
   
   // Keep sessionUidRef in sync
   useEffect(() => {
@@ -124,7 +131,24 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
 
   // Refresh logs from storage (environment-aware)
   const refreshLogs = useCallback(async () => {
-    const currentSessionId = sessionUidRef.current;
+    // Skip refresh if a delete operation is in progress
+    if (isDeletingRef.current) {
+      return;
+    }
+
+    // Skip loading if no session is selected
+    if (!sessionUid) {
+      setVisibleLogs([]);
+      setTotalLogCount(0);
+      setFilteredLogCount(0);
+      setHasInvalidLogs(false);
+      setIsLoading(false);
+      return;
+    }
+
+    // Use ref for mid-generation updates when sessionUid might have just been set
+    const currentSessionId = sessionUidRef.current || sessionUid;
+
     const effectivePageSize = feedPageSize === -1 ? Number.MAX_SAFE_INTEGER : feedPageSize;
     const prefetched = prefetchedPageRef.current;
 
@@ -143,7 +167,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
       let result: { logs: SynthLogItem[]; totalCount: number; filteredCount: number };
 
       if (shouldUsePrefetch) {
-        result = { logs: prefetched.logs, totalCount: totalLogCount, filteredCount: prefetched.filteredCount };
+        result = { logs: prefetched.logs, totalCount: totalLogCountRef.current, filteredCount: prefetched.filteredCount };
       } else if (environment === Environment.Production && FirebaseService.isFirebaseConfigured()) {
         // Production: Fetch from Firebase
         result = await fetchLogsFromFirebase(currentSessionId, currentPage, effectivePageSize, logFilter);
@@ -159,7 +183,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
 
       setVisibleLogs(result.logs);
       const nextTotal = shouldUsePrefetch
-        ? (totalLogCount || result.totalCount)
+        ? (totalLogCountRef.current || result.totalCount)
         : result.totalCount;
       setTotalLogCount(nextTotal);
       setFilteredLogCount(result.filteredCount);
@@ -203,7 +227,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
     } finally {
       setIsLoading(false);
     }
-  }, [currentPage, feedPageSize, logFilter, logsTrigger, totalLogCount, isInvalidLog, showLatestOnly, environment, fetchLogsFromFirebase, sessionUid]);
+  }, [currentPage, feedPageSize, logFilter, logsTrigger, isInvalidLog, showLatestOnly, environment, fetchLogsFromFirebase, sessionUid]);
   
   // Initial load and refresh trigger
   useEffect(() => {
@@ -234,21 +258,29 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
   const handleDeleteLog = useCallback(async (id: string) => {
     const logItem = visibleLogs.find(l => l.id === id);
     if (logItem) {
-      // Delete from UI immediately
-      setVisibleLogs(prev => prev.filter(l => l.id !== id));
-      setTotalLogCount(prev => Math.max(0, prev - 1));
-      setFilteredLogCount(prev => Math.max(0, prev - 1));
-      
-      // Delete from Local Storage
-      await LogStorageService.deleteLog(sessionUid, id);
-      
-      // Delete from Firebase if in Production and Saved
-      if (environment === Environment.Production && FirebaseService.isFirebaseConfigured() && logItem.savedToDb) {
-        try {
-          await FirebaseService.deleteLogItem(id);
-        } catch (e) {
-          console.error("Failed to delete log from Firebase:", e);
+      // Set deleting flag to prevent refresh during delete
+      isDeletingRef.current = true;
+
+      try {
+        // Delete from UI immediately
+        setVisibleLogs(prev => prev.filter(l => l.id !== id));
+        setTotalLogCount(prev => Math.max(0, prev - 1));
+        setFilteredLogCount(prev => Math.max(0, prev - 1));
+
+        // Delete from Local Storage
+        await LogStorageService.deleteLog(sessionUid, id);
+
+        // Delete from backend/Firebase if in Production and saved
+        if (environment === Environment.Production && logItem.savedToDb) {
+          try {
+            await FirebaseService.deleteLogItem(id);
+          } catch (e) {
+            console.error("Failed to delete log from Firebase:", e);
+          }
         }
+      } finally {
+        // Clear deleting flag
+        isDeletingRef.current = false;
       }
     }
   }, [visibleLogs, sessionUid, environment]);

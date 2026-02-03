@@ -40,7 +40,7 @@ export default function SessionSidebar({
             {/* Mobile Menu Toggle */}
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="lg:hidden fixed top-4 left-4 z-50 w-10 h-10 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center justify-center transition-all"
+                className="lg:hidden fixed top-4 left-4 z-50 w-10 h-10 rounded-lg bg-slate-950/70 hover:bg-slate-800/70 border border-slate-800/70 flex items-center justify-center transition-all backdrop-blur"
                 aria-label="Toggle session menu"
             >
                 {isOpen ? <X className="w-5 h-5 text-white" /> : <Menu className="w-5 h-5 text-white" />}
@@ -58,20 +58,20 @@ export default function SessionSidebar({
             <aside
                 className={`
                     fixed lg:static inset-y-0 left-0 z-40
-                    w-72 bg-slate-900 border-r border-slate-800
+                    w-72 bg-slate-950/80 border-r border-slate-800/70 backdrop-blur-xl
                     flex flex-col
                     transform transition-transform duration-300 ease-in-out
                     ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
                 `}
             >
                 {/* Header */}
-                <div className="p-4 border-b border-slate-800 space-y-3">
+                <div className="p-4 border-b border-slate-800/70 space-y-3">
                     {/* Title + New Button */}
                     <div className="flex items-center justify-between">
-                        <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Sessions</h2>
+                        <h2 className="text-sm font-bold text-slate-300 uppercase tracking-wider">Sessions</h2>
                         <button
                             onClick={handleNewSession}
-                            className="w-8 h-8 rounded-lg bg-teal-600 hover:bg-teal-500 flex items-center justify-center transition-all group"
+                            className="w-8 h-8 rounded-lg bg-sky-600 hover:bg-sky-500 flex items-center justify-center transition-all group"
                             aria-label="New session"
                         >
                             <Plus className="w-4 h-4 text-white group-hover:rotate-90 transition-transform" />
@@ -82,20 +82,20 @@ export default function SessionSidebar({
                     <div className="flex gap-2">
                         <button
                             onClick={() => onModeChange(AppView.Creator)}
-                            className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                            className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                                 currentMode === AppView.Creator
-                                    ? 'bg-teal-600 text-white'
-                                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
+                                    ? 'bg-slate-100 text-slate-900'
+                                    : 'bg-slate-950/60 text-slate-300 hover:bg-slate-900/60 hover:text-white'
                             }`}
                         >
                             Creator
                         </button>
                         <button
                             onClick={() => onModeChange(AppView.Verifier)}
-                            className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                            className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                                 currentMode === AppView.Verifier
-                                    ? 'bg-pink-600 text-white'
-                                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
+                                    ? 'bg-slate-100 text-slate-900'
+                                    : 'bg-slate-950/60 text-slate-300 hover:bg-slate-900/60 hover:text-white'
                             }`}
                         >
                             Verifier
@@ -106,7 +106,7 @@ export default function SessionSidebar({
                     <select
                         value={sortBy}
                         onChange={(e) => onSortChange(e.target.value as SessionSort)}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-teal-500 outline-none"
+                        className="w-full bg-slate-950/60 border border-slate-800/70 rounded-lg px-3 py-2 text-xs text-white focus:border-sky-500/50 outline-none"
                     >
                         <option value={SessionSort.Recent}>Most Recent</option>
                         <option value={SessionSort.Oldest}>Oldest First</option>

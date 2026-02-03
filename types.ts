@@ -1,4 +1,5 @@
 import type { StreamingPhase } from './interfaces/enums/StreamingPhase';
+import type { CreatorMode, EngineMode } from './interfaces/enums';
 
 // Enums
 export { LogItemStatus } from './interfaces/enums';
@@ -20,7 +21,7 @@ export { ResponderPhase } from './interfaces/enums';
 export { ChatRole } from './interfaces/enums';
 
 // Models
-export type { ChatMessage } from './interfaces/models/ChatMessage';
+export type { ChatMessage, ChatUsageSummary } from './interfaces/models/ChatMessage';
 export type { SynthLogItem } from './interfaces/models/SynthLogItem';
 export type { VerifierItem } from './interfaces/models/VerifierItem';
 export type { ProviderModel } from './interfaces/models/ProviderModel';
@@ -112,6 +113,16 @@ export interface FirebaseConfig {
   appId: string;
 }
 
+export interface SessionListFilters {
+  search: string;
+  onlyWithLogs: boolean;
+  minRows: number | null;
+  maxRows: number | null;
+  appMode: CreatorMode | null;
+  engineMode: EngineMode | null;
+  model: string;
+}
+
 export type StreamPhase = 'writer' | 'rewriter' | 'user_followup' | 'regular';
 
 export interface UsageData {
@@ -166,6 +177,23 @@ export interface AutoscoreConfig {
   maxRetries: number;
   retryDelay: number;
   generationParams?: import('./interfaces/config/GenerationParams').GenerationParams;
+}
+
+export interface AutoscoreToolParams {
+  indices?: number[];
+  scores?: number[];
+}
+
+export interface AutoscoreToolResult {
+  scored: number;
+  skipped: number;
+  errors: number;
+}
+
+export interface SessionListToolParams {
+  minRows?: number;
+  maxRows?: number;
+  limit?: number;
 }
 
 export interface ElectronAPI {

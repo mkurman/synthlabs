@@ -24,7 +24,7 @@ export default function SessionControls({
     const modeColor = currentSession.mode === AppView.Creator ? 'teal' : 'pink';
 
     return (
-        <div className="p-4 border-b border-slate-800 space-y-3">
+        <div className="p-4 border-b border-slate-800/70 space-y-3">
             {/* Session Info */}
             <div>
                 <h3 className="text-sm font-medium text-white truncate mb-1">
@@ -34,7 +34,7 @@ export default function SessionControls({
                     <span className={`px-1.5 py-0.5 rounded bg-${modeColor}-600/30 text-${modeColor}-400 font-medium`}>
                         {currentSession.mode}
                     </span>
-                    <span className="text-slate-500">{currentSession.itemCount} items</span>
+                    <span className="text-slate-400">{currentSession.itemCount} items</span>
                 </div>
             </div>
 
@@ -43,7 +43,7 @@ export default function SessionControls({
                 {!isGenerating && !isPaused && !isCompleted && (
                     <button
                         onClick={() => onAction(ControlAction.Start)}
-                        className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium transition-all"
+                        className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-all"
                     >
                         <Play className="w-4 h-4" />
                         <span>Start</span>
@@ -63,7 +63,7 @@ export default function SessionControls({
                 {isPaused && (
                     <button
                         onClick={() => onAction(ControlAction.Resume)}
-                        className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium transition-all"
+                        className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-all"
                     >
                         <Play className="w-4 h-4" />
                         <span>Resume</span>
@@ -83,7 +83,7 @@ export default function SessionControls({
                 <button
                     onClick={() => onAction(ControlAction.Clear)}
                     disabled={isGenerating}
-                    className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-900/60 hover:bg-slate-800/70 text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <RotateCcw className="w-4 h-4" />
                     <span>Clear</span>
@@ -92,7 +92,7 @@ export default function SessionControls({
                 <button
                     onClick={() => onAction(ControlAction.Stop)}
                     disabled={isGenerating}
-                    className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-red-600 text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-900/60 hover:bg-red-600 text-white text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <Trash2 className="w-4 h-4" />
                     <span>Delete</span>
@@ -101,28 +101,28 @@ export default function SessionControls({
 
             {/* Session Stats */}
             {currentSession.analytics && (
-                <div className="pt-3 border-t border-slate-800">
+                <div className="pt-3 border-t border-slate-800/70">
                     <div className="grid grid-cols-2 gap-3 text-xs">
                         <div>
-                            <div className="text-slate-500 mb-0.5">Completed</div>
+                            <div className="text-slate-400 mb-0.5">Completed</div>
                             <div className="text-white font-medium">
                                 {currentSession.analytics.completedItems} / {currentSession.analytics.totalItems}
                             </div>
                         </div>
                         <div>
-                            <div className="text-slate-500 mb-0.5">Success Rate</div>
+                            <div className="text-slate-400 mb-0.5">Success Rate</div>
                             <div className="text-white font-medium">
                                 {currentSession.analytics.successRate.toFixed(1)}%
                             </div>
                         </div>
                         <div>
-                            <div className="text-slate-500 mb-0.5">Total Tokens</div>
+                            <div className="text-slate-400 mb-0.5">Total Tokens</div>
                             <div className="text-white font-medium">
                                 {currentSession.analytics.totalTokens.toLocaleString()}
                             </div>
                         </div>
                         <div>
-                            <div className="text-slate-500 mb-0.5">Total Cost</div>
+                            <div className="text-slate-400 mb-0.5">Total Cost</div>
                             <div className="text-white font-medium">
                                 ${currentSession.analytics.totalCost.toFixed(4)}
                             </div>

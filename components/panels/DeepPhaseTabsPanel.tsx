@@ -20,12 +20,12 @@ export default function DeepPhaseTabsPanel({
 }: DeepPhaseTabsPanelProps) {
     return (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
-            <div className="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 mb-4 overflow-x-auto no-scrollbar">
-                <button onClick={() => onActiveDeepTabChange(DeepPhase.Meta)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Meta ? 'bg-purple-600 text-white' : 'text-slate-500 hover:text-white'}`}><BrainCircuit className="w-3.5 h-3.5" /></button>
-                <button onClick={() => onActiveDeepTabChange(DeepPhase.Retrieval)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Retrieval ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-white'}`}><Search className="w-3.5 h-3.5" /></button>
-                <button onClick={() => onActiveDeepTabChange(DeepPhase.Derivation)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Derivation ? 'bg-amber-600 text-white' : 'text-slate-500 hover:text-white'}`}><GitBranch className="w-3.5 h-3.5" /></button>
-                <button onClick={() => onActiveDeepTabChange(DeepPhase.Writer)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Writer ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-white'}`}><PenTool className="w-3.5 h-3.5" /></button>
-                <button onClick={() => onActiveDeepTabChange(DeepPhase.Rewriter)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Rewriter ? 'bg-pink-600 text-white' : 'text-slate-500 hover:text-white'}`}><FileEdit className="w-3.5 h-3.5" /></button>
+            <div className="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800/70 mb-4 overflow-x-auto no-scrollbar">
+                <button onClick={() => onActiveDeepTabChange(DeepPhase.Meta)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Meta ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><BrainCircuit className="w-3.5 h-3.5" /></button>
+                <button onClick={() => onActiveDeepTabChange(DeepPhase.Retrieval)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Retrieval ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}><Search className="w-3.5 h-3.5" /></button>
+                <button onClick={() => onActiveDeepTabChange(DeepPhase.Derivation)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Derivation ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}><GitBranch className="w-3.5 h-3.5" /></button>
+                <button onClick={() => onActiveDeepTabChange(DeepPhase.Writer)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Writer ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'}`}><PenTool className="w-3.5 h-3.5" /></button>
+                <button onClick={() => onActiveDeepTabChange(DeepPhase.Rewriter)} className={`p-2 rounded-md transition-all flex items-center gap-2 ${activeDeepTab === DeepPhase.Rewriter ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}><FileEdit className="w-3.5 h-3.5" /></button>
             </div>
             {activeDeepTab === DeepPhase.Writer && (
                 <DeepPhaseConfigPanel

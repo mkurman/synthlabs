@@ -30,8 +30,8 @@ const getRoleStyles = (role: string) => {
     switch (role) {
         case 'user':
             return {
-                avatar: 'bg-indigo-500/20 text-indigo-400',
-                bubble: 'bg-indigo-600/30 text-indigo-100 border border-indigo-500/30',
+                avatar: 'bg-sky-500/15 text-sky-300',
+                bubble: 'bg-slate-950/70 text-slate-100 border border-slate-700/70',
                 icon: User,
                 label: 'User',
                 align: 'flex-row-reverse',
@@ -39,8 +39,8 @@ const getRoleStyles = (role: string) => {
             };
         case 'system':
             return {
-                avatar: 'bg-violet-500/20 text-violet-400',
-                bubble: 'bg-violet-900/30 text-violet-100 border border-violet-500/30',
+                avatar: 'bg-amber-400/15 text-amber-300',
+                bubble: 'bg-amber-500/10 text-amber-100 border border-amber-400/20',
                 icon: Settings,
                 label: 'System',
                 align: '',
@@ -49,8 +49,8 @@ const getRoleStyles = (role: string) => {
         case 'assistant':
         default:
             return {
-                avatar: 'bg-emerald-500/20 text-emerald-400',
-                bubble: 'bg-slate-800 text-slate-200 border border-slate-700',
+                avatar: 'bg-slate-900/60 text-slate-100',
+                bubble: 'bg-slate-950/70 text-slate-100 border border-slate-800/70',
                 icon: Bot,
                 label: 'Assistant',
                 align: '',
@@ -106,14 +106,14 @@ const ConversationView: React.FC<ConversationViewProps> = ({
 
     if (!messages || messages.length === 0) {
         return (
-            <div className="text-slate-500 text-sm italic p-4">
+            <div className="text-slate-400 text-sm italic p-4">
                 No conversation messages.
             </div>
         );
     }
 
     return (
-        <div className="space-y-3">
+        <div className="space-y-4">
             {messages.map((msg, idx) => {
                 const parsed = parseThinkTagsForDisplay(msg.content || '');
                 const displayReasoning = msg.reasoning_content || parsed.reasoning;
@@ -130,7 +130,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                     >
                         {/* Avatar */}
                         <div
-                            className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${styles.avatar}`}
+                            className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ring-1 ring-slate-700/50 ${styles.avatar}`}
                         >
                             <IconComponent className="w-4 h-4" />
                         </div>
@@ -140,16 +140,16 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                             className={`flex-1 max-w-[85%] ${styles.textAlign}`}
                         >
                             <div
-                                className={`inline-block w-full text-left rounded-xl px-4 py-3 text-sm leading-relaxed relative ${styles.bubble}`}
+                                className={`inline-block w-full text-left rounded-lg px-4 py-3 text-sm leading-relaxed relative shadow-sm ${styles.bubble}`}
                             >
                                 {/* Edit/Rewrite Controls */}
                                 <div className={`absolute top-2 ${msg.role === ChatRole.User ? 'left-2' : 'right-2'} opacity-0 group-hover:opacity-100 transition-opacity flex gap-1`}>
                                     {isEditing ? (
                                         <>
-                                            <button onClick={onEditSave} className="p-1 text-green-400 hover:bg-green-900/30 rounded" title="Save">
+                                            <button onClick={onEditSave} className="p-1 text-emerald-300 hover:bg-emerald-900/30 rounded" title="Save">
                                                 <Check className="w-3 h-3" />
                                             </button>
-                                            <button onClick={onEditCancel} className="p-1 text-red-400 hover:bg-red-900/30 rounded" title="Cancel">
+                                            <button onClick={onEditCancel} className="p-1 text-red-300 hover:bg-red-900/30 rounded" title="Cancel">
                                                 <X className="w-3 h-3" />
                                             </button>
                                         </>
@@ -157,7 +157,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                         <>
                                             <button
                                                 onClick={() => onEditStart?.(idx, msg.content)}
-                                                className="p-1 text-slate-500 hover:text-white hover:bg-slate-700/50 rounded"
+                                                className="p-1 text-slate-400 hover:text-white hover:bg-slate-900/60 rounded"
                                                 title="Edit"
                                             >
                                                 <Edit3 className="w-3 h-3" />
@@ -167,7 +167,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); onRewriteQuery(idx); }}
                                                     disabled={rewritingIndex === idx}
-                                                    className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                    className="p-1 text-slate-400 hover:text-sky-300 hover:bg-sky-900/30 rounded disabled:opacity-50"
                                                     title="Rewrite Query"
                                                 >
                                                     {rewritingIndex === idx ? (
@@ -183,7 +183,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(showRewriteDropdown === idx ? null : idx); }}
                                                         disabled={rewritingIndex === idx}
-                                                        className="p-1 text-slate-500 hover:text-teal-400 hover:bg-teal-900/30 rounded disabled:opacity-50"
+                                                        className="p-1 text-slate-400 hover:text-sky-300 hover:bg-sky-900/30 rounded disabled:opacity-50"
                                                         title="AI Rewrite"
                                                     >
                                                         {rewritingIndex === idx ? (
@@ -194,19 +194,19 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                     </button>
                                                     {showRewriteDropdown === idx && (
                                                         <div
-                                                            className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 py-1 min-w-[140px]"
+                                                            className="absolute right-0 top-full mt-1 bg-slate-950/70 border border-slate-700/70 rounded-lg shadow-2xl z-20 py-1 min-w-[140px]"
                                                             onClick={(e) => e.stopPropagation()}
                                                         >
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(null); console.log('ConversationView: onRewrite clicked, idx:', idx); onRewrite(idx); }}
-                                                                className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                className="w-full px-3 py-2 text-left text-xs text-slate-100 hover:bg-slate-900/60 flex items-center gap-2"
                                                             >
                                                                 <RotateCcw className="w-3 h-3" /> Answer Only
                                                             </button>
                                                             {onRewriteReasoning && (
                                                                 <button
                                                                     onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(null); console.log('ConversationView: onRewriteReasoning clicked, idx:', idx); onRewriteReasoning(idx); }}
-                                                                    className="w-full px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-2"
+                                                                    className="w-full px-3 py-2 text-left text-xs text-slate-100 hover:bg-slate-900/60 flex items-center gap-2"
                                                                 >
                                                                     <RotateCcw className="w-3 h-3" /> Reasoning Only
                                                                 </button>
@@ -214,7 +214,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                                             {onRewriteBoth && (
                                                                 <button
                                                                     onClick={(e) => { e.stopPropagation(); setShowRewriteDropdown(null); console.log('ConversationView: onRewriteBoth clicked, idx:', idx); onRewriteBoth(idx); }}
-                                                                    className="w-full px-3 py-2 text-left text-xs text-teal-400 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700"
+                                                                    className="w-full px-3 py-2 text-left text-xs text-sky-300 hover:bg-slate-900/60 flex items-center gap-2 border-t border-slate-800/70"
                                                                 >
                                                                     <Sparkles className="w-3 h-3" /> Both Together
                                                                 </button>
@@ -232,7 +232,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                     <div className="mt-2 text-left">
                                         <button
                                             onClick={() => toggleReasoning(idx)}
-                                            className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-400 transition-colors uppercase font-bold tracking-wider"
+                                            className="flex items-center gap-1.5 text-[10px] text-slate-400 hover:text-slate-200 transition-colors uppercase font-bold tracking-wider"
                                         >
                                             <Brain className="w-3 h-3" />
                                             Thoughts
@@ -243,11 +243,11 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                             )}
                                         </button>
                                         {(expandedReasoning.has(idx) || (rewritingIndex === idx && streamingContent)) && (
-                                            <div className="mt-2 bg-slate-900/50 border border-slate-800 rounded-lg p-3">
+                                            <div className="mt-2 bg-slate-950/60 border border-slate-800/70 rounded-lg p-3">
                                                 {rewritingIndex === idx && streamingContent && streamingField === StreamingField.Reasoning ? (
-                                                    <p className="text-[10px] text-teal-300 font-mono whitespace-pre-wrap animate-pulse">
+                                                    <p className="text-[10px] text-sky-300 font-mono whitespace-pre-wrap animate-pulse">
                                                         {streamingContent}
-                                                        <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                                        <span className="inline-block w-2 h-3 bg-sky-400 ml-0.5 animate-pulse" />
                                                     </p>
                                                 ) : (
                                                     <ReasoningHighlighter text={displayReasoning!} />
@@ -261,7 +261,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                     <AutoResizeTextarea
                                         value={editValue || ''}
                                         onChange={e => onEditChange?.(e.target.value)}
-                                        className="w-full bg-slate-900/50 border border-cyan-500/50 rounded p-2 text-inherit outline-none min-h-[100px]"
+                                        className="w-full bg-slate-950/60 border border-sky-500/40 rounded p-2 text-inherit outline-none min-h-[100px]"
                                         autoFocus
                                     />
                                 ) : rewritingIndex === idx && streamingContent && (
@@ -269,9 +269,9 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                                     streamingField === StreamingField.Both ||
                                     streamingField === StreamingField.Query
                                 ) ? (
-                                    <p className="text-teal-300 whitespace-pre-wrap animate-pulse">
+                                    <p className="text-sky-300 whitespace-pre-wrap animate-pulse">
                                         {streamingContent}
-                                        <span className="inline-block w-2 h-3 bg-teal-400 ml-0.5 animate-pulse" />
+                                        <span className="inline-block w-2 h-3 bg-sky-400 ml-0.5 animate-pulse" />
                                     </p>
                                 ) : (
                                     <p className="whitespace-pre-wrap">{displayContent}</p>
@@ -280,7 +280,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({
 
                             {/* Role Label */}
                             <div
-                                className={`text-[9px] text-slate-600 uppercase font-bold mt-1 ${msg.role === ChatRole.User ? 'text-right mr-1' : 'ml-1'}`}
+                                className={`text-[9px] text-slate-400 uppercase font-bold mt-1 ${msg.role === ChatRole.User ? 'text-right mr-1' : 'ml-1'}`}
                             >
                                 {styles.label}
                             </div>
