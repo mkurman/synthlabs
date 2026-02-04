@@ -34,9 +34,9 @@ interface UseGenerationActionsOptions {
     setSessionUid: (uid: string) => void;
     sessionUidRef: MutableRefObject<string>;
     setSessionName: (name: string | null) => void;
-    setVisibleLogs: (logs: SynthLogItem[]) => void;
-    setTotalLogCount: (count: number) => void;
-    setFilteredLogCount: (count: number) => void;
+    setVisibleLogs: (logs: SynthLogItem[] | ((prev: SynthLogItem[]) => SynthLogItem[])) => void;
+    setTotalLogCount: (count: number | ((prev: number) => number)) => void;
+    setFilteredLogCount: (count: number | ((prev: number) => number)) => void;
     setSparklineHistory: (values: number[]) => void;
     setDbStats: (stats: { total: number; session: number }) => void;
 }

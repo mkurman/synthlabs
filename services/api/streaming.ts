@@ -20,6 +20,8 @@ export async function processStreamResponse(
   const isResponsesApi = apiType === ApiType.Responses;
   let chunkCount = 0;
 
+  let streamError: Error | null = null;
+
   try {
     while (true) {
       chunkCount++;
@@ -28,7 +30,17 @@ export async function processStreamResponse(
         throw new DOMException('Aborted', 'AbortError');
       }
 
-      const { done, value } = await reader.read();
+      let done: boolean;
+      let value: Uint8Array | undefined;
+      try {
+        ({ done, value } = await reader.read());
+      } catch (readErr: any) {
+        // Network disconnect or server closed connection mid-stream
+        // Preserve whatever we've accumulated so far instead of losing it
+        logger.warn('Stream read error (server may have disconnected):', readErr.message);
+        streamError = readErr;
+        break;
+      }
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -148,6 +160,40 @@ export async function processStreamResponse(
     }
   } finally {
     reader.releaseLock();
+  }
+
+  // Process any remaining data left in the buffer (e.g. last line without trailing newline)
+  if (buffer.trim()) {
+    const trimmed = buffer.trim();
+    if (trimmed !== 'data: [DONE]') {
+      const dataStart = trimmed.startsWith('data: ') ? 6 : -1;
+      if (dataStart !== -1) {
+        try {
+          const json = JSON.parse(trimmed.slice(dataStart));
+          let chunk = '';
+          if (provider === ExternalProvider.Anthropic) {
+            chunk = json.delta?.text || json.content?.[0]?.text || '';
+          } else if (isResponsesApi) {
+            const item = json.item || json.delta;
+            chunk = item?.content ? (typeof item.content === 'string' ? item.content : '') : '';
+          } else {
+            const delta = json.choices?.[0]?.delta;
+            chunk = delta?.content || delta?.reasoning_content || delta?.reasoning || '';
+          }
+          if (chunk) {
+            accumulated += chunk;
+            onChunk(chunk, accumulated, usageData);
+          }
+        } catch (e) {
+          logger.warn('Failed to parse remaining buffer:', trimmed);
+        }
+      }
+    }
+  }
+
+  // If we got a stream error but have no accumulated content, re-throw so it gets retried
+  if (streamError && !accumulated.trim()) {
+    throw streamError;
   }
 
   if (isReasoning) {

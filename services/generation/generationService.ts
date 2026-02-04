@@ -108,6 +108,8 @@ export class GenerationService {
         } finally {
             this.cleanup();
             config.setIsRunning(false);
+            // Final refresh to sync visible logs with IndexedDB after generation completes
+            config.refreshLogs();
         }
     }
 
@@ -669,7 +671,7 @@ export class GenerationService {
                 : 'synthetic';
 
         const settings = SettingsService.getSettings();
-        const timeoutSeconds = Math.max(1, settings.generationTimeoutSeconds ?? 300);
+        const timeoutSeconds = Math.max(0, settings.generationTimeoutSeconds ?? 300);
         const timeoutMs = timeoutSeconds * 1000;
         const generationId = retryId || crypto.randomUUID();
 
@@ -1218,7 +1220,6 @@ export class GenerationService {
             });
         } catch (err: any) {
             if (err.name === 'AbortError' && !didTimeout) {
-                clearStreamingState();
                 const safeErrInput = typeof inputText === 'string' ? inputText : JSON.stringify(inputText);
                 return {
                     id: generationId,
@@ -1241,7 +1242,6 @@ export class GenerationService {
                 };
             }
             if (err.name === 'TimeoutError' || didTimeout) {
-                clearStreamingState();
                 const safeErrInput = typeof inputText === 'string' ? inputText : JSON.stringify(inputText);
                 return {
                     id: generationId,
@@ -1285,13 +1285,14 @@ export class GenerationService {
                 error: err.message
             };
         } finally {
+            // Always clear streaming state to prevent stuck streaming cards
+            clearStreamingState();
             if (globalSignal) {
                 globalSignal.removeEventListener('abort', handleGlobalAbort);
             }
             if (timeoutId) {
                 window.clearTimeout(timeoutId);
             }
-            config.streamingAbortControllersRef.current.delete(generationId);
         }
     }
 
@@ -1304,11 +1305,14 @@ export class GenerationService {
         }
 
         await LogStorageService.saveLog(config.sessionUidRef.current, result);
-        config.setLogsTrigger((prev: number) => prev + 1);
 
+        // Directly prepend new log to visible list instead of full IndexedDB reload
+        // to avoid race conditions with concurrent workers during generation
         if (config.currentPage === 1) {
-            config.refreshLogs();
+            config.setVisibleLogs((prev: SynthLogItem[]) => [result, ...prev]);
         }
+        config.setTotalLogCount((prev: number) => prev + 1);
+        config.setFilteredLogCount((prev: number) => prev + 1);
 
         const currentEnv = config.environmentRef.current;
         if (currentEnv === Environment.Production && !result.isError && FirebaseService.isFirebaseConfigured()) {

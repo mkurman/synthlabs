@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Gauge } from 'lucide-react';
+import { SettingsService } from '../../services/settingsService';
 
 interface RetryConfigPanelProps {
     concurrency: number;
@@ -23,6 +24,15 @@ export default function RetryConfigPanel({
     onRetryDelayChange
 }: RetryConfigPanelProps) {
     const [isExpanded, setIsExpanded] = useState(false);
+    const [timeoutSeconds, setTimeoutSeconds] = useState(() =>
+        SettingsService.getSettings().generationTimeoutSeconds ?? 300
+    );
+
+    const handleTimeoutChange = (value: number) => {
+        const clamped = Math.max(0, value);
+        setTimeoutSeconds(clamped);
+        SettingsService.updateSettings({ generationTimeoutSeconds: clamped });
+    };
 
     return (
         <div className="bg-slate-950/70 rounded-lg border border-slate-800/70 overflow-hidden">
@@ -35,7 +45,7 @@ export default function RetryConfigPanel({
                     <span className="text-xs font-bold text-slate-200">Advanced: Retry & Rate Limits</span>
                     {!isExpanded && (
                         <span className="text-[10px] text-slate-400 ml-2">
-                            Concurrency {concurrency} · Retries {maxRetries}
+                            Concurrency {concurrency} · Retries {maxRetries} · Timeout {timeoutSeconds > 0 ? `${timeoutSeconds}s` : 'off'}
                         </span>
                     )}
                 </div>
@@ -87,6 +97,22 @@ export default function RetryConfigPanel({
                             onChange={e => onRetryDelayChange(Math.max(500, parseInt(e.target.value) || 500))}
                             className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-sky-500 outline-none"
                         />
+                    </div>
+                    <div className="space-y-1 col-span-2">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase">Timeout (seconds)</label>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="number"
+                                min="0"
+                                step="30"
+                                value={timeoutSeconds}
+                                onChange={e => handleTimeoutChange(parseInt(e.target.value) || 0)}
+                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                            />
+                            <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                                {timeoutSeconds > 0 ? '0 = disabled' : 'disabled'}
+                            </span>
+                        </div>
                     </div>
                 </div>
             )}

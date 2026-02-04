@@ -9,9 +9,9 @@ export interface GenerationCallbacks {
     setProgress: (progress: { current: number; total: number; activeWorkers: number } | ((prev: { current: number; total: number; activeWorkers: number }) => { current: number; total: number; activeWorkers: number })) => void;
     setSessionUid: (uid: string) => void;
     setSessionName: (name: string | null) => void;
-    setVisibleLogs: (logs: SynthLogItem[]) => void;
-    setTotalLogCount: (count: number) => void;
-    setFilteredLogCount: (count: number) => void;
+    setVisibleLogs: (logs: SynthLogItem[] | ((prev: SynthLogItem[]) => SynthLogItem[])) => void;
+    setTotalLogCount: (count: number | ((prev: number) => number)) => void;
+    setFilteredLogCount: (count: number | ((prev: number) => number)) => void;
     setSparklineHistory: (history: number[]) => void;
     setPrefetchState: (state: PrefetchState | null) => void;
     setDetectedTaskType: (type: TaskType | null) => void;

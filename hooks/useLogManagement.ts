@@ -26,9 +26,9 @@ interface UseLogManagementReturn {
   setLogFilter: (filter: LogFilter) => void;
   setShowLatestOnly: (show: boolean) => void;
   setFeedPageSize: (size: number) => void;
-  setVisibleLogs: (logs: SynthLogItem[]) => void;
-  setTotalLogCount: (count: number) => void;
-  setFilteredLogCount: (count: number) => void;
+  setVisibleLogs: (logs: SynthLogItem[] | ((prev: SynthLogItem[]) => SynthLogItem[])) => void;
+  setTotalLogCount: (count: number | ((prev: number) => number)) => void;
+  setFilteredLogCount: (count: number | ((prev: number) => number)) => void;
   setLogsTrigger: (fn: (prev: number) => number) => void;
   refreshLogs: () => Promise<void>;
   handlePageChange: (page: number) => void;
