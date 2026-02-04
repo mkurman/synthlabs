@@ -1,25 +1,157 @@
 import type { SessionListFilters } from '../types';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+const DEFAULT_BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+const BACKEND_URL_OVERRIDE_KEY = 'synthlabs_backend_url';
+const isDesktopRuntime = typeof navigator !== 'undefined' && /Electron|Tauri/i.test(navigator.userAgent);
+const defaultPortStart = isDesktopRuntime && import.meta.env.MODE === 'production' ? 8788 : 8787;
+const DEFAULT_PORT_START = Number(import.meta.env.VITE_BACKEND_PORT_START || defaultPortStart);
+const DEFAULT_PORT_RANGE = Number(import.meta.env.VITE_BACKEND_PORT_RANGE || 10);
 
-const buildUrl = (path: string) => {
-    const base = BACKEND_URL.endsWith('/') ? BACKEND_URL.slice(0, -1) : BACKEND_URL;
-    return `${base}${path}`;
+let resolvedBackendUrl: string | null = null;
+let resolvingBackendUrl: Promise<string> | null = null;
+
+const normalizeBaseUrl = (base: string) => (base.endsWith('/') ? base.slice(0, -1) : base);
+
+const getStoredOverride = (): string => {
+    try {
+        return localStorage.getItem(BACKEND_URL_OVERRIDE_KEY) || '';
+    } catch {
+        return '';
+    }
+};
+
+const setStoredOverride = (value: string) => {
+    try {
+        localStorage.setItem(BACKEND_URL_OVERRIDE_KEY, value);
+    } catch {
+        // Ignore storage errors (e.g., storage disabled)
+    }
+};
+
+const clearStoredOverride = () => {
+    try {
+        localStorage.removeItem(BACKEND_URL_OVERRIDE_KEY);
+    } catch {
+        // Ignore storage errors (e.g., storage disabled)
+    }
+};
+
+const probeUrl = async (baseUrl: string, timeoutMs = 600): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(`${normalizeBaseUrl(baseUrl)}/health`, { signal: controller.signal });
+        return response.ok;
+    } catch {
+        return false;
+    } finally {
+        clearTimeout(timeout);
+    }
+};
+
+const getDefaultPortStart = (): number => {
+    if (DEFAULT_BACKEND_URL) {
+        try {
+            const url = new URL(DEFAULT_BACKEND_URL);
+            if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+                const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+                if (Number.isFinite(port)) {
+                    return port;
+                }
+            }
+        } catch {
+            // Ignore malformed URL
+        }
+    }
+    return DEFAULT_PORT_START;
+};
+
+const discoverBackendUrl = async (): Promise<string> => {
+    const startPort = getDefaultPortStart();
+    for (let i = 0; i <= DEFAULT_PORT_RANGE; i += 1) {
+        const port = startPort + i;
+        const candidate = `http://localhost:${port}`;
+        if (await probeUrl(candidate)) {
+            setStoredOverride(candidate);
+            return candidate;
+        }
+    }
+    return '';
+};
+
+const resolveBackendUrl = async (): Promise<string> => {
+    const override = getStoredOverride();
+    if (override) return override;
+    if (DEFAULT_BACKEND_URL) {
+        const isHealthy = await probeUrl(DEFAULT_BACKEND_URL);
+        if (isHealthy) return DEFAULT_BACKEND_URL;
+    }
+    return discoverBackendUrl();
+};
+
+const getBackendUrl = async (): Promise<string> => {
+    if (resolvedBackendUrl) return resolvedBackendUrl;
+    if (!resolvingBackendUrl) {
+        resolvingBackendUrl = resolveBackendUrl().finally(() => {
+            resolvingBackendUrl = null;
+        });
+    }
+    resolvedBackendUrl = await resolvingBackendUrl;
+    return resolvedBackendUrl;
+};
+
+const buildUrl = async (path: string) => {
+    const base = await getBackendUrl();
+    if (!base) {
+        throw new Error('Backend URL is not configured.');
+    }
+    return `${normalizeBaseUrl(base)}${path}`;
 };
 
 const requestJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
-    const response = await fetch(buildUrl(path), {
-        headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
-        ...init
-    });
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Request failed: ${response.status}`);
+    const url = await buildUrl(path);
+    try {
+        const response = await fetch(url, {
+            headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+            ...init
+        });
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || `Request failed: ${response.status}`);
+        }
+        return response.json() as Promise<T>;
+    } catch (error) {
+        resolvedBackendUrl = null;
+        const discovered = await discoverBackendUrl();
+        if (discovered) {
+            const retryUrl = `${normalizeBaseUrl(discovered)}${path}`;
+            const retryResponse = await fetch(retryUrl, {
+                headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+                ...init
+            });
+            if (!retryResponse.ok) {
+                const text = await retryResponse.text();
+                throw new Error(text || `Request failed: ${retryResponse.status}`);
+            }
+            return retryResponse.json() as Promise<T>;
+        }
+        throw error;
     }
-    return response.json() as Promise<T>;
 };
 
-export const isBackendEnabled = () => Boolean(BACKEND_URL);
+export const isBackendEnabled = () => Boolean(DEFAULT_BACKEND_URL || getStoredOverride());
+
+export const getBackendUrlOverride = () => getStoredOverride();
+
+export const setBackendUrlOverride = (value: string) => {
+    if (value.trim().length === 0) {
+        clearStoredOverride();
+        resolvedBackendUrl = null;
+        return;
+    }
+    setStoredOverride(value.trim());
+    resolvedBackendUrl = null;
+};
 
 export const fetchSessions = async (filters?: SessionListFilters, cursor?: string | null, limit?: number, forceRefresh?: boolean) => {
     const params = new URLSearchParams();
@@ -169,5 +301,12 @@ export const setServiceAccountPath = async (path: string) => {
     await requestJson<{ ok: boolean }>('/api/admin/service-account-path', {
         method: 'POST',
         body: JSON.stringify({ path })
+    });
+};
+
+export const setServiceAccountJson = async (json: string) => {
+    await requestJson<{ ok: boolean }>('/api/admin/service-account-json', {
+        method: 'POST',
+        body: JSON.stringify({ json })
     });
 };

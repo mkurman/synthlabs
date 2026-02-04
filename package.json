@@ -1,7 +1,7 @@
 {
   "name": "synthlabs-reasoning-generator",
   "private": true,
-  "version": "0.0.9",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -19,9 +19,11 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "electron:dev": "concurrently \"npm run dev:server\" \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "vite build && electron-builder",
-    "electron:build:win": "vite build && electron-builder --win",
-    "electron:build:mac": "vite build && electron-builder --mac"
+    "bundle:server": "node scripts/bundle-server.mjs",
+    "test:bundle": "node scripts/bundle-server.mjs && node -e \"require('./server-bundle/index.cjs').startServer()\"",
+    "electron:build": "vite build && npm run bundle:server && electron-builder",
+    "electron:build:win": "vite build && npm run bundle:server && electron-builder --win",
+    "electron:build:mac": "vite build && npm run bundle:server && electron-builder --mac"
   },
   "dependencies": {
     "@google/genai": "^1.33.0",
@@ -40,6 +42,7 @@
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
+    "esbuild": "^0.24.0",
     "@tauri-apps/cli": "^2.9.6",
     "@types/bun": "^1.2.4",
     "@types/js-yaml": "^4.0.9",
@@ -65,6 +68,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "server-bundle/**/*",
       "package.json"
     ],
     "mac": {

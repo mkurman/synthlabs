@@ -60,6 +60,9 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     } = useSettingsOllama();
     const [backendApplyStatus, setBackendApplyStatus] = useState<BackendApplyStatus>(BackendApplyStatus.Idle);
     const [backendApplyError, setBackendApplyError] = useState('');
+    const [backendUrlInput, setBackendUrlInput] = useState<string>('');
+    const [serviceAccountJson, setServiceAccountJson] = useState<string | null>(null);
+    const [serviceAccountFileName, setServiceAccountFileName] = useState<string | null>(null);
 
     // Load settings and prompt sets when panel opens
     useEffect(() => {
@@ -68,6 +71,9 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
             setAvailablePromptSets(PromptService.getAvailableSets());
             setPromptMetadata(PromptService.getAllMetadata());
             refreshOllamaModels();
+            setBackendUrlInput(
+                backendClient.getBackendUrlOverride() || import.meta.env.VITE_BACKEND_URL || ''
+            );
         } else {
             setIsFullscreen(false);
         }
@@ -86,11 +92,34 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
             updateSetting('backendServiceAccountPath', filePath);
             setBackendApplyStatus(BackendApplyStatus.Idle);
             setBackendApplyError('');
+            setServiceAccountJson(null);
+            setServiceAccountFileName(null);
+            return;
         }
+        if (!file) return;
+        updateSetting('backendServiceAccountPath', '');
+        const reader = new FileReader();
+        reader.onload = () => {
+            const contents = typeof reader.result === 'string' ? reader.result : '';
+            if (!contents.trim()) {
+                setBackendApplyStatus(BackendApplyStatus.Error);
+                setBackendApplyError('Selected file is empty.');
+                return;
+            }
+            setServiceAccountJson(contents);
+            setServiceAccountFileName(file.name || 'service-account.json');
+            setBackendApplyStatus(BackendApplyStatus.Idle);
+            setBackendApplyError('');
+        };
+        reader.onerror = () => {
+            setBackendApplyStatus(BackendApplyStatus.Error);
+            setBackendApplyError('Failed to read service account file.');
+        };
+        reader.readAsText(file);
     };
 
     const handleApplyBackendServiceAccount = async () => {
-        if (!settings.backendServiceAccountPath) {
+        if (!settings.backendServiceAccountPath && !serviceAccountJson) {
             setBackendApplyStatus(BackendApplyStatus.Error);
             setBackendApplyError('Select a service account JSON file first.');
             return;
@@ -103,7 +132,25 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
         try {
             setBackendApplyStatus(BackendApplyStatus.Pending);
             setBackendApplyError('');
-            await backendClient.setServiceAccountPath(settings.backendServiceAccountPath);
+
+            // In Electron, persist JSON to userData folder for survival across restarts
+            const electronAPI = (window as any).electronAPI;
+            if (serviceAccountJson && electronAPI?.saveFirebaseCredentials) {
+                const saveResult = await electronAPI.saveFirebaseCredentials(serviceAccountJson);
+                if (saveResult?.ok && saveResult?.path) {
+                    // Use the persisted path instead of sending JSON to temp file
+                    await backendClient.setServiceAccountPath(saveResult.path);
+                    setBackendApplyStatus(BackendApplyStatus.Success);
+                    return;
+                }
+            }
+
+            // Fallback: send to backend directly
+            if (settings.backendServiceAccountPath) {
+                await backendClient.setServiceAccountPath(settings.backendServiceAccountPath);
+            } else if (serviceAccountJson) {
+                await backendClient.setServiceAccountJson(serviceAccountJson);
+            }
             setBackendApplyStatus(BackendApplyStatus.Success);
         } catch (error: any) {
             setBackendApplyStatus(BackendApplyStatus.Error);
@@ -1119,18 +1166,31 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                         <label className="text-[10px] text-slate-300 font-bold uppercase">Backend URL</label>
                                         <input
                                             type="text"
-                                            value={import.meta.env.VITE_BACKEND_URL || 'Not configured'}
-                                            readOnly
-                                            className="w-full bg-slate-950 border border-slate-800/70 rounded px-3 py-2 text-xs text-slate-400"
+                                            value={backendUrlInput}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                setBackendUrlInput(value);
+                                                backendClient.setBackendUrlOverride(value);
+                                            }}
+                                            placeholder={import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'}
+                                            className="w-full bg-slate-950 border border-slate-800/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                         />
+                                        <div className="text-[10px] text-slate-500">
+                                            Leave blank to use the default environment value.
+                                        </div>
                                     </div>
                                     <div className="space-y-1">
                                         <label className="text-[10px] text-slate-300 font-bold uppercase">Service Account Path</label>
                                         <div className="flex items-center gap-2">
                                             <input
                                                 type="text"
-                                                value={settings.backendServiceAccountPath || ''}
-                                                onChange={(e) => updateSetting('backendServiceAccountPath', e.target.value)}
+                                                value={settings.backendServiceAccountPath || serviceAccountFileName || ''}
+                                                onChange={(e) => {
+                                                    if (serviceAccountFileName) {
+                                                        setServiceAccountFileName(null);
+                                                    }
+                                                    updateSetting('backendServiceAccountPath', e.target.value);
+                                                }}
                                                 placeholder="/absolute/path/to/service-account.json"
                                                 className="flex-1 bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                             />
@@ -1140,6 +1200,11 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                 <input type="file" accept=".json" className="hidden" onChange={handleServiceAccountFile} />
                                             </label>
                                         </div>
+                                        {serviceAccountFileName && !settings.backendServiceAccountPath && (
+                                            <div className="text-[10px] text-slate-400">
+                                                Selected file: {serviceAccountFileName}
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <button

@@ -105,6 +105,18 @@ class SessionLoadService {
             else if (environment === Environment.Development) {
                 // 2. Load Local Sessions (Always load local, they are separate)
                 try {
+                    // Recover orphaned sessions (logs without session entries) on refresh or first load
+                    if (forceRefresh || !this.listCache) {
+                        try {
+                            const { recovered } = await IndexedDBUtils.recoverOrphanedSessions();
+                            if (recovered > 0) {
+                                toast.info(`Recovered ${recovered} orphaned session(s)`);
+                            }
+                        } catch (e) {
+                            logger.warn('Failed to recover orphaned sessions', e);
+                        }
+                    }
+
                     const localSessions = await IndexedDBUtils.loadAllSessions();
 
                     // Filter out local sessions that might be duplicates of cloud ones if needed?

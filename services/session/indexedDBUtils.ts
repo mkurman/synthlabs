@@ -286,3 +286,71 @@ export function createNewSession(
         }
     };
 }
+
+/**
+ * Recover orphaned local sessions - creates session entries for logs that have no corresponding session
+ */
+export async function recoverOrphanedSessions(): Promise<{ recovered: number; orphanedUids: string[] }> {
+    // Import LogStorageService dynamically to avoid circular dependency
+    const { LogStorageService } = await import('../logStorageService');
+
+    // Get all session UIDs that have logs
+    const logSessionUids = await LogStorageService.getAllSessionUids();
+
+    // Get all existing sessions
+    const existingSessions = await loadAllSessions();
+    const existingSessionIds = new Set(existingSessions.map(s => s.id));
+    const existingSessionUids = new Set(existingSessions.map(s => s.sessionUid).filter(Boolean));
+
+    // Find orphaned UIDs (have logs but no session entry)
+    const orphanedUids = logSessionUids.filter(uid =>
+        !existingSessionIds.has(uid) && !existingSessionUids.has(uid)
+    );
+
+    console.log(`[Recovery] Found ${orphanedUids.length} orphaned session UIDs with logs but no session entry`);
+
+    let recovered = 0;
+    for (const uid of orphanedUids) {
+        try {
+            const logCount = await LogStorageService.getTotalCount(uid);
+            if (logCount === 0) continue; // Skip empty sessions
+
+            const now = Date.now();
+            const recoveredSession: SessionData = {
+                id: uid, // Use the log's sessionUid as the session id
+                sessionUid: uid,
+                version: 1,
+                name: `Recovered Session (${logCount} logs)`,
+                status: SessionStatus.Idle,
+                storageMode: StorageMode.Local,
+                createdAt: new Date().toISOString(),
+                updatedAt: now,
+                itemCount: logCount,
+                config: {
+                    appMode: CreatorMode.Generator,
+                    engineMode: EngineMode.Regular,
+                    environment: Environment.Development,
+                },
+                analytics: {
+                    totalItems: logCount,
+                    completedItems: logCount,
+                    errorCount: 0,
+                    totalTokens: 0,
+                    totalCost: 0,
+                    avgResponseTime: 0,
+                    successRate: 100,
+                    lastUpdated: now
+                }
+            };
+
+            await saveSession(recoveredSession);
+            recovered++;
+            console.log(`[Recovery] Created session entry for orphaned UID: ${uid} (${logCount} logs)`);
+        } catch (e) {
+            console.error(`[Recovery] Failed to recover session ${uid}:`, e);
+        }
+    }
+
+    console.log(`[Recovery] Recovered ${recovered} orphaned sessions`);
+    return { recovered, orphanedUids };
+}

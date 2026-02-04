@@ -573,12 +573,14 @@ export default function App() {
             converterInputText,
             generationParams
         });
-        return SessionService.getSessionData(config, sessionUid);
+        const sessionData = SessionService.getSessionData(config, sessionUid);
+        // Include totalLogCount so auto-save triggers when logs are added
+        return { ...sessionData, itemCount: totalLogCount };
     }, [
         appMode, engineMode, environment, provider, externalProvider, externalApiKey, externalModel, customBaseUrl,
         deepConfig, userAgentConfig, concurrency, rowsToFetch, skipRows, sleepTime, maxRetries, retryDelay,
         feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt,
-        conversationRewriteMode, converterInputText, generationParams, sessionUid
+        conversationRewriteMode, converterInputText, generationParams, sessionUid, totalLogCount
     ]);
 
     // Memoized auto-save callback to prevent timeout cancellation from re-renders
@@ -591,7 +593,7 @@ export default function App() {
             name: sessionName || savedSession.name || 'Untitled Session',
             updatedAt: Date.now(),
             createdAt: savedSession.createdAt || new Date().toISOString(),
-            itemCount: savedSession.itemCount || 0,
+            itemCount: totalLogCount || savedSession.itemCount || 0,
             analytics: savedSession.analytics || {
                 totalItems: 0,
                 completedItems: 0,
@@ -646,7 +648,7 @@ export default function App() {
         } catch (e) {
             console.error("Failed to refresh session list", e);
         }
-    }, [environment, sessionUid, sessionName, appMode, hfConfig, sessionFilters]);
+    }, [environment, sessionUid, sessionName, appMode, hfConfig, sessionFilters, totalLogCount]);
 
     // Auto-save current session
     useSessionAutoSave({
@@ -1130,11 +1132,11 @@ export default function App() {
         invalidLogCount,
         detectedTaskType,
         autoRoutedPromptSet,
-        showMiniDbPanel: environment === Environment.Production,
+        showMiniDbPanel: true,
         dbStats,
         sparklineHistory,
-        unsavedCount: getUnsavedCount(),
-        onSyncAll: syncAllUnsavedToDb,
+        unsavedCount: environment === Environment.Production ? getUnsavedCount() : 0,
+        onSyncAll: environment === Environment.Production ? syncAllUnsavedToDb : () => {},
         onRetryAllFailed: retryAllFailed,
         onStartNewSession: handleStartNewSession,
         engineMode,

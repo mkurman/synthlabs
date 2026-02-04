@@ -196,6 +196,22 @@ This repo includes a minimal Node backend to handle Firebase Admin operations.
 
 The frontend will use the backend when `VITE_BACKEND_URL` is set.
 
+#### Port conflicts & multiple instances
+
+If `8787` is busy (e.g., multiple desktop windows), the backend will auto-increment to the next available port (default range: `8787-8797`).
+The frontend will probe `/health` and attach to the first healthy backend in that range.
+
+Optional envs:
+```env
+# Backend port behavior
+PORT=8787
+PORT_RANGE=10
+
+# Frontend discovery (falls back to VITE_BACKEND_URL if healthy)
+VITE_BACKEND_PORT_START=8787
+VITE_BACKEND_PORT_RANGE=10
+```
+
 You can also set these in `.env.example` and copy to `.env.local`.
 
 ### Bun Commands
