@@ -1,7 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { pathToFileURL } from 'url';
+import fs from 'fs';
+import path from 'path';
+import { pathToFileURL, fileURLToPath } from 'url';
 import { getFirestoreAdmin, setServiceAccountPath } from './firebaseAdmin.js';
 import { createJobStore } from './jobs/jobStore.js';
 import { registerHealthRoutes } from './routes/health/getHealth.js';
@@ -51,7 +53,7 @@ const createApp = () => {
     registerGetLogRoute(app, { getDb });
     registerUpdateLogRoute(app, { getDb });
     registerDeleteLogRoute(app, { getDb });
-    registerCheckOrphansRoute(app, { getDb });
+    registerCheckOrphansRoute(app, { getDb, createJob, updateJob });
     registerSyncOrphansRoute(app, { getDb, createJob, updateJob });
 
     return app;
@@ -102,12 +104,42 @@ export const stopServer = async () => {
     activeServer = null;
 };
 
+// --- Vault file for dev mode backend discovery ---
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const VAULT_PATH = path.join(__dirname, '..', '.backend-vault.json');
+
+const writeVaultFile = (port) => {
+    try {
+        fs.writeFileSync(VAULT_PATH, JSON.stringify({
+            port,
+            pid: process.pid,
+            startedAt: Date.now(),
+            service: 'synthlabs-rg'
+        }));
+    } catch (e) {
+        console.warn('Could not write vault file:', e.message);
+    }
+};
+
+const cleanupVaultFile = () => {
+    try {
+        if (fs.existsSync(VAULT_PATH)) fs.unlinkSync(VAULT_PATH);
+    } catch { /* ignore */ }
+};
+
 // Auto-start only when run directly as a script (not when required/imported)
 const scriptPath = process.argv[1];
 const isDirectRun = scriptPath && pathToFileURL(scriptPath).href === import.meta.url;
 if (isDirectRun) {
-    startServer().catch((error) => {
-        console.error('Failed to start backend server:', error);
-        process.exit(1);
-    });
+    startServer()
+        .then(({ port }) => {
+            writeVaultFile(port);
+            process.on('SIGINT', () => { cleanupVaultFile(); process.exit(0); });
+            process.on('SIGTERM', () => { cleanupVaultFile(); process.exit(0); });
+            process.on('exit', cleanupVaultFile);
+        })
+        .catch((error) => {
+            console.error('Failed to start backend server:', error);
+            process.exit(1);
+        });
 }

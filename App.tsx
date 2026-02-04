@@ -108,6 +108,7 @@ export default function App() {
     // --- State: Session & DB ---
     const [sessionUid, setSessionUid] = useState<string>('');
     const sessionUidRef = useSyncedRef(sessionUid);
+    const forceStartFromBeginningRef = useRef(false);
     const [pendingRouteSessionId, setPendingRouteSessionId] = useState<string | null>(null);
     const loadingRouteSessionRef = useRef<string | null>(null);
 
@@ -224,6 +225,7 @@ export default function App() {
 
     const [sessionName, setSessionName] = useState<string | null>(null);
     const sessionNameRef = useSyncedRef(sessionName);
+    const lastPersistedSessionNameRef = useRef<string | null>(null);
 
     const [dbStats, setDbStats] = useState<{ total: number, session: number }>({ total: 0, session: 0 });
     const [sparklineHistory, setSparklineHistory] = useState<number[]>([]);
@@ -575,12 +577,18 @@ export default function App() {
         });
         const sessionData = SessionService.getSessionData(config, sessionUid);
         // Include totalLogCount so auto-save triggers when logs are added
-        return { ...sessionData, itemCount: totalLogCount };
+        return {
+            ...sessionData,
+            sessionUid,
+            id: sessionUid || sessionData.id,
+            name: sessionName || 'Untitled Session',
+            itemCount: totalLogCount
+        };
     }, [
         appMode, engineMode, environment, provider, externalProvider, externalApiKey, externalModel, customBaseUrl,
         deepConfig, userAgentConfig, concurrency, rowsToFetch, skipRows, sleepTime, maxRetries, retryDelay,
         feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt,
-        conversationRewriteMode, converterInputText, generationParams, sessionUid, totalLogCount
+        conversationRewriteMode, converterInputText, generationParams, sessionUid, sessionName, totalLogCount
     ]);
 
     // Memoized auto-save callback to prevent timeout cancellation from re-renders
@@ -658,6 +666,61 @@ export default function App() {
         disableDefaultPersistence: true,
         onSave: handleAutoSave
     });
+
+    // Persist manual session name edits quickly (independent of full auto-save cycle)
+    useEffect(() => {
+        if (!hasSessionStarted || !sessionUid) {
+            return;
+        }
+
+        const normalizedName = (sessionName || '').trim() || 'Untitled Session';
+        const cacheKey = `${sessionUid}:${normalizedName}`;
+        if (lastPersistedSessionNameRef.current === cacheKey) {
+            return;
+        }
+
+        const timeout = setTimeout(async () => {
+            try {
+                if (environment === Environment.Production) {
+                    if (backendClient.isBackendEnabled()) {
+                        await backendClient.updateSession(sessionUid, {
+                            sessionUid,
+                            name: normalizedName,
+                            updatedAt: Date.now()
+                        });
+                    } else if (SessionService.isCloudAvailable()) {
+                        await SessionService.saveToCloud({
+                            ...currentFullSession,
+                            id: sessionUid,
+                            sessionUid,
+                            name: normalizedName,
+                            updatedAt: Date.now()
+                        } as SessionData, normalizedName);
+                    }
+                } else {
+                    const IndexedDBUtils = await import('./services/session/indexedDBUtils');
+                    const existingSession = await IndexedDBUtils.loadSession(sessionUid);
+                    if (!existingSession) {
+                        return;
+                    }
+                    await IndexedDBUtils.saveSession({
+                        ...existingSession,
+                        id: sessionUid,
+                        sessionUid,
+                        name: normalizedName,
+                        updatedAt: Date.now()
+                    });
+                }
+
+                lastPersistedSessionNameRef.current = cacheKey;
+                await refreshSessionsList();
+            } catch (e) {
+                console.error('Failed to persist session name change', e);
+            }
+        }, 350);
+
+        return () => clearTimeout(timeout);
+    }, [hasSessionStarted, sessionUid, sessionName, environment, currentFullSession, refreshSessionsList]);
 
     // --- Session Analytics ---
     useSessionAnalytics({
@@ -854,6 +917,27 @@ export default function App() {
         onSessionLoaded: handleSessionLoaded
     });
 
+    const resetStreamingState = useCallback(() => {
+        abortControllerRef.current?.abort();
+        streamingAbortControllersRef.current.forEach((controller, generationId) => {
+            haltedStreamingIdsRef.current.add(generationId);
+            controller.abort();
+        });
+        streamingAbortControllersRef.current.clear();
+        streamingConversationsRef.current.clear();
+        setIsPaused(false);
+        setIsRunning(false);
+        bumpStreamingConversations();
+    }, [bumpStreamingConversations]);
+
+    const handleSessionSelect = useCallback(async (
+        session: SessionData | any,
+        options?: { preserveEnvironment?: boolean }
+    ) => {
+        resetStreamingState();
+        await handleCloudSessionSelect(session, options);
+    }, [handleCloudSessionSelect, resetStreamingState]);
+
     useEffect(() => {
         if (!pendingRouteSessionId) {
             return;
@@ -872,13 +956,13 @@ export default function App() {
                     (item) => item.id === pendingRouteSessionId || item.sessionUid === pendingRouteSessionId
                 );
                 if (session) {
-                    await handleCloudSessionSelect(session as any, { preserveEnvironment: true });
+                    await handleSessionSelect(session as any, { preserveEnvironment: true });
                     return;
                 }
 
                 const loadedSession = await sessionLoadService.loadSessionDetails(pendingRouteSessionId);
                 if (loadedSession) {
-                    await handleCloudSessionSelect(loadedSession as any, { preserveEnvironment: true });
+                    await handleSessionSelect(loadedSession as any, { preserveEnvironment: true });
                     return;
                 }
 
@@ -896,7 +980,7 @@ export default function App() {
         return () => {
             isActive = false;
         };
-    }, [handleCloudSessionSelect, pendingRouteSessionId, sessionsList]);
+    }, [handleSessionSelect, pendingRouteSessionId, sessionsList]);
 
     // --- Core Generation Logic ---
     // Build configuration for GenerationService
@@ -935,7 +1019,8 @@ export default function App() {
 
             // Generation params
             rowsToFetch,
-            skipRows,
+            skipRows: forceStartFromBeginningRef.current ? 0 : skipRows,
+            existingItemCount: totalLogCount,
             concurrency,
             sleepTime,
             maxRetries,
@@ -1060,6 +1145,7 @@ export default function App() {
     const handleStartGeneration = useCallback((append: boolean) => {
         setHasSessionStarted(true);
         startGeneration(append);
+        forceStartFromBeginningRef.current = false;
     }, [startGeneration]);
 
     const handleStartSession = useCallback(() => {
@@ -1293,7 +1379,7 @@ export default function App() {
                 showCloudLoadModal={showCloudLoadModal}
                 cloudSessions={cloudSessions}
                 isCloudLoading={isCloudLoading}
-                onCloudSelect={handleCloudSessionSelect}
+                onCloudSelect={handleSessionSelect}
                 onCloudDelete={handleCloudSessionDelete}
                 onCloudClose={() => setShowCloudLoadModal(false)}
                 showOverwriteModal={showOverwriteModal}
@@ -1311,6 +1397,7 @@ export default function App() {
                 }}
                 onOverwriteStartNew={() => {
                     setShowOverwriteModal(false);
+                    forceStartFromBeginningRef.current = true;
                     handleStartGeneration(false);
                 }}
                 onOverwriteCancel={() => setShowOverwriteModal(false)}
@@ -1352,7 +1439,7 @@ export default function App() {
                             const session = sessionsList.find(s => s.id === id);
                             if (session) {
                                 // Both cloud and local sessions use the same handler now due to Service unification
-                                handleCloudSessionSelect(session as any);
+                                handleSessionSelect(session as any);
                                 setAppView(AppView.Creator);
                             }
                         }}

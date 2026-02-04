@@ -4,7 +4,7 @@ import { logger } from '../../utils/logger';
 export async function processStreamResponse(
   response: Response,
   provider: ExternalProvider,
-  onChunk: (chunk: string, accumulated: string, usage?: any) => void,
+  onChunk: (chunk: string, accumulated: string, usage?: any) => void | false,
   signal?: AbortSignal,
   apiType: ApiType = ApiType.Chat
 ): Promise<string> {
@@ -139,18 +139,27 @@ export async function processStreamResponse(
             if (isReasoningChunk && !isReasoning) {
               const startTag = '<think>';
               accumulated += startTag;
-              onChunk(startTag, accumulated, usageData);
+              if (onChunk(startTag, accumulated, usageData) === false) {
+                reader.cancel();
+                return accumulated;
+              }
               isReasoning = true;
             } else if (!isReasoningChunk && isReasoning && chunk) {
               const endTag = '</think>';
               accumulated += endTag;
-              onChunk(endTag, accumulated, usageData);
+              if (onChunk(endTag, accumulated, usageData) === false) {
+                reader.cancel();
+                return accumulated;
+              }
               isReasoning = false;
             }
 
             if (chunk || usageData) {
               if (chunk) accumulated += chunk;
-              onChunk(chunk, accumulated, usageData);
+              if (onChunk(chunk, accumulated, usageData) === false) {
+                reader.cancel();
+                return accumulated;
+              }
             }
           } catch (e) {
             logger.warn('Failed to parse SSE chunk:', trimmed);

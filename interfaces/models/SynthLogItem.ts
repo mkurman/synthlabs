@@ -17,6 +17,12 @@ export interface SynthLogItem {
   timestamp: string;
   duration?: number;
   tokenCount?: number;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    reasoning_tokens?: number;
+  };
   modelUsed: string;
   isError?: boolean;
   status?: LogItemStatus;

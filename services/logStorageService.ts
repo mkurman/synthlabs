@@ -1,15 +1,66 @@
 import { SynthLogItem } from '../types';
 import { LogFilter, LogItemStatus } from '../interfaces/enums';
+import { logger } from '../utils/logger';
 
 const DB_NAME = 'SynthLabsDB';
 const DB_VERSION = 2;
 const LOGS_STORE = 'logs';
 const INDEX_STORE = 'indices';
+const LEGACY_LOG_STORAGE_PREFIX = 'synth_logs_';
 
 interface LogIndex {
     sessionUid: string;
     totalCount: number;
 }
+
+type StoredLogRecord = Omit<SynthLogItem, 'timestamp'> & {
+    sessionUid: string;
+    timestamp?: number | string;
+};
+
+const readLegacySessionLogs = (sessionUid: string): SynthLogItem[] => {
+    try {
+        const indexKey = `${LEGACY_LOG_STORAGE_PREFIX}${sessionUid}_index`;
+        const indexRaw = localStorage.getItem(indexKey);
+        if (!indexRaw) {
+            return [];
+        }
+
+        const indexData = JSON.parse(indexRaw);
+        const lastChunkId = Number(indexData?.lastChunkId ?? 0);
+        const rows: SynthLogItem[] = [];
+
+        for (let i = 0; i <= lastChunkId; i += 1) {
+            const chunkKey = `${LEGACY_LOG_STORAGE_PREFIX}${sessionUid}_chunk_${i}`;
+            const chunkRaw = localStorage.getItem(chunkKey);
+            if (!chunkRaw) continue;
+            const parsed = JSON.parse(chunkRaw);
+            if (Array.isArray(parsed)) {
+                rows.push(...parsed);
+            }
+        }
+
+        return rows;
+    } catch (e) {
+        logger.warn('[LogStorage] failed to read legacy localStorage chunks', { sessionUid, error: e });
+        return [];
+    }
+};
+
+const fixSessionIndexCount = async (sessionUid: string, totalCount: number): Promise<void> => {
+    try {
+        const db = await getDB();
+        const tx = db.transaction(INDEX_STORE, 'readwrite');
+        const store = tx.objectStore(INDEX_STORE);
+        if (totalCount <= 0) {
+            await wrapRequest(store.delete(sessionUid));
+        } else {
+            await wrapRequest(store.put({ sessionUid, totalCount } as LogIndex));
+        }
+    } catch (e) {
+        logger.warn('[LogStorage] failed to fix index count', { sessionUid, totalCount, error: e });
+    }
+};
 
 // IndexedDB wrapper with lazy initialization
 let dbInstance: IDBDatabase | null = null;
@@ -207,6 +258,7 @@ export const LogStorageService = {
             const start = (page - 1) * pageSize;
             const logs: SynthLogItem[] = [];
             let filteredCount = 0;
+            let scannedCount = 0;
 
             const range = IDBKeyRange.bound([sessionUid, 0], [sessionUid, Number.MAX_SAFE_INTEGER]);
             const cursorRequest = index.openCursor(range, 'prev');
@@ -215,6 +267,16 @@ export const LogStorageService = {
                 cursorRequest.onsuccess = () => {
                     const cursor = cursorRequest.result;
                     if (!cursor) {
+                        logger.log('[LogStorage] getLogsPage cursor complete', {
+                            sessionUid,
+                            page,
+                            pageSize,
+                            filter,
+                            totalCount,
+                            filteredCount,
+                            returned: logs.length,
+                            scannedCount
+                        });
                         resolve();
                         return;
                     }
@@ -231,11 +293,83 @@ export const LogStorageService = {
                         }
                         filteredCount++;
                     }
+                    scannedCount++;
 
                     cursor.continue();
                 };
                 cursorRequest.onerror = () => reject(cursorRequest.error);
             });
+
+            // Fallback for legacy data where timestamp may be stored as string.
+            // In that case, the numeric [sessionUid, 0..MAX] range won't match.
+            if (logs.length === 0 && filteredCount === 0 && totalCount > 0) {
+                const sessionIndex = store.index('sessionUid');
+                const legacyRows = await wrapRequest(sessionIndex.getAll(sessionUid)) as StoredLogRecord[];
+
+                const normalized = legacyRows.map(({ sessionUid: _s, timestamp: rawTimestamp, ...log }) => {
+                    const numericTimestamp = typeof rawTimestamp === 'number'
+                        ? rawTimestamp
+                        : (typeof rawTimestamp === 'string' ? Date.parse(rawTimestamp) : Date.now());
+                    return {
+                        ...log,
+                        timestamp: Number.isFinite(numericTimestamp)
+                            ? new Date(numericTimestamp).toISOString()
+                            : new Date().toISOString()
+                    } as SynthLogItem;
+                });
+
+                const filtered = normalized.filter(shouldInclude);
+                filtered.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+
+                const startIdx = (page - 1) * pageSize;
+                const endIdx = startIdx + pageSize;
+                const paged = filtered.slice(startIdx, endIdx);
+
+                logger.warn('[LogStorage] fallback path used (legacy timestamp format)', {
+                    sessionUid,
+                    page,
+                    pageSize,
+                    filter,
+                    totalCount,
+                    legacyRows: legacyRows.length,
+                    filteredCount: filtered.length,
+                    returned: paged.length
+                });
+
+                return { logs: paged, totalCount, filteredCount: filtered.length };
+            }
+
+            // Last-resort legacy storage fallback: read historical LocalStorage chunks.
+            if (logs.length === 0 && filteredCount === 0 && totalCount > 0) {
+                const localStorageRows = readLegacySessionLogs(sessionUid);
+                if (localStorageRows.length > 0) {
+                    const filtered = localStorageRows.filter(shouldInclude);
+                    const startIdx = (page - 1) * pageSize;
+                    const endIdx = startIdx + pageSize;
+                    const paged = filtered.slice(startIdx, endIdx);
+
+                    logger.warn('[LogStorage] fallback path used (legacy localStorage chunks)', {
+                        sessionUid,
+                        page,
+                        pageSize,
+                        filter,
+                        totalCount,
+                        localStorageRows: localStorageRows.length,
+                        filteredCount: filtered.length,
+                        returned: paged.length
+                    });
+
+                    return { logs: paged, totalCount: localStorageRows.length, filteredCount: filtered.length };
+                }
+
+                // If there are no rows in any storage, index count is stale: self-heal it.
+                logger.warn('[LogStorage] stale index detected (no logs found), repairing count to 0', {
+                    sessionUid,
+                    staleCount: totalCount
+                });
+                await fixSessionIndexCount(sessionUid, 0);
+                return { logs: [], totalCount: 0, filteredCount: 0 };
+            }
 
             return { logs, totalCount, filteredCount };
         } catch (e) {

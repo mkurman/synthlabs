@@ -35,3 +35,4 @@ pnpm-lock*
 .github
 .opencode
 .firebase
+.backend-vault.json

@@ -28,6 +28,7 @@ export interface GenerationConfig {
   // Generation params
   rowsToFetch: number;
   skipRows: number;
+  existingItemCount?: number;
   concurrency: number;
   sleepTime: number;
   maxRetries: number;

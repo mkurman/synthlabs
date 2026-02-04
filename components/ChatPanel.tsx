@@ -222,7 +222,8 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     const [showContinueButton, setShowContinueButton] = useState(false);
 
     // Usage Tracking State
-    const [totalTokens, setTotalTokens] = useState(0);
+    const [totalPromptTokens, setTotalPromptTokens] = useState(0);
+    const [totalCompletionTokens, setTotalCompletionTokens] = useState(0);
     const [totalCost, setTotalCost] = useState(0);
     const [lastUsage, setLastUsage] = useState<ChatUsageSummary | null>(null);
 
@@ -300,7 +301,8 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     useEffect(() => {
         hasHydratedUsageRef.current = false;
         setLastUsage(null);
-        setTotalTokens(0);
+        setTotalPromptTokens(0);
+        setTotalCompletionTokens(0);
         setTotalCost(0);
     }, [currentSessionId]);
 
@@ -325,7 +327,8 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     useEffect(() => {
         if (messages.length === 0) {
             hasHydratedUsageRef.current = false;
-            setTotalTokens(0);
+            setTotalPromptTokens(0);
+            setTotalCompletionTokens(0);
             setTotalCost(0);
             setLastUsage(null);
         }
@@ -338,12 +341,14 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
         const totals = usageMessages.reduce((acc, msg) => {
             const usage = msg.usage!;
-            acc.tokens += usage.totalTokens;
+            acc.prompt += usage.promptTokens;
+            acc.completion += usage.completionTokens;
             acc.cost += usage.cost;
             return acc;
-        }, { tokens: 0, cost: 0 });
+        }, { prompt: 0, completion: 0, cost: 0 });
 
-        setTotalTokens(totals.tokens);
+        setTotalPromptTokens(totals.prompt);
+        setTotalCompletionTokens(totals.completion);
         setTotalCost(totals.cost);
         setLastUsage(usageMessages[usageMessages.length - 1].usage || null);
         hasHydratedUsageRef.current = true;
@@ -557,7 +562,8 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                             setLastUsage(summary);
                             if (!interactionUsageAddedRef.current) {
                                 interactionUsageAddedRef.current = true;
-                                setTotalTokens(prev => prev + summary.totalTokens);
+                                setTotalPromptTokens(prev => prev + summary.promptTokens);
+                                setTotalCompletionTokens(prev => prev + summary.completionTokens);
                                 setTotalCost(prev => prev + summary.cost);
                             }
                         }
@@ -981,36 +987,39 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             )}
 
             {/* Usage Info */}
-            <div className="px-4 py-2 border-t border-slate-800/70 bg-slate-950">
+            <div className="px-4 pt-2 border-t border-slate-800/70 bg-slate-950">
                 <div className="flex items-center justify-between text-[10px] text-slate-300">
-                    <span>{totalTokens.toLocaleString()} tokens</span>
-                    <span>${totalCost.toFixed(4)}</span>
-                </div>
-                {lastUsage ? (
-                    <div className="mt-1 text-[10px] text-slate-400 flex flex-wrap items-center gap-2">
+                    <div className="flex items-center align-center gap-3">
                         <span className="inline-flex items-center gap-1">
                             <ArrowUp className="w-3 h-3 text-emerald-400" />
-                            {lastUsage.promptTokens.toLocaleString()}
+                            {totalPromptTokens.toLocaleString()}
                         </span>
                         <span className="inline-flex items-center gap-1">
                             <ArrowDown className="w-3 h-3 text-sky-400" />
-                            {lastUsage.completionTokens.toLocaleString()}
+                            {totalCompletionTokens.toLocaleString()}
                         </span>
-                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 px-2 py-0.5 text-[9px] text-amber-300">
-                            <Zap className="w-3 h-3 text-amber-400" />
-                            ${lastUsage.tps.toFixed(1)} tps
+                        <span className="text-slate-500">
+                            {lastUsage ? (
+                                <div className="text-[10px] text-slate-500 flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 px-2 py-0.5 text-[9px] text-amber-300">
+                                        <Zap className="w-3 h-3 text-amber-400" />
+                                        {lastUsage.tps.toFixed(1)} tps
+                                    </span>
+                                </div>
+                            ) : (
+                                <div className="text-[10px] text-slate-500">
+                                    Usage pending
+                                </div>
+                            )}
                         </span>
-                        <span>${lastUsage.cost.toFixed(4)}</span>
                     </div>
-                ) : (
-                    <div className="mt-1 text-[10px] text-slate-500">
-                        Last: usage pending or unavailable
-                    </div>
-                )}
+                    <span>${totalCost.toFixed(4)}</span>
+                </div>
+
             </div>
 
             {/* Input */}
-            <div className="p-4 bg-slate-950/60">
+            <div className="p-4 pt-2 bg-slate-950/60">
                 <div className="relative bg-slate-950/70 border border-slate-700/70 rounded-xl focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500 transition-all">
                     <textarea
                         value={input}

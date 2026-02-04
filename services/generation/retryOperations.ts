@@ -27,7 +27,7 @@ export async function retryItem(
         const result = await generateSingleItem(logItem.full_seed, 0, { retryId: id });
         if (result) {
             // Save to Firebase in production
-            if (environment === Environment.Production && !result.isError) {
+            if (environment === Environment.Production) {
                 try {
                     await FirebaseService.saveLogToFirebase(result);
                     updateDbStats();
@@ -123,7 +123,7 @@ export async function retryAllFailed(
                 .then(async (result) => {
                     activeWorkers--;
                     if (result) {
-                        if (environment === Environment.Production && !result.isError) {
+                        if (environment === Environment.Production) {
                             try {
                                 await FirebaseService.saveLogToFirebase(result);
                                 result.savedToDb = true;
@@ -145,7 +145,6 @@ export async function retryAllFailed(
  */
 export async function syncAllUnsavedToDb(
     sessionUid: string,
-    isInvalidLog: (log: SynthLogItem) => boolean,
     refreshLogs: () => void,
     updateDbStats: () => void
 ): Promise<void> {
@@ -159,7 +158,7 @@ export async function syncAllUnsavedToDb(
     }
 
     const allLogs = await LogStorageService.getAllLogs(sessionUid);
-    const unsavedLogs = allLogs.filter((l: SynthLogItem) => !l.savedToDb && !isInvalidLog(l));
+    const unsavedLogs = allLogs.filter((l: SynthLogItem) => !l.savedToDb);
 
     if (unsavedLogs.length === 0) {
         await confirmService.alert({

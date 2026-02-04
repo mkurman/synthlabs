@@ -1,6 +1,6 @@
 # AGENTS.md - Guide for Agentic Coding Assistants
 
-This repo is a Vite + React + TypeScript app with optional Electron/Tauri/Bun builds.
+This repo is a Vite + React + TypeScript app with optional Electron/Bun builds.
 Use this file as the operational guide for automated agents.
 
 ## Install & Run
@@ -29,8 +29,6 @@ npm run electron:build
 npm run electron:build:win
 npm run electron:build:mac
 
-npm run tauri:dev
-npm run tauri:build
 ```
 
 ## Lint / Typecheck / Tests
@@ -44,7 +42,7 @@ Single-test command: none (no test runner configured).
 ## Tech Stack Snapshot
 
 - React 19, TypeScript 5.8, Vite 6
-- Optional Electron + Tauri
+- Optional Electron
 - Firebase/Firestore integrations
 - AI providers: Google GenAI, OpenAI, Anthropic, custom endpoints
 

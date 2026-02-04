@@ -14,7 +14,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     provider, apiKey, model, apiType = ApiType.Chat, customBaseUrl, userPrompt, signal,
     maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
     responsesSchema = ResponsesSchemaName.ReasoningTrace, stream = false, onStreamChunk, streamPhase, tools,
-    promptSchema
+    promptSchema, onUsage
   } = config;
 
   let baseUrl = provider === ExternalProvider.Other ? customBaseUrl : PROVIDERS[provider]?.url;
@@ -25,15 +25,20 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
 
   // Get selected fields from config (for field selection feature)
   const selectedFields = config.selectedFields;
+  const useNativeOutput = generationParams?.useNativeOutput ?? false;
 
   logger.log('[callExternalApi] Field selection debug:', {
     selectedFields,
     hasPromptSchema: !!promptSchema,
+    useNativeOutput,
     promptSchemaOutputLength: promptSchema?.output?.length,
     promptSchemaOutput: promptSchema?.output?.map(f => ({ name: f.name, optional: f.optional }))
   });
 
-  if (config.systemPrompt) {
+  if (useNativeOutput) {
+    // Native mode: use system prompt as-is, no JSON output instructions
+    enhancedSystemPrompt = config.systemPrompt || '';
+  } else if (config.systemPrompt) {
     if (structuredOutput) {
       // Use promptSchema.output if available, otherwise we can't generate proper schema
       if (promptSchema?.output && promptSchema.output.length > 0) {
@@ -232,7 +237,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           response,
           provider,
           (chunk, accumulated, usage) => {
-            onStreamChunk!(chunk, accumulated, streamPhase, usage);
+            return onStreamChunk!(chunk, accumulated, streamPhase, usage);
           },
           signal,
           apiType
@@ -250,6 +255,21 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       }
 
       const data = await response.json();
+
+      // Extract usage data from non-streaming response
+      if (onUsage && data.usage) {
+        const usage = data.usage;
+        const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens
+          ?? usage.reasoning_tokens
+          ?? 0;
+        onUsage({
+          prompt_tokens: usage.prompt_tokens || usage.input_tokens || 0,
+          completion_tokens: usage.completion_tokens || usage.output_tokens || 0,
+          total_tokens: usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)),
+          reasoning_tokens: reasoningTokens,
+          cost: 0
+        });
+      }
 
       if (provider === ExternalProvider.Anthropic) {
         const content = data.content?.[0]?.text || "";
@@ -292,6 +312,20 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         let rawContent = message?.content;
         if (!rawContent && !message?.tool_calls) {
           rawContent = message?.reasoning || message?.reasoning_content || "";
+        }
+
+        // Native mode: combine reasoning_content with content using <think> tags
+        // This mirrors the streaming behavior where reasoning_content is wrapped in <think> tags
+        if (useNativeOutput) {
+          const reasoningContent = message?.reasoning_content || message?.reasoning;
+          const contentPart = message?.content || '';
+          if (reasoningContent && contentPart) {
+            rawContent = `<think>${reasoningContent}</think>${contentPart}`;
+          } else if (reasoningContent) {
+            rawContent = `<think>${reasoningContent}</think>`;
+          } else {
+            rawContent = contentPart;
+          }
         }
 
         if (message?.tool_calls) {

@@ -1,9 +1,11 @@
 import type { SessionListFilters } from '../types';
 
+// --- Constants ---
 const DEFAULT_BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 const BACKEND_URL_OVERRIDE_KEY = 'synthlabs_backend_url';
-const isDesktopRuntime = typeof navigator !== 'undefined' && /Electron|Tauri/i.test(navigator.userAgent);
-const defaultPortStart = isDesktopRuntime && import.meta.env.MODE === 'production' ? 8788 : 8787;
+const SERVICE_FINGERPRINT = 'synthlabs-rg';
+const isElectron = typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent);
+const defaultPortStart = isElectron && import.meta.env.MODE === 'production' ? 8788 : 8787;
 const DEFAULT_PORT_START = Number(import.meta.env.VITE_BACKEND_PORT_START || defaultPortStart);
 const DEFAULT_PORT_RANGE = Number(import.meta.env.VITE_BACKEND_PORT_RANGE || 10);
 
@@ -12,6 +14,7 @@ let resolvingBackendUrl: Promise<string> | null = null;
 
 const normalizeBaseUrl = (base: string) => (base.endsWith('/') ? base.slice(0, -1) : base);
 
+// --- localStorage helpers ---
 const getStoredOverride = (): string => {
     try {
         return localStorage.getItem(BACKEND_URL_OVERRIDE_KEY) || '';
@@ -36,12 +39,51 @@ const clearStoredOverride = () => {
     }
 };
 
+// --- Layer A: Electron IPC ---
+const resolveViaElectronIpc = async (): Promise<string | null> => {
+    if (!isElectron) return null;
+    try {
+        const port = await window.electronAPI?.getBackendPort();
+        if (port) {
+            const url = `http://localhost:${port}`;
+            console.log(`[backendClient] Resolved via Electron IPC: ${url}`);
+            return url;
+        }
+    } catch (e) {
+        console.warn('[backendClient] Electron IPC failed:', e);
+    }
+    return null;
+};
+
+// --- Layer B: Dev vault endpoint ---
+const resolveViaDevVault = async (): Promise<string | null> => {
+    if (import.meta.env.MODE === 'production') return null;
+    try {
+        const response = await fetch('/__vault__', {
+            signal: AbortSignal.timeout(1000)
+        });
+        if (!response.ok) return null;
+        const vault = await response.json();
+        if (vault?.port && vault?.service === SERVICE_FINGERPRINT) {
+            const url = `http://localhost:${vault.port}`;
+            console.log(`[backendClient] Resolved via dev vault: ${url}`);
+            return url;
+        }
+    } catch {
+        // Vault endpoint not available
+    }
+    return null;
+};
+
+// --- Layer C: Fingerprinted port scanning ---
 const probeUrl = async (baseUrl: string, timeoutMs = 600): Promise<boolean> => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const response = await fetch(`${normalizeBaseUrl(baseUrl)}/health`, { signal: controller.signal });
-        return response.ok;
+        if (!response.ok) return false;
+        const body = await response.json();
+        return body?.ok === true && body?.service === SERVICE_FINGERPRINT;
     } catch {
         return false;
     } finally {
@@ -79,13 +121,27 @@ const discoverBackendUrl = async (): Promise<string> => {
     return '';
 };
 
+// --- Main resolution orchestrator ---
 const resolveBackendUrl = async (): Promise<string> => {
+    // Priority 1: Electron IPC (deterministic, instant)
+    const ipcUrl = await resolveViaElectronIpc();
+    if (ipcUrl) return ipcUrl;
+
+    // Priority 2: Dev vault (deterministic, fast)
+    const vaultUrl = await resolveViaDevVault();
+    if (vaultUrl) return vaultUrl;
+
+    // Priority 3: localStorage override (user-configured)
     const override = getStoredOverride();
     if (override) return override;
+
+    // Priority 4: VITE_BACKEND_URL env var with fingerprint check
     if (DEFAULT_BACKEND_URL) {
         const isHealthy = await probeUrl(DEFAULT_BACKEND_URL);
         if (isHealthy) return DEFAULT_BACKEND_URL;
     }
+
+    // Priority 5: Port scanning with fingerprint verification
     return discoverBackendUrl();
 };
 
@@ -122,8 +178,9 @@ const requestJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
         return response.json() as Promise<T>;
     } catch (error) {
         resolvedBackendUrl = null;
-        const discovered = await discoverBackendUrl();
+        const discovered = await resolveBackendUrl();
         if (discovered) {
+            resolvedBackendUrl = discovered;
             const retryUrl = `${normalizeBaseUrl(discovered)}${path}`;
             const retryResponse = await fetch(retryUrl, {
                 headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
@@ -217,6 +274,48 @@ export const fetchLogs = async (sessionUid?: string, limit = 100) => {
     return result.logs;
 };
 
+export interface LogsPageResult {
+    logs: unknown[];
+    hasMore: boolean;
+    nextCursorCreatedAt?: string | number | null;
+}
+
+export const fetchLogsPage = async (
+    sessionUid?: string,
+    limit = 500,
+    cursorCreatedAt?: string | number | null
+): Promise<LogsPageResult> => {
+    const query = new URLSearchParams();
+    query.set('limit', String(limit));
+    if (sessionUid) {
+        query.set('sessionUid', sessionUid);
+    }
+    if (cursorCreatedAt !== undefined && cursorCreatedAt !== null && `${cursorCreatedAt}`.length > 0) {
+        query.set('cursorCreatedAt', String(cursorCreatedAt));
+    }
+    return requestJson<LogsPageResult>(`/api/logs?${query.toString()}`);
+};
+
+export const fetchAllLogs = async (sessionUid?: string): Promise<unknown[]> => {
+    const pageSize = 500;
+    const maxPages = 100; // Safety cap: up to 50k logs per request chain
+    let cursorCreatedAt: string | number | null | undefined = undefined;
+    const allLogs: unknown[] = [];
+
+    for (let page = 0; page < maxPages; page += 1) {
+        const { logs, hasMore, nextCursorCreatedAt } = await fetchLogsPage(sessionUid, pageSize, cursorCreatedAt);
+        if (logs.length > 0) {
+            allLogs.push(...logs);
+        }
+        if (!hasMore || !nextCursorCreatedAt) {
+            break;
+        }
+        cursorCreatedAt = nextCursorCreatedAt;
+    }
+
+    return allLogs;
+};
+
 export const fetchLog = async (id: string) => {
     const result = await requestJson<{ log: unknown }>(`/api/logs/${id}`);
     return result.log;
@@ -251,7 +350,15 @@ export const fetchDbStats = async (sessionUid?: string): Promise<{ total: number
     return requestJson<{ total: number; session: number }>(`/api/logs/stats?${query.toString()}`);
 };
 
-export const checkOrphans = async () => {
+export const startOrphanCheck = async () => {
+    const { jobId } = await requestJson<{ jobId: string }>('/api/orphans/check', { method: 'POST' });
+    if (!jobId) {
+        throw new Error('Orphan check job start failed.');
+    }
+    return jobId;
+};
+
+export const checkOrphansLegacy = async () => {
     return requestJson('/api/orphans/check');
 };
 
@@ -295,6 +402,34 @@ export const pollJob = async (
 export const syncOrphans = async (onProgress?: (progress: { scannedCount: number; orphanedSessions: number; updatedLogs: number }) => void) => {
     const jobId = await startOrphanSync();
     return pollJob(jobId, onProgress);
+};
+
+export const pollOrphanCheckJob = async (
+    jobId: string,
+    onProgress?: (progress: { scannedCount: number; orphanedSessionCount: number; totalOrphanedLogs: number }) => void
+) => {
+    for (;;) {
+        const job = await fetchJob(jobId);
+        if (job.progress && onProgress) {
+            const progress = job.progress as {
+                scannedCount?: number;
+                orphanedSessionCount?: number;
+                totalOrphanedLogs?: number;
+            };
+            onProgress({
+                scannedCount: progress.scannedCount || 0,
+                orphanedSessionCount: progress.orphanedSessionCount || 0,
+                totalOrphanedLogs: progress.totalOrphanedLogs || 0
+            });
+        }
+        if (job.status === 'completed') {
+            return job.result;
+        }
+        if (job.status === 'failed') {
+            throw new Error(job.error || 'Orphan check job failed.');
+        }
+        await new Promise(resolve => setTimeout(resolve, 5000));
+    }
 };
 
 export const setServiceAccountPath = async (path: string) => {

@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction } from 'react';
+import { Dispatch, SetStateAction, useEffect, useState } from 'react';
 import { AppMode } from '../interfaces/enums/AppMode';
 import { confirmService } from '../services/confirmService';
 import { Sparkles, ShieldCheck } from 'lucide-react';
@@ -18,6 +18,12 @@ export default function ModeNavbar({
     onSessionNameChange,
     isDirty
 }: ModeNavbarProps) {
+    const [draftSessionName, setDraftSessionName] = useState<string>(sessionName || '');
+
+    useEffect(() => {
+        setDraftSessionName(sessionName || '');
+    }, [sessionName]);
+
     const handleModeChange = async (newMode: AppMode) => {
         if (currentMode === newMode) return;
 
@@ -63,10 +69,15 @@ export default function ModeNavbar({
                 <span className="text-slate-300 text-xs uppercase tracking-wider mr-2">Session</span>
                 <input
                     type="text"
-                    value={sessionName || ''}
-                    onChange={(e) => onSessionNameChange(e.target.value)}
+                    value={draftSessionName}
+                    onChange={(e) => {
+                        const nextName = e.target.value;
+                        setDraftSessionName(nextName);
+                        onSessionNameChange(nextName);
+                    }}
                     placeholder="Untitled Session"
-                    className="bg-transparent border-b border-transparent hover:border-slate-700/70 focus:border-sky-500 focus:outline-none text-slate-100 text-sm transition-colors py-1 px-1 w-56 truncate"
+                    className="bg-transparent border-b border-transparent hover:border-slate-700/70 focus:border-sky-500 focus:outline-none text-slate-100 text-sm transition-colors py-1 px-1 w-56"
+                    disabled={false}
                 />
                 {isDirty && (
                     <span className="ml-2 text-[10px] text-amber-300 font-semibold px-2 py-0.5 bg-amber-950/40 rounded-full border border-amber-900/40">

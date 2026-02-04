@@ -5,11 +5,14 @@ import { StorageMode } from '../interfaces/enums/StorageMode';
 import { SessionSort } from '../interfaces/enums/SessionSort';
 import { Environment } from '../interfaces/enums';
 import * as IndexedDBUtils from '../services/session/indexedDBUtils';
+import { LogStorageService } from '../services/logStorageService';
+import * as FirebaseService from '../services/firebaseService';
 import { generateSessionName, autoNameSessionBeforeGeneration } from '../services/session/SessionNamingService';
 import { ExternalProvider } from '../interfaces/enums';
 import { GenerationParams } from '../interfaces/config/GenerationParams';
 import { sessionLoadService } from '../services/sessionLoadService';
 import { SessionData, SessionDataSource } from '../interfaces/services/SessionConfig';
+import { logger } from '../utils/logger';
 
 interface UseSessionManagerOptions {
     environment: Environment;
@@ -51,12 +54,12 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     /**
      * Load all sessions from storage
      */
-    const loadSessions = useCallback(async () => {
+    const loadSessions = useCallback(async (forceRefresh = false) => {
         setIsLoading(true);
         try {
             let loadedSessions: SessionData[] = [];
 
-            loadedSessions = await sessionLoadService.loadSessionList(false, environment);
+            loadedSessions = await sessionLoadService.loadSessionList(forceRefresh, environment);
 
             setSessions(loadedSessions);
         } catch (error) {
@@ -174,17 +177,36 @@ export function useSessionManager(options: UseSessionManagerOptions) {
      * Delete a session
      */
     const deleteSession = useCallback(async (sessionId: string) => {
-        // Delete from storage
-        if (storageMode === StorageMode.Local) {
-            await IndexedDBUtils.deleteSession(sessionId);
-        }
+        const session = sessions.find(s => s.id === sessionId || s.sessionUid === sessionId) || null;
+        const targetSessionId = session?.id || sessionId;
+        const targetSessionUid = session?.sessionUid || sessionId;
 
-        // Update state
-        setSessions(prev => prev.filter(s => s.id !== sessionId));
-        if (currentSession?.id === sessionId) {
-            setCurrentSession(null);
+        try {
+            // Delete session + logs from the selected backing store
+            if (storageMode === StorageMode.Local) {
+                await Promise.all([
+                    IndexedDBUtils.deleteSession(targetSessionId),
+                    LogStorageService.clearSession(targetSessionUid)
+                ]);
+            } else {
+                await FirebaseService.deleteSessionWithLogs(targetSessionId);
+                // Best-effort local cleanup for mirrored/cached rows
+                await LogStorageService.clearSession(targetSessionUid);
+            }
+
+            // Update state immediately
+            setSessions(prev => prev.filter(s => s.id !== sessionId && s.sessionUid !== sessionId));
+            if (currentSession?.id === sessionId || currentSession?.sessionUid === sessionId) {
+                setCurrentSession(null);
+            }
+
+            // Force-refresh from source of truth to avoid stale list cache
+            await loadSessions(true);
+        } catch (error) {
+            logger.error('Failed to delete session with logs', error);
+            throw error;
         }
-    }, [currentSession, storageMode]);
+    }, [currentSession, sessions, storageMode, loadSessions]);
 
     /**
      * Update session item count

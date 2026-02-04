@@ -116,11 +116,10 @@ export function useGenerationActions({
     const syncAllUnsavedToDb = useCallback(async () => {
         await syncAllUnsavedToDbOp(
             sessionUid,
-            isInvalidLog,
             refreshLogs,
             updateDbStats
         );
-    }, [isInvalidLog, refreshLogs, sessionUid, updateDbStats]);
+    }, [refreshLogs, sessionUid, updateDbStats]);
 
     const saveItemToDb = useCallback(async (id: string) => {
         setSavingToDbIds((prev: Set<string>) => new Set([...prev, id]));

@@ -37,6 +37,7 @@ export const buildGenerationConfig = (input: GenerationConfigBuilderInput): Gene
 
 export class GenerationService {
     private config: GenerationConfig;
+    private isAppendRun: boolean = false;
 
     constructor(config: GenerationConfig) {
         this.config = config;
@@ -44,6 +45,7 @@ export class GenerationService {
 
     async startGeneration(append = false): Promise<void> {
         const { config } = this;
+        this.isAppendRun = append;
 
         // Check Firebase in production
         if (config.environment === Environment.Production && !FirebaseService.isFirebaseConfigured()) {
@@ -200,13 +202,14 @@ export class GenerationService {
 
     private async setupPrefetchMode(): Promise<void> {
         const { config } = this;
+        const effectiveSkipRows = this.getEffectiveSkipRows();
 
         config.setProgress({ current: 0, total: config.rowsToFetch, activeWorkers: 1 });
 
         const prefetchConfig = config.hfConfig.prefetchConfig || DEFAULT_HF_PREFETCH_CONFIG;
         config.prefetchManagerRef.current = createPrefetchManager(
             config.hfConfig,
-            config.skipRows,
+            effectiveSkipRows,
             config.rowsToFetch,
             config.concurrency,
             prefetchConfig
@@ -222,6 +225,7 @@ export class GenerationService {
 
     private async parseManualInput(): Promise<WorkItem[]> {
         const { config } = this;
+        const effectiveSkipRows = this.getEffectiveSkipRows();
         let parsedRows: any[] = [];
         const trimmedInput = config.converterInputText.trim();
 
@@ -249,7 +253,7 @@ export class GenerationService {
             });
         }
 
-        const rowsToProcess = parsedRows.slice(config.skipRows, config.skipRows + config.rowsToFetch);
+        const rowsToProcess = parsedRows.slice(effectiveSkipRows, effectiveSkipRows + config.rowsToFetch);
         config.setProgress({ current: 0, total: rowsToProcess.length, activeWorkers: 1 });
 
         const workItems = rowsToProcess.map(row => {
@@ -265,6 +269,15 @@ export class GenerationService {
         }
 
         return workItems;
+    }
+
+    private getEffectiveSkipRows(): number {
+        const { config } = this;
+        if (!this.isAppendRun) {
+            return config.skipRows;
+        }
+        const existingItemCount = Math.max(0, config.existingItemCount || 0);
+        return Math.max(0, config.skipRows + existingItemCount);
     }
 
     private async generateSyntheticSeeds(): Promise<WorkItem[]> {
@@ -767,9 +780,27 @@ export class GenerationService {
                     isSinglePrompt
                 });
 
+                // Capture API-reported usage data for accurate token counting
+                interface CapturedUsage { prompt_tokens: number; completion_tokens: number; total_tokens: number; reasoning_tokens?: number }
+                const usageRef: { current: CapturedUsage | null } = { current: null };
+                const captureUsage = (rawUsage: any) => {
+                    if (!rawUsage || typeof rawUsage !== 'object') return;
+                    const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens
+                        ?? rawUsage.reasoning_tokens
+                        ?? 0;
+                    usageRef.current = {
+                        prompt_tokens: rawUsage.prompt_tokens || rawUsage.input_tokens || 0,
+                        completion_tokens: rawUsage.completion_tokens || rawUsage.output_tokens || 0,
+                        total_tokens: rawUsage.total_tokens || ((rawUsage.prompt_tokens || 0) + (rawUsage.completion_tokens || 0)),
+                        reasoning_tokens: reasoningTokens || undefined
+                    };
+                };
+
                 // Progressive streaming callback that parses JSON fields
                 const MAX_STREAM_RAW_CHARS = 5000;
-                const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase) => {
+                const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase, usage) => {
+                    // Capture usage data when the API sends it (typically in the final chunk)
+                    if (usage) captureUsage(usage);
                     const current = config.streamingConversationsRef.current.get(generationId);
                     if (!current) return;
 
@@ -786,7 +817,8 @@ export class GenerationService {
                         const thinkStart = /<think>/i.test(accumulated);
                         const thinkEnd = /<\/think>/i.test(accumulated);
 
-                        if (expectReasoning) {
+                        if (expectReasoning && expectAnswer) {
+                            // Both reasoning and answer expected: normal native flow
                             if (thinkStart && !thinkEnd) {
                                 newPhase = StreamingPhase.ExtractingReasoning;
                                 const partial = accumulated.match(/<think>([\s\S]*)$/i);
@@ -797,9 +829,41 @@ export class GenerationService {
                                 nextReasoning = parsed.reasoning || nextReasoning;
                                 nextAnswer = parsed.answer || nextAnswer;
                             }
-                        } else if (expectAnswer) {
-                            newPhase = StreamingPhase.ExtractingAnswer;
-                            nextAnswer = accumulated;
+                        } else if (expectReasoning && !expectAnswer) {
+                            // Only reasoning expected: collect reasoning, stop when done
+                            if (thinkStart && !thinkEnd) {
+                                newPhase = StreamingPhase.ExtractingReasoning;
+                                const partial = accumulated.match(/<think>([\s\S]*)$/i);
+                                nextReasoning = partial?.[1] || nextReasoning;
+                            } else if (thinkStart && thinkEnd) {
+                                // Reasoning complete — extract it and signal stop
+                                const parsed = parseThinkTagsForDisplay(accumulated);
+                                nextReasoning = parsed.reasoning || nextReasoning;
+                                newPhase = StreamingPhase.MessageComplete;
+
+                                const updated: StreamingConversationState = {
+                                    ...current,
+                                    phase: newPhase,
+                                    currentReasoning: nextReasoning,
+                                    currentAnswer: current.currentAnswer,
+                                    rawAccumulated: accumulated.slice(-MAX_STREAM_RAW_CHARS)
+                                };
+                                config.streamingConversationsRef.current.set(generationId, updated);
+                                config.scheduleStreamingUpdate();
+                                return false; // Stop streaming early
+                            }
+                        } else if (expectAnswer && !expectReasoning) {
+                            // Only answer expected: skip reasoning, extract content after </think>
+                            if (thinkStart && thinkEnd) {
+                                newPhase = StreamingPhase.ExtractingAnswer;
+                                const parsed = parseThinkTagsForDisplay(accumulated);
+                                nextAnswer = parsed.answer || nextAnswer;
+                            } else if (!thinkStart) {
+                                // No think tags at all — entire content is the answer
+                                newPhase = StreamingPhase.ExtractingAnswer;
+                                nextAnswer = accumulated;
+                            }
+                            // If think started but not ended, wait for reasoning to finish
                         }
                     } else {
                         const extracted = extractJsonFields(accumulated);
@@ -1021,7 +1085,8 @@ export class GenerationService {
                             selectedFields: useNativeOutput ? undefined : genParams?.selectedFields,
                             stream: config.isStreamingEnabled,
                             onStreamChunk: handleStreamChunk,
-                            streamPhase: 'regular'
+                            streamPhase: 'regular',
+                            onUsage: captureUsage
                         });
                         clearStreamingState();
                     }
@@ -1097,6 +1162,7 @@ export class GenerationService {
                         ? originalAnswer
                         : answer;
 
+                    const finalUsage = usageRef.current;
                     return {
                         id: generationId,
                         sessionUid: config.sessionUid,
@@ -1111,7 +1177,9 @@ export class GenerationService {
                         [SynthLogFieldName.OriginalAnswer]: originalAnswer,
                         timestamp: new Date().toISOString(),
                         duration: Date.now() - startTime,
-                        tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4),
+                        tokenCount: finalUsage?.total_tokens
+                            || Math.round((finalAnswer.length + reasoning.length) / 4),
+                        usage: finalUsage || undefined,
                         modelUsed: config.provider === ProviderType.Gemini ? 'Gemini 3 Flash' : `${config.externalProvider}/${config.externalModel}`,
                         provider: config.externalProvider,
                         status: LogItemStatus.DONE
@@ -1315,7 +1383,7 @@ export class GenerationService {
         config.setFilteredLogCount((prev: number) => prev + 1);
 
         const currentEnv = config.environmentRef.current;
-        if (currentEnv === Environment.Production && !result.isError && FirebaseService.isFirebaseConfigured()) {
+        if (currentEnv === Environment.Production && FirebaseService.isFirebaseConfigured()) {
             try {
                 await FirebaseService.saveLogToFirebase(result);
                 result.savedToDb = true;

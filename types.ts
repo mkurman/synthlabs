@@ -129,6 +129,7 @@ export interface UsageData {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  reasoning_tokens?: number;
   cost: number;
 }
 
@@ -137,7 +138,7 @@ export type StreamChunkCallback = (
   accumulated: string,
   phase?: StreamPhase,
   usage?: UsageData
-) => void;
+) => void | false;
 
 export type StreamingConversationPhase = StreamingPhase;
 
@@ -198,6 +199,10 @@ export interface SessionListToolParams {
 
 export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
+  openNewWindow: () => Promise<void>;
+  saveFirebaseCredentials: (jsonContent: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  getFirebaseStatus: () => Promise<{ configured: boolean; path: string | null }>;
+  getBackendPort: () => Promise<number | null>;
   platform: string;
 }
 

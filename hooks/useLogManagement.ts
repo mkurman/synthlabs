@@ -3,6 +3,7 @@ import { LogStorageService } from '../services/logStorageService';
 import * as FirebaseService from '../services/firebaseService';
 import { SynthLogItem } from '../types';
 import { Environment, LogFilter, LogItemStatus } from '../interfaces/enums';
+import { logger } from '../utils/logger';
 
 interface UseLogManagementProps {
   sessionUid: string;
@@ -138,6 +139,7 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
 
     // Skip loading if no session is selected
     if (!sessionUid) {
+      logger.log('[LogLoad] skip refresh: no session selected');
       setVisibleLogs([]);
       setTotalLogCount(0);
       setFilteredLogCount(0);
@@ -148,6 +150,14 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
 
     // Use ref for mid-generation updates when sessionUid might have just been set
     const currentSessionId = sessionUidRef.current || sessionUid;
+    logger.log('[LogLoad] refresh start', {
+      sessionUid: currentSessionId,
+      environment,
+      page: currentPage,
+      pageSize: feedPageSize,
+      filter: logFilter,
+      showLatestOnly
+    });
 
     const effectivePageSize = feedPageSize === -1 ? Number.MAX_SAFE_INTEGER : feedPageSize;
     const prefetched = prefetchedPageRef.current;
@@ -168,9 +178,23 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
 
       if (shouldUsePrefetch) {
         result = { logs: prefetched.logs, totalCount: totalLogCountRef.current, filteredCount: prefetched.filteredCount };
+        logger.log('[LogLoad] using prefetched page', {
+          sessionUid: currentSessionId,
+          page: currentPage,
+          logs: result.logs.length,
+          filteredCount: result.filteredCount
+        });
       } else if (environment === Environment.Production && FirebaseService.isFirebaseConfigured()) {
         // Production: Fetch from Firebase
         result = await fetchLogsFromFirebase(currentSessionId, currentPage, effectivePageSize, logFilter);
+        logger.log('[LogLoad] loaded from firebase', {
+          sessionUid: currentSessionId,
+          page: currentPage,
+          requestedPageSize: effectivePageSize,
+          logs: result.logs.length,
+          totalCount: result.totalCount,
+          filteredCount: result.filteredCount
+        });
       } else {
         // Development: Fetch from local IndexedDB
         result = await LogStorageService.getLogsPage(
@@ -179,6 +203,19 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
           effectivePageSize,
           logFilter
         );
+        logger.log('[LogLoad] loaded from local indexeddb', {
+          sessionUid: currentSessionId,
+          page: currentPage,
+          requestedPageSize: effectivePageSize,
+          logs: result.logs.length,
+          totalCount: result.totalCount,
+          filteredCount: result.filteredCount,
+          sampleStatuses: result.logs.slice(0, 5).map((item) => ({
+            id: item.id,
+            status: item.status,
+            isError: !!item.isError
+          }))
+        });
       }
 
       setVisibleLogs(result.logs);
@@ -193,6 +230,10 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
       if (environment === Environment.Production && FirebaseService.isFirebaseConfigured()) {
         const invalidResult = await fetchLogsFromFirebase(currentSessionId, 1, 1, LogFilter.Invalid);
         hasInvalid = invalidResult.filteredCount > 0;
+        logger.log('[LogLoad] invalid check (firebase)', {
+          sessionUid: currentSessionId,
+          invalidCount: invalidResult.filteredCount
+        });
       } else {
         const invalidResult = await LogStorageService.getLogsPage(
           currentSessionId,
@@ -201,8 +242,28 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
           LogFilter.Invalid
         );
         hasInvalid = invalidResult.filteredCount > 0;
+        logger.log('[LogLoad] invalid check (indexeddb)', {
+          sessionUid: currentSessionId,
+          invalidCount: invalidResult.filteredCount
+        });
       }
       setHasInvalidLogs(hasInvalid);
+
+      // If current filter is Live but session only has invalid items, switch to Invalid automatically.
+      // This prevents "empty session" confusion when the session is actually populated.
+      if (
+        logFilter === LogFilter.Live &&
+        result.filteredCount === 0 &&
+        result.totalCount > 0 &&
+        hasInvalid
+      ) {
+        logger.log('[LogLoad] auto-switching filter Live -> Invalid', {
+          sessionUid: currentSessionId,
+          totalCount: result.totalCount
+        });
+        setLogFilter(LogFilter.Invalid);
+        return;
+      }
 
       // Prefetch next page (only for local storage to avoid excessive Firebase reads)
       if (feedPageSize !== -1 && !showLatestOnly && environment === Environment.Development) {
@@ -225,6 +286,10 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
         prefetchedPageRef.current = null;
       }
     } finally {
+      logger.log('[LogLoad] refresh end', {
+        sessionUid: currentSessionId,
+        totalLogCount: totalLogCountRef.current
+      });
       setIsLoading(false);
     }
   }, [currentPage, feedPageSize, logFilter, logsTrigger, isInvalidLog, showLatestOnly, environment, fetchLogsFromFirebase, sessionUid]);

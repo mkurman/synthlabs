@@ -118,6 +118,8 @@ export interface ExternalApiConfig {
   maxTokens?: number;
   /** Array of field names to include in the output schema (for field selection feature) */
   selectedFields?: OutputFieldName[];
+  /** Callback to receive usage data from the API response (both streaming and non-streaming) */
+  onUsage?: (usage: import('../../types').UsageData) => void;
 }
 
 export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

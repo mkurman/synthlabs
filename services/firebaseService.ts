@@ -649,7 +649,9 @@ export const loadFromCloud = async (sessionId: string): Promise<CloudSessionResu
 
 export const fetchAllLogs = async (limitCount?: number, sessionUid?: string): Promise<VerifierItem[]> => {
     if (backendClient.isBackendEnabled()) {
-        const logs = await backendClient.fetchLogs(sessionUid, limitCount ?? 200);
+        const logs = typeof limitCount === 'number' && limitCount > 0
+            ? await backendClient.fetchLogs(sessionUid, limitCount)
+            : await backendClient.fetchAllLogs(sessionUid);
         return logs as VerifierItem[];
     }
     return fetchLogsAfter({ limitCount, sessionUid });
@@ -661,7 +663,9 @@ export const fetchLogsAfter = async (options: {
     lastDoc?: any; // QueryDocumentSnapshot
 }): Promise<VerifierItem[]> => {
     if (backendClient.isBackendEnabled()) {
-        const logs = await backendClient.fetchLogs(options.sessionUid, options.limitCount ?? 200);
+        const logs = typeof options.limitCount === 'number' && options.limitCount > 0
+            ? await backendClient.fetchLogs(options.sessionUid, options.limitCount)
+            : await backendClient.fetchAllLogs(options.sessionUid);
         return logs as VerifierItem[];
     }
     await ensureInitialized();
@@ -773,15 +777,45 @@ const ORPHANED_LOGS_DEFAULT_COUNT_PER_SESSION = 1;
 
 export const getOrphanedLogsInfo = async (onProgress?: (progress: OrphanScanProgress) => void): Promise<OrphanedLogsInfo> => {
     if (backendClient.isBackendEnabled()) {
-        const result = await backendClient.checkOrphans() as OrphanedLogsInfo;
-        if (onProgress) {
-            onProgress({
-                scannedCount: result.scannedCount || 0,
-                orphanedSessionCount: result.orphanedSessionCount || 0,
-                totalOrphanedLogs: result.totalOrphanedLogs || 0
-            });
+        try {
+            const jobId = await backendClient.startOrphanCheck();
+            await jobStorageService.addJob({ id: jobId, type: 'orphan-check', createdAt: Date.now() });
+            try {
+                const result = await backendClient.pollOrphanCheckJob(jobId, (progress) => {
+                    onProgress?.({
+                        scannedCount: progress.scannedCount || 0,
+                        orphanedSessionCount: progress.orphanedSessionCount || 0,
+                        totalOrphanedLogs: progress.totalOrphanedLogs || 0
+                    });
+                });
+                if (onProgress) {
+                    onProgress({
+                        scannedCount: result.scannedCount || 0,
+                        orphanedSessionCount: result.orphanedSessionCount || 0,
+                        totalOrphanedLogs: result.totalOrphanedLogs || 0
+                    });
+                }
+                return result as OrphanedLogsInfo;
+            } finally {
+                await jobStorageService.removeJob(jobId);
+            }
+        } catch (e: any) {
+            // Backward-compat fallback for older backends that only expose GET /api/orphans/check.
+            // We intentionally try this on any async-check failure.
+            try {
+                const result = await backendClient.checkOrphansLegacy() as OrphanedLogsInfo;
+                if (onProgress) {
+                    onProgress({
+                        scannedCount: result.scannedCount || 0,
+                        orphanedSessionCount: result.orphanedSessionCount || 0,
+                        totalOrphanedLogs: result.totalOrphanedLogs || 0
+                    });
+                }
+                return result as OrphanedLogsInfo;
+            } catch {
+                throw e;
+            }
         }
-        return result;
     }
     await ensureInitialized();
     if (!db) throw new Error("Firebase not initialized");

@@ -157,21 +157,22 @@ export default function GenerationParamsInput({ params, onChange, label = "Gener
                     </div>
 
                     {/* Structured Output Toggle */}
-                    <div className="flex items-center justify-between pt-3 border-t border-slate-800/70">
+                    <div className={`flex items-center justify-between pt-3 border-t border-slate-800/70 ${currentParams.useNativeOutput ? 'opacity-50' : ''}`}>
                         <div className="flex items-center gap-2">
                             <label className="text-[10px] text-slate-300 font-bold uppercase">Force Structured Output</label>
-                            <span className="text-[9px] text-slate-400" title="When enabled, requests JSON response format from the model">
-                                (JSON mode)
+                            <span className="text-[9px] text-slate-400" title={currentParams.useNativeOutput ? 'Disabled in native output mode' : 'When enabled, requests JSON response format from the model'}>
+                                {currentParams.useNativeOutput ? '(disabled by native mode)' : '(JSON mode)'}
                             </span>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
+                        <label className={`relative inline-flex items-center ${currentParams.useNativeOutput ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
                             <input
                                 type="checkbox"
-                                checked={currentParams.forceStructuredOutput ?? true}
+                                checked={currentParams.useNativeOutput ? false : (currentParams.forceStructuredOutput ?? true)}
                                 onChange={(e) => updateBoolParam('forceStructuredOutput', e.target.checked)}
+                                disabled={currentParams.useNativeOutput}
                                 className="sr-only peer"
                             />
-                            <div className="w-9 h-5 bg-slate-800/70 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                            <div className="w-9 h-5 bg-slate-800/70 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600 peer-disabled:opacity-50"></div>
                         </label>
                     </div>
 

@@ -15,10 +15,7 @@
     "bun:preview": "bun vite preview",
     "bun:compile": "bun vite build && bun build --compile --minify server.ts --outfile synthlabs",
     "bun:compile:win": "bun vite build && bun build --compile --minify --target=bun-windows-x64 server.ts --outfile synthlabs.exe",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
-    "electron:dev": "concurrently \"npm run dev:server\" \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+"electron:dev": "concurrently \"npm run dev:server\" \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "bundle:server": "node scripts/bundle-server.mjs",
     "test:bundle": "node scripts/bundle-server.mjs && node -e \"require('./server-bundle/index.cjs').startServer()\"",
     "electron:build": "vite build && npm run bundle:server && electron-builder",
@@ -28,7 +25,6 @@
   "dependencies": {
     "@google/genai": "^1.33.0",
     "@huggingface/hub": "0.15.1",
-    "@tauri-apps/api": "^2.9.1",
     "firebase": "^12.7.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
@@ -43,7 +39,6 @@
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
-    "@tauri-apps/cli": "^2.9.6",
     "@types/bun": "^1.2.4",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.14.0",

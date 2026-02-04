@@ -271,7 +271,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                     <>
                                         <div className="flex items-center gap-1 text-[9px] text-sky-300 uppercase font-bold mb-1">
                                             <Sparkles className="w-2.5 h-2.5 animate-pulse" />
-                                            Reasoning...
+                                            Thinking...
                                         </div>
                                         <div className="bg-slate-950/60 border border-slate-800/70 rounded p-2 mb-2">
                                             {currentReasoning ? (
@@ -280,7 +280,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                                     <span className="inline-block w-1.5 h-3 bg-sky-400/60 ml-0.5 animate-pulse" />
                                                 </>
                                             ) : (
-                                                <span className="text-slate-400 italic">Extracting reasoning...</span>
+                                                <span className="text-slate-400 italic">Extracting thoughts...</span>
                                             )}
                                         </div>
                                     </>
@@ -297,7 +297,7 @@ const StreamingConversationCard: React.FC<StreamingConversationCardProps> = ({
                                                     className="flex items-center gap-1 text-[9px] text-slate-400 hover:text-slate-300 uppercase font-bold"
                                                 >
                                                     <Sparkles className="w-2.5 h-2.5" />
-                                                    Reasoning Complete
+                                                    Thoughts
                                                     {expandedReasoning.has(-1) ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
                                                 </button>
                                                 {expandedReasoning.has(-1) && (
