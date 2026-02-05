@@ -60,7 +60,7 @@ export async function checkOllamaStatus(baseUrl: string = 'http://localhost:1143
     const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/tags`;
     const response = await fetch(url, {
       method: 'GET',
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(1000),
     });
     return response.ok;
   } catch {

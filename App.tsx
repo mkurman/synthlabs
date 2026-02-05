@@ -76,46 +76,9 @@ export default function App() {
     const [externalModel, setExternalModel] = useState('anthropic/claude-3.5-sonnet');
     const [customBaseUrl, setCustomBaseUrl] = useState('');
     
-    // --- State: Ollama Integration ---
-    const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-    const [ollamaLoading, setOllamaLoading] = useState(false);
+    // --- State: Ollama Integration (Managed via useOllama hook) ---
+    // Note: State and logic moved to useOllama hook to prevent duplication and crashes
 
-    // Fetch Ollama models
-    const refreshOllamaModels = useCallback(async () => {
-        setOllamaLoading(true);
-        setOllamaStatus('checking');
-        try {
-            const isOnline = await checkOllamaStatus();
-            if (isOnline) {
-                setOllamaStatus('online');
-                const models = await fetchOllamaModels();
-                setOllamaModels(models);
-                // If no (valid) model selected for Ollama and models available, select first one
-                if (
-                    models.length > 0 &&
-                    externalProvider === 'ollama' &&
-                    (!externalModel || externalModel.includes('/'))
-                ) {
-                    setExternalModel(models[0].name);
-                }
-            } else {
-                setOllamaStatus('offline');
-                setOllamaModels([]);
-            }
-        } catch {
-            setOllamaStatus('offline');
-            setOllamaModels([]);
-        }
-        setOllamaLoading(false);
-    }, [externalProvider, externalModel]);
-
-    // Auto-fetch Ollama models when Ollama provider is selected
-    useEffect(() => {
-        if (externalProvider === 'ollama') {
-            refreshOllamaModels();
-        }
-    }, [externalProvider]);
 
     const {
         ollamaModels,

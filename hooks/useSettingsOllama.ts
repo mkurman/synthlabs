@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { OllamaModel, fetchOllamaModels, checkOllamaStatus } from '../services/externalApiService';
 import { OllamaStatus } from '../interfaces/enums';
 
@@ -14,7 +14,7 @@ export function useSettingsOllama(): UseSettingsOllamaReturn {
     const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>(OllamaStatus.Checking);
     const [ollamaLoading, setOllamaLoading] = useState(false);
 
-    const refreshOllamaModels = async () => {
+    const refreshOllamaModels = useCallback(async () => {
         setOllamaLoading(true);
         setOllamaStatus(OllamaStatus.Checking);
         try {
@@ -32,7 +32,7 @@ export function useSettingsOllama(): UseSettingsOllamaReturn {
             setOllamaModels([]);
         }
         setOllamaLoading(false);
-    };
+    }, []);
 
     return {
         ollamaModels,
