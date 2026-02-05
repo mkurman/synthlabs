@@ -22,9 +22,13 @@ export interface FeedAnalyticsPanelProps {
     onRetry: (id: string) => void;
     onRetrySave: (id: string) => void;
     onSaveToDb: (id: string) => void;
+    onDeterministicReplay: (id: string) => void;
+    onAcceptReplay: (id: string) => void;
+    onDismissReplay: (id: string) => void;
     onDelete: (id: string) => void;
     onHalt: (id: string) => void;
     retryingIds: Set<string>;
+    replayingIds: Set<string>;
     savingIds: Set<string>;
     isProdMode: boolean;
     streamingConversations?: Map<string, StreamingConversationState>;
@@ -48,9 +52,13 @@ export default function FeedAnalyticsPanel({
     onRetry,
     onRetrySave,
     onSaveToDb,
+    onDeterministicReplay,
+    onAcceptReplay,
+    onDismissReplay,
     onDelete,
     onHalt,
     retryingIds,
+    replayingIds,
     savingIds,
     isProdMode,
     streamingConversations,
@@ -80,9 +88,13 @@ export default function FeedAnalyticsPanel({
                     onRetry={onRetry}
                     onRetrySave={onRetrySave}
                     onSaveToDb={onSaveToDb}
+                    onDeterministicReplay={onDeterministicReplay}
+                    onAcceptReplay={onAcceptReplay}
+                    onDismissReplay={onDismissReplay}
                     onDelete={onDelete}
                     onHalt={onHalt}
                     retryingIds={retryingIds}
+                    replayingIds={replayingIds}
                     savingIds={savingIds}
                     isProdMode={isProdMode}
                     streamingConversations={streamingConversations}

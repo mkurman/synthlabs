@@ -1,6 +1,7 @@
 import FeedAnalyticsPanel, { FeedAnalyticsPanelProps } from './FeedAnalyticsPanel';
 import SidebarPanel, { SidebarPanelProps } from './SidebarPanel';
 import VerifierContent, { VerifierContentProps } from './VerifierContent';
+import BatchPromptDebugger from '../BatchPromptDebugger';
 import { AppView } from '../../interfaces/enums';
 
 interface AppMainContentProps {
@@ -22,6 +23,10 @@ export default function AppMainContent({
                 <VerifierContent {...verifierProps} />
             </main>
         );
+    }
+
+    if (appView === AppView.BatchDebugger) {
+        return <BatchPromptDebugger />;
     }
 
     return (

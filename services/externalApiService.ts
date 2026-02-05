@@ -30,11 +30,13 @@ export {
 
 export type {
   OllamaModel,
-  OllamaModelListResponse
+  OllamaModelListResponse,
+  OllamaVersionResponse
 } from './api/ollama';
 
 export {
   fetchOllamaModels,
+  fetchOllamaVersion,
   checkOllamaStatus,
   formatOllamaModelSize
 } from './api/ollama';

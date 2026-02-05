@@ -76,46 +76,9 @@ export default function App() {
     const [externalModel, setExternalModel] = useState('anthropic/claude-3.5-sonnet');
     const [customBaseUrl, setCustomBaseUrl] = useState('');
     
-    // --- State: Ollama Integration ---
-    const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-    const [ollamaLoading, setOllamaLoading] = useState(false);
+    // --- State: Ollama Integration (Managed via useOllama hook) ---
+    // Note: State and logic moved to useOllama hook to prevent duplication and crashes
 
-    // Fetch Ollama models
-    const refreshOllamaModels = useCallback(async () => {
-        setOllamaLoading(true);
-        setOllamaStatus('checking');
-        try {
-            const isOnline = await checkOllamaStatus();
-            if (isOnline) {
-                setOllamaStatus('online');
-                const models = await fetchOllamaModels();
-                setOllamaModels(models);
-                // If no (valid) model selected for Ollama and models available, select first one
-                if (
-                    models.length > 0 &&
-                    externalProvider === 'ollama' &&
-                    (!externalModel || externalModel.includes('/'))
-                ) {
-                    setExternalModel(models[0].name);
-                }
-            } else {
-                setOllamaStatus('offline');
-                setOllamaModels([]);
-            }
-        } catch {
-            setOllamaStatus('offline');
-            setOllamaModels([]);
-        }
-        setOllamaLoading(false);
-    }, [externalProvider, externalModel]);
-
-    // Auto-fetch Ollama models when Ollama provider is selected
-    useEffect(() => {
-        if (externalProvider === 'ollama') {
-            refreshOllamaModels();
-        }
-    }, [externalProvider]);
 
     const {
         ollamaModels,
@@ -247,6 +210,7 @@ export default function App() {
     const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
     // DB save tracking state
     const [savingToDbIds, setSavingToDbIds] = useState<Set<string>>(new Set());
+    const [replayingIds, setReplayingIds] = useState<Set<string>>(new Set());
 
     // UI State for Deep Config
     const [activeDeepTab, setActiveDeepTab] = useState<DeepPhase>(DeepPhase.Meta);
@@ -660,6 +624,9 @@ export default function App() {
         retryAllFailed,
         syncAllUnsavedToDb,
         saveItemToDb,
+        deterministicReplay,
+        acceptReplay,
+        dismissReplay,
         startNewSession
     } = useGenerationActions({
         buildGenerationConfig,
@@ -672,6 +639,7 @@ export default function App() {
         updateDbStats,
         setRetryingIds,
         setSavingToDbIds,
+        setReplayingIds,
         dataSourceMode,
         hfConfig,
         manualFileName,
@@ -880,9 +848,13 @@ export default function App() {
         onRetry: retryItem,
         onRetrySave: retrySave,
         onSaveToDb: saveItemToDb,
+        onDeterministicReplay: deterministicReplay,
+        onAcceptReplay: acceptReplay,
+        onDismissReplay: dismissReplay,
         onDelete: handleDeleteLog,
         onHalt: haltStreamingItem,
         retryingIds,
+        replayingIds,
         savingIds: savingToDbIds,
         streamingConversations: streamingConversationsRef.current,
         streamingVersion: streamingConversationsVersion,

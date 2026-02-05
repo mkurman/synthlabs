@@ -1,4 +1,4 @@
-import { SynthLogItem, StreamChunkCallback, ChatMessage, StreamingConversationState, GenerationParams } from '../../types';
+import { SynthLogItem, StreamChunkCallback, ChatMessage, StreamingConversationState, GenerationParams, ReplayConfig } from '../../types';
 import { LogStorageService } from '../logStorageService';
 import { SettingsService } from '../settingsService';
 import * as FirebaseService from '../firebaseService';
@@ -661,6 +661,25 @@ export class GenerationService {
         const { retryId, originalQuestion, originalAnswer, originalReasoning, row, runtimeConfig } = opts;
         const startTime = Date.now();
 
+        const buildReplayConfig = (systemPrompt: string, converterPrompt: string, deepConfig: typeof config.deepConfig): ReplayConfig => ({
+            appMode: config.appMode,
+            engineMode: config.engineMode,
+            provider: config.provider,
+            externalProvider: config.externalProvider,
+            apiType: config.apiType,
+            model: config.model,
+            externalModel: config.externalModel,
+            customBaseUrl: config.customBaseUrl,
+            systemPrompt,
+            converterPrompt,
+            deepConfig,
+            userAgentConfig: config.userAgentConfig,
+            conversationRewriteMode: config.conversationRewriteMode,
+            generationParams: config.generationParams,
+            sessionPromptSet: config.sessionPromptSet,
+            isStreamingEnabled: config.isStreamingEnabled
+        });
+
         // Determine source for tracking
         const source = config.dataSourceMode === DataSource.HuggingFace
             ? `hf:${config.hfConfig.dataset}`
@@ -729,6 +748,7 @@ export class GenerationService {
                 const effectiveConverterPrompt = runtimeConfig?.converterPrompt ?? config.converterPrompt;
                 const effectiveDeepConfig = runtimeConfig?.deepConfig ?? config.deepConfig;
                 const activePrompt = config.appMode === AppMode.Generator ? effectiveSystemPrompt : effectiveConverterPrompt;
+                const replayConfig = buildReplayConfig(effectiveSystemPrompt, effectiveConverterPrompt, effectiveDeepConfig);
                 const genParams = config.generationParams;
                 const useNativeOutput = genParams?.useNativeOutput ?? false;
                 const retryConfig = { maxRetries: config.maxRetries, retryDelay: config.retryDelay, generationParams: genParams };
@@ -967,7 +987,8 @@ export class GenerationService {
                             id: generationId,
                             sessionUid: config.sessionUid,
                             source: source,
-                            status: LogItemStatus.DONE
+                            status: LogItemStatus.DONE,
+                            replayConfig
                         };
                     }
                 }
@@ -1112,7 +1133,8 @@ export class GenerationService {
                         tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4),
                         modelUsed: config.provider === ProviderType.Gemini ? 'Gemini 3 Flash' : `${config.externalProvider}/${config.externalModel}`,
                         provider: config.externalProvider,
-                        status: LogItemStatus.DONE
+                        status: LogItemStatus.DONE,
+                        replayConfig
                     };
                 } else {
                     // Deep mode
@@ -1156,7 +1178,8 @@ export class GenerationService {
                             source: source,
                             duration: Date.now() - startTime,
                             tokenCount: 0,
-                            status: LogItemStatus.ERROR
+                            status: LogItemStatus.ERROR,
+                            replayConfig
                         };
                     }
 
@@ -1197,7 +1220,8 @@ export class GenerationService {
                             duration: Date.now() - startTime,
                             tokenCount: Math.round((multiTurnResult.answer?.length || 0 + (multiTurnResult.reasoning?.length || 0)) / 4),
                             isMultiTurn: true,
-                            status: LogItemStatus.DONE
+                            status: LogItemStatus.DONE,
+                            replayConfig
                         };
                     }
 
@@ -1212,11 +1236,13 @@ export class GenerationService {
                         source: source,
                         duration: Date.now() - startTime,
                         tokenCount: Math.round((answer.length + reasoning.length) / 4),
-                        status: LogItemStatus.DONE
+                        status: LogItemStatus.DONE,
+                        replayConfig
                     };
                 }
             });
         } catch (err: any) {
+            const replayConfig = buildReplayConfig(config.systemPrompt, config.converterPrompt, config.deepConfig);
             if (err.name === 'AbortError' && !didTimeout) {
                 clearStreamingState();
                 const safeErrInput = typeof inputText === 'string' ? inputText : JSON.stringify(inputText);
@@ -1237,7 +1263,8 @@ export class GenerationService {
                     modelUsed: config.engineMode === EngineMode.Deep ? 'DEEP ENGINE' : "System",
                     isError: true,
                     status: LogItemStatus.ERROR,
-                    error: 'Halted by user'
+                    error: 'Halted by user',
+                    replayConfig
                 };
             }
             if (err.name === 'TimeoutError' || didTimeout) {
@@ -1260,7 +1287,8 @@ export class GenerationService {
                     modelUsed: config.engineMode === EngineMode.Deep ? 'DEEP ENGINE' : "System",
                     isError: true,
                     status: LogItemStatus.TIMEOUT,
-                    error: `Timed out after ${timeoutSeconds} seconds`
+                    error: `Timed out after ${timeoutSeconds} seconds`,
+                    replayConfig
                 };
             }
             console.error(`Worker ${workerId} failed`, err);
@@ -1282,7 +1310,8 @@ export class GenerationService {
                 modelUsed: config.engineMode === EngineMode.Deep ? 'DEEP ENGINE' : "System",
                 isError: true,
                 status: LogItemStatus.ERROR,
-                error: err.message
+                error: err.message,
+                replayConfig
             };
         } finally {
             if (globalSignal) {

@@ -193,7 +193,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                             )}
                                                             {isOllama && (
                                                                 <span className={`text-[8px] ml-1 ${ollamaStatus === OllamaStatus.Online ? 'text-emerald-400' : ollamaStatus === OllamaStatus.Offline ? 'text-red-400' : 'text-yellow-400'}`}>
-                                                                    {ollamaStatus === OllamaStatus.Online ? '● Online' : ollamaStatus === OllamaStatus.Offline ? '● Offline' : '● ...'}
+                                                                    {ollamaStatus === OllamaStatus.Online ? '● Online' : ollamaStatus === OllamaStatus.Offline ? '● Not Found' : '● ...'}
                                                                 </span>
                                                             )}
                                                         </div>
@@ -237,9 +237,9 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                                     disabled={ollamaStatus !== OllamaStatus.Online || ollamaModels.length === 0}
                                                                 >
                                                                     <option value="">
-                                                                        {ollamaStatus === OllamaStatus.Checking ? 'Loading...' :
-                                                                            ollamaStatus === OllamaStatus.Offline ? 'Ollama offline' :
-                                                                                ollamaModels.length === 0 ? 'No models' : 'Select model'}
+                                                                    {ollamaStatus === OllamaStatus.Checking ? 'Loading...' :
+                                                                        ollamaStatus === OllamaStatus.Offline ? 'Ollama not found' :
+                                                                            ollamaModels.length === 0 ? 'No models' : 'Select model'}
                                                                     </option>
                                                                     {ollamaModels.map(model => (
                                                                         <option key={model.name} value={model.name}>

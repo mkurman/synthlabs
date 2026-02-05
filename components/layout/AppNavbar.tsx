@@ -1,4 +1,4 @@
-import { Cpu, Beaker, ShieldCheck, Laptop, Cloud, Download, Settings } from 'lucide-react';
+import { Cpu, Beaker, ShieldCheck, Layers, Laptop, Cloud, Download, Settings } from 'lucide-react';
 import { AppView, Environment } from '../../interfaces/enums';
 
 interface AppNavbarProps {
@@ -67,6 +67,16 @@ export default function AppNavbar({
               }`}
             >
               <ShieldCheck className="w-3.5 h-3.5" /> Verifier
+            </button>
+            <button
+              onClick={() => onViewChange(AppView.BatchDebugger)}
+              className={`px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 ${
+                appView === AppView.BatchDebugger 
+                  ? 'bg-violet-600 text-white shadow' 
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" /> Matrix
             </button>
           </div>
         </div>

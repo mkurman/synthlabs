@@ -35,6 +35,7 @@ export type { UserAgentConfig } from './interfaces/config/UserAgentConfig';
 
 // Types
 export type { OutputField, PromptSchema, ParsedSchemaOutput } from './interfaces/types/PromptSchema';
+export type { ReplayConfig } from './interfaces/types/ReplayConfig';
 
 // Re-export enums for use in type definitions
 import { ExternalProvider, ProviderType } from './interfaces/enums';
