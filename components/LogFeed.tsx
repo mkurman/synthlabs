@@ -1,6 +1,6 @@
 
 import React, { useEffect } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2 } from 'lucide-react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2, Repeat, Check, X } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import { parseThinkTagsForDisplay } from '../utils/thinkTagParser';
 import ConversationView from './ConversationView';
@@ -16,10 +16,14 @@ interface LogFeedProps {
   onRetry?: (id: string) => void;
   onRetrySave?: (id: string) => void;
   onSaveToDb?: (id: string) => void;
+  onDeterministicReplay?: (id: string) => void;
+  onAcceptReplay?: (id: string) => void;
+  onDismissReplay?: (id: string) => void;
   onDelete?: (id: string) => void;
   onHalt?: (id: string) => void;
   retryingIds?: Set<string>;
   savingIds?: Set<string>;
+  replayingIds?: Set<string>;
   isProdMode?: boolean;
   // Map of concurrent streaming conversations
   streamingConversations?: Map<string, StreamingConversationState>;
@@ -30,7 +34,7 @@ interface LogFeedProps {
 
 const LogFeed: React.FC<LogFeedProps> = ({
   logs, pageSize, totalLogCount, currentPage, onPageChange,
-  onRetry, onRetrySave, onSaveToDb, onDelete, onHalt, retryingIds, savingIds, isProdMode,
+  onRetry, onRetrySave, onSaveToDb, onDeterministicReplay, onAcceptReplay, onDismissReplay, onDelete, onHalt, retryingIds, savingIds, replayingIds, isProdMode,
   streamingConversations, streamingVersion, showLatestOnly = false
 }) => {
 
@@ -120,6 +124,32 @@ const LogFeed: React.FC<LogFeedProps> = ({
     return JSON.stringify(content, null, 2);
   };
 
+  const buildDiffLines = (originalText: string, replayText: string) => {
+    const originalLines = originalText.split('\n');
+    const replayLines = replayText.split('\n');
+    const maxLines = Math.max(originalLines.length, replayLines.length);
+    const diff: Array<{ type: 'same' | 'removed' | 'added'; text: string; key: string }> = [];
+
+    for (let i = 0; i < maxLines; i += 1) {
+      const originalLine = originalLines[i];
+      const replayLine = replayLines[i];
+      if (originalLine === replayLine) {
+        if (originalLine !== undefined) {
+          diff.push({ type: 'same', text: originalLine, key: `${i}-same` });
+        }
+      } else {
+        if (originalLine !== undefined) {
+          diff.push({ type: 'removed', text: originalLine, key: `${i}-removed` });
+        }
+        if (replayLine !== undefined) {
+          diff.push({ type: 'added', text: replayLine, key: `${i}-added` });
+        }
+      }
+    }
+
+    return diff;
+  };
+
   return (
     <div className="space-y-4">
       {/* Streaming Conversation Cards - Show active generations */}
@@ -134,6 +164,11 @@ const LogFeed: React.FC<LogFeedProps> = ({
       {visibleLogs.map((item) => {
         const isInvalid = isInvalidLog(item);
         const isTimeout = item.status === 'TIMEOUT';
+        const hasReplay = !!item.replayAnswer || !!item.replayError;
+        const baseOutput = renderSafeContent(item.answer || '');
+        const replayOutput = item.replayAnswer ? renderSafeContent(item.replayAnswer) : '';
+        const replayDiff = item.replayAnswer ? buildDiffLines(baseOutput, replayOutput) : [];
+        const replayChanged = item.replayAnswer ? baseOutput !== replayOutput : false;
 
         return (
           <div key={item.id} className="bg-slate-900/80 backdrop-blur-sm rounded-xl border border-slate-800 overflow-hidden hover:border-indigo-500/30 transition-colors group shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -216,6 +251,17 @@ const LogFeed: React.FC<LogFeedProps> = ({
                   >
                     <Upload className={`w-3 h-3 ${savingIds?.has(item.id) ? 'animate-pulse' : ''}`} />
                     <span className="hidden sm:inline">Save to DB</span>
+                  </button>
+                )}
+
+                {onDeterministicReplay && (
+                  <button
+                    onClick={() => onDeterministicReplay(item.id)}
+                    disabled={replayingIds?.has(item.id)}
+                    className="flex items-center gap-1.5 bg-slate-800/50 hover:bg-slate-700/50 text-slate-400 hover:text-violet-300 border border-slate-700 hover:border-violet-500/30 text-[10px] px-2 py-1 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Deterministic Replay"
+                  >
+                    <Repeat className={`w-3 h-3 ${replayingIds?.has(item.id) ? 'animate-spin' : ''}`} />
                   </button>
                 )}
 
@@ -318,6 +364,91 @@ const LogFeed: React.FC<LogFeedProps> = ({
               <div className="p-2 bg-amber-500/10 border-t border-amber-500/20 text-xs text-amber-400 flex items-center gap-2">
                 <Database className="w-3.5 h-3.5" />
                 Storage Failed: {item.storageError}. Data exists locally but is not synced.
+              </div>
+            )}
+
+            {hasReplay && (
+              <div className="border-t border-slate-800 bg-slate-950/40">
+                <div className="p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] font-bold uppercase tracking-wider ${item.replayError ? 'text-red-300' : replayChanged ? 'text-amber-300' : 'text-emerald-300'}`}>
+                      Replay {item.replayError ? 'Failed' : replayChanged ? 'Different' : 'Match'}
+                    </span>
+                    {item.replayModelUsed && (
+                      <span className="text-[10px] text-slate-400 bg-slate-900/60 px-2 py-0.5 rounded-full border border-slate-800">
+                        {item.replayModelUsed}
+                      </span>
+                    )}
+                    {item.replayDuration !== undefined && (
+                      <span className="text-[10px] text-slate-500">
+                        {item.replayDuration} ms
+                      </span>
+                    )}
+                    {item.replayTimestamp && (
+                      <span className="text-[10px] text-slate-600">
+                        {new Date(item.replayTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                  {item.replayAnswer && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => onAcceptReplay?.(item.id)}
+                        className="p-1.5 rounded-md bg-emerald-950/40 hover:bg-emerald-900/40 text-emerald-300 border border-emerald-700/40 transition-colors"
+                        title="Accept Replay"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => onDismissReplay?.(item.id)}
+                        className="p-1.5 rounded-md bg-slate-900/60 hover:bg-slate-800 text-slate-400 border border-slate-700 transition-colors"
+                        title="Dismiss Replay"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {item.replayError ? (
+                  <div className="px-3 pb-3 text-xs text-red-300">
+                    {item.replayError}
+                  </div>
+                ) : item.replayAnswer ? (
+                  <div className="px-3 pb-3">
+                    <div className="rounded-lg border border-slate-800 overflow-hidden">
+                      <div className="grid grid-cols-1 lg:grid-cols-2">
+                        <div className="p-3 bg-slate-950/60">
+                          <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">Original</div>
+                          <div className="text-xs text-slate-200 whitespace-pre-wrap">{baseOutput}</div>
+                        </div>
+                        <div className="p-3 bg-slate-950/40 border-t lg:border-t-0 lg:border-l border-slate-800">
+                          <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">Replay</div>
+                          <div className="text-xs text-slate-200 whitespace-pre-wrap">{replayOutput}</div>
+                        </div>
+                      </div>
+                      <div className="border-t border-slate-800 p-3 bg-slate-950/30">
+                        <div className="text-[10px] text-slate-500 font-bold uppercase mb-2">Diff</div>
+                        <div className="font-mono text-[11px] whitespace-pre-wrap">
+                          {replayDiff.map(line => (
+                            <div
+                              key={line.key}
+                              className={
+                                line.type === 'added'
+                                  ? 'text-emerald-300 bg-emerald-950/30'
+                                  : line.type === 'removed'
+                                    ? 'text-red-300 bg-red-950/30'
+                                    : 'text-slate-300'
+                              }
+                            >
+                              {line.type === 'added' ? `+ ${line.text}` : line.type === 'removed' ? `- ${line.text}` : `  ${line.text}`}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
