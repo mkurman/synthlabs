@@ -104,15 +104,6 @@ export interface ProgressStats {
   activeWorkers: number;
 }
 
-export interface FirebaseConfig {
-  apiKey: string;
-  authDomain: string;
-  projectId: string;
-  storageBucket: string;
-  messagingSenderId: string;
-  appId: string;
-}
-
 export interface SessionListFilters {
   search: string;
   onlyWithLogs: boolean;

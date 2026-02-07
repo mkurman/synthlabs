@@ -1,19 +1,12 @@
 import { clearSessionsCache } from '../../cache/sessionCache.js';
 
-export const registerCreateSessionRoute = (app, { getDb }) => {
+export const registerCreateSessionRoute = (app, { repo }) => {
     app.post('/api/sessions', async (req, res) => {
         try {
-            const db = getDb();
             const data = req.body || {};
-            const now = new Date().toISOString();
-            const docRef = await db.collection('synth_sessions').add({
-                ...data,
-                createdAt: now,
-                updatedAt: now
-            });
-            await docRef.update({ sessionUid: docRef.id });
+            const result = await repo.createSession(data);
             clearSessionsCache();
-            res.json({ id: docRef.id });
+            res.json({ id: result.id });
         } catch (error) {
             res.status(500).json({ error: String(error) });
         }

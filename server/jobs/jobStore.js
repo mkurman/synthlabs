@@ -1,5 +1,3 @@
-const JOBS_COLLECTION = 'admin_jobs';
-
 export const JobStatus = Object.freeze({
     Pending: 'pending',
     Running: 'running',
@@ -7,7 +5,7 @@ export const JobStatus = Object.freeze({
     Failed: 'failed'
 });
 
-export const createJobStore = (getDb) => {
+export const createJobStore = (repo) => {
     const jobs = new Map();
 
     const createJob = async (type) => {
@@ -24,7 +22,7 @@ export const createJobStore = (getDb) => {
         };
         jobs.set(jobId, job);
         try {
-            await getDb().collection(JOBS_COLLECTION).doc(jobId).set(job);
+            await repo.createJob(job);
         } catch (error) {
             // eslint-disable-next-line no-console
             console.error('Failed to persist job', error);
@@ -37,7 +35,7 @@ export const createJobStore = (getDb) => {
         if (!job) return;
         Object.assign(job, patch, { updatedAt: Date.now() });
         try {
-            getDb().collection(JOBS_COLLECTION).doc(jobId).set(job, { merge: true });
+            repo.updateJob(jobId, job);
         } catch (error) {
             // eslint-disable-next-line no-console
             console.error('Failed to persist job update', error);
@@ -47,10 +45,44 @@ export const createJobStore = (getDb) => {
     const getJob = async (jobId) => {
         const job = jobs.get(jobId);
         if (job) return job;
-        const docRef = await getDb().collection(JOBS_COLLECTION).doc(jobId).get();
-        if (!docRef.exists) return null;
-        return docRef.data();
+        try {
+            return await repo.getJob(jobId);
+        } catch {
+            return null;
+        }
     };
 
-    return { createJob, updateJob, getJob };
+    const listJobs = async ({ type, status, limit = 50 } = {}) => {
+        let results = Array.from(jobs.values());
+        try {
+            const dbJobs = await repo.listJobs({ type, status, limit });
+            const merged = new Map(dbJobs.map(j => [j.id, j]));
+            results.forEach(j => merged.set(j.id, j));
+            results = Array.from(merged.values());
+        } catch {
+            // fallback to in-memory only
+        }
+        if (type) results = results.filter(j => j.type === type);
+        if (status) results = results.filter(j => j.status === status);
+        return results.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+    };
+
+    const cancelJob = async (jobId) => {
+        const job = jobs.get(jobId);
+        if (job) {
+            Object.assign(job, { status: JobStatus.Failed, error: 'Cancelled by user', updatedAt: Date.now() });
+        }
+        try {
+            const existing = await repo.getJob(jobId);
+            if (existing) {
+                await repo.updateJob(jobId, { status: JobStatus.Failed, error: 'Cancelled by user', updatedAt: Date.now() });
+            }
+        } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to cancel job in DB', error);
+        }
+        return job || null;
+    };
+
+    return { createJob, updateJob, getJob, listJobs, cancelJob };
 };

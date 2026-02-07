@@ -36,8 +36,6 @@ prompt: |
   4. **Preserve logical steps** - Keep the original reasoning intact
   5. **Remove filler** - Strip "I think", "Let me explain"
   6. **Ensure flow to answer** - Reasoning should lead logically to the answer
-  
-
 output:
   - name: response
     description: Rewritten reasoning trace with improved logical flow

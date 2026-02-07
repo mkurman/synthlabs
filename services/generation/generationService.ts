@@ -14,7 +14,7 @@ import { TaskType } from '../../interfaces/enums';
 import { PromptService } from '../promptService';
 import { DEFAULT_HF_PREFETCH_CONFIG } from '../../types';
 import { extractInputContent } from '../../utils/contentExtractor';
-import { parseThinkTagsForDisplay, parseNativeOutput } from '../../utils/thinkTagParser';
+import { parseThinkTagsForDisplay, parseNativeOutput, sanitizeReasoningContent } from '../../utils/thinkTagParser';
 import { DataSource, EngineMode, CreatorMode, Environment, ProviderType, ExternalProvider, ApiType, ChatRole, ResponderPhase, LogItemStatus, PromptCategory, PromptRole, StreamingPhase, OutputFieldName, SynthLogFieldName, ResponsesSchemaName } from '../../interfaces/enums';
 import { ExtractContentFormat } from '../../interfaces/services/DataTransformConfig';
 import type { CompleteGenerationConfig as GenerationConfig, RuntimePromptConfig, WorkItem } from '../../interfaces';
@@ -744,7 +744,8 @@ export class GenerationService {
                 const effectiveConverterPrompt = runtimeConfig?.converterPrompt ?? config.converterPrompt;
                 const effectiveDeepConfig = runtimeConfig?.deepConfig ?? config.deepConfig;
                 const activePrompt = config.appMode === CreatorMode.Generator ? effectiveSystemPrompt : effectiveConverterPrompt;
-                const genParams = config.generationParams;
+                const settingsDefaults = SettingsService.getDefaultGenerationParams();
+                const genParams = { ...settingsDefaults, ...config.generationParams };
                 const useNativeOutput = genParams?.useNativeOutput ?? false;
                 const retryConfig = { maxRetries: config.maxRetries, retryDelay: config.retryDelay, generationParams: genParams };
 
@@ -1048,12 +1049,143 @@ export class GenerationService {
                         promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
                     }
 
+                    const splitFieldRequests = genParams?.splitFieldRequests ?? false;
+
                     let enhancedPrompt = activePrompt;
-                    if (!useNativeOutput && !enhancedPrompt.toLowerCase().includes("json")) {
-                        enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with '${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', and '${OutputFieldName.Answer}' fields.`;
+                    if (!splitFieldRequests && !useNativeOutput && !enhancedPrompt.toLowerCase().includes("json")) {
+                        const selFields = genParams?.selectedFields;
+                        const fieldNames = selFields && selFields.length > 0
+                            ? selFields.map((f: string) => `'${f}'`).join(', ')
+                            : `'${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', '${OutputFieldName.Answer}'`;
+                        enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with ${fieldNames} fields.`;
                     }
 
-                    if (config.provider === ProviderType.Gemini) {
+                    if (splitFieldRequests && config.provider !== ProviderType.Gemini) {
+                        // Split mode: separate plain-text requests per selected field
+                        const selectedFields = genParams?.selectedFields;
+                        const wantReasoning = !selectedFields || selectedFields.length === 0 || selectedFields.includes(OutputFieldName.Reasoning);
+                        const wantAnswer = !selectedFields || selectedFields.length === 0 || selectedFields.includes(OutputFieldName.Answer);
+
+                        logger.log('[Split Field Requests] Starting split generation...', { wantReasoning, wantAnswer });
+
+                        const baseSystemPrompt = activePrompt;
+                        let reasoningText = originalReasoning || '';
+                        let answerText = originalAnswer || '';
+
+                        // Streaming callback for split mode: plain text (possibly with <think> tags from model)
+                        const handleSplitStreamChunk = (field: 'reasoning' | 'answer'): StreamChunkCallback => {
+                            return (_chunk, accumulated, _phase, usage) => {
+                                if (usage) captureUsage(usage);
+                                const current = config.streamingConversationsRef.current.get(generationId);
+                                if (!current) return;
+
+                                // Model may return reasoning_content which streaming.ts wraps in <think> tags
+                                const parsed = parseThinkTagsForDisplay(accumulated);
+                                let cleanText: string;
+
+                                if (field === 'reasoning') {
+                                    // For reasoning: prefer content OUTSIDE <think> tags, fallback to full text
+                                    cleanText = parsed.hasThinkTags ? (sanitizeReasoningContent(parsed.answer) || '') : accumulated;
+                                } else {
+                                    // For answer: strip <think> tags, use clean content
+                                    cleanText = parsed.answer;
+                                }
+
+                                const updated: StreamingConversationState = {
+                                    ...current,
+                                    phase: field === 'reasoning' ? StreamingPhase.ExtractingReasoning : StreamingPhase.ExtractingAnswer,
+                                    currentReasoning: field === 'reasoning' ? cleanText : current.currentReasoning,
+                                    currentAnswer: field === 'answer' ? cleanText : current.currentAnswer,
+                                    rawAccumulated: accumulated.slice(-MAX_STREAM_RAW_CHARS)
+                                };
+                                config.streamingConversationsRef.current.set(generationId, updated);
+                                config.scheduleStreamingUpdate();
+                            };
+                        };
+
+                        // Step 1: Generate reasoning (if selected)
+                        if (wantReasoning) {
+                            const reasoningSystemPrompt = baseSystemPrompt + `\n\nGenerate ONLY the reasoning/thinking process for this task. Output as plain text, nothing else. Do not output JSON.`;
+
+                            const reasoningStreamState = initStreamingState(1, promptInput, true);
+                            config.streamingConversationsRef.current.set(generationId, reasoningStreamState);
+                            config.bumpStreamingConversations();
+
+                            const reasoningResult = await ExternalApiService.callExternalApi({
+                                provider: config.externalProvider,
+                                apiKey: config.externalApiKey || SettingsService.getApiKey(config.externalProvider),
+                                model: config.externalModel,
+                                apiType: config.apiType,
+                                customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+                                systemPrompt: reasoningSystemPrompt,
+                                userPrompt: promptInput,
+                                signal: itemAbortController.signal,
+                                maxRetries: config.maxRetries,
+                                retryDelay: config.retryDelay,
+                                generationParams: genParams,
+                                structuredOutput: false,
+                                stream: config.isStreamingEnabled,
+                                onStreamChunk: handleSplitStreamChunk('reasoning'),
+                                streamPhase: 'regular',
+                                onUsage: captureUsage
+                            });
+                            clearStreamingState();
+
+                            // Clean <think> tags from final result: model may return reasoning_content
+                            const rawReasoning = typeof reasoningResult === 'string' ? reasoningResult : String(reasoningResult);
+                            const parsedReasoning = parseThinkTagsForDisplay(rawReasoning);
+                            reasoningText = (parsedReasoning.hasThinkTags ? (sanitizeReasoningContent(parsedReasoning.answer) || '') : rawReasoning).trim();
+                            logger.log('[Split Field Requests] Reasoning generated, length:', reasoningText.length);
+                        } else {
+                            logger.log('[Split Field Requests] Reasoning skipped (not in selectedFields), using existing');
+                        }
+
+                        // Step 2: Generate answer (if selected)
+                        if (wantAnswer) {
+                            const answerSystemPrompt = baseSystemPrompt + `\n\nGenerate ONLY the final answer for this task. The reasoning process is provided below for reference. Output as plain text, nothing else. Do not output JSON.`;
+                            const answerUserPrompt = `${promptInput}\n\n## REASONING TRACE\n${reasoningText}\n\n---\nBased on the reasoning above, generate the answer.`;
+
+                            const answerStreamState = initStreamingState(1, answerUserPrompt, true);
+                            config.streamingConversationsRef.current.set(generationId, answerStreamState);
+                            config.bumpStreamingConversations();
+
+                            const answerResult = await ExternalApiService.callExternalApi({
+                                provider: config.externalProvider,
+                                apiKey: config.externalApiKey || SettingsService.getApiKey(config.externalProvider),
+                                model: config.externalModel,
+                                apiType: config.apiType,
+                                customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+                                systemPrompt: answerSystemPrompt,
+                                userPrompt: answerUserPrompt,
+                                signal: itemAbortController.signal,
+                                maxRetries: config.maxRetries,
+                                retryDelay: config.retryDelay,
+                                generationParams: genParams,
+                                structuredOutput: false,
+                                stream: config.isStreamingEnabled,
+                                onStreamChunk: handleSplitStreamChunk('answer'),
+                                streamPhase: 'regular',
+                                onUsage: captureUsage
+                            });
+                            clearStreamingState();
+
+                            // Clean <think> tags from final result
+                            const rawAnswer = typeof answerResult === 'string' ? answerResult : String(answerResult);
+                            const parsedAnswer = parseThinkTagsForDisplay(rawAnswer);
+                            answerText = parsedAnswer.answer.trim();
+                            logger.log('[Split Field Requests] Answer generated, length:', answerText.length);
+                        } else {
+                            logger.log('[Split Field Requests] Answer skipped (not in selectedFields), using existing');
+                        }
+
+                        // Assemble result — query comes from seed text in split mode
+                        result = {
+                            query: originalQuestion || safeInput,
+                            reasoning: reasoningText,
+                            reasoning_content: reasoningText,
+                            answer: answerText,
+                        };
+                    } else if (config.provider === ProviderType.Gemini) {
                         if (useNativeOutput) {
                             result = await GeminiService.generateNativeText(promptInput, enhancedPrompt, { ...retryConfig, model: config.externalModel });
                         } else if (config.appMode === CreatorMode.Generator) {
@@ -1080,7 +1212,7 @@ export class GenerationService {
                             maxRetries: config.maxRetries,
                             retryDelay: config.retryDelay,
                             generationParams: genParams,
-                            structuredOutput: useNativeOutput ? false : (genParams?.forceStructuredOutput ?? true),
+                            structuredOutput: (useNativeOutput || splitFieldRequests) ? false : (genParams?.forceStructuredOutput ?? true),
                             responsesSchema: ResponsesSchemaName.ReasoningTrace,
                             selectedFields: useNativeOutput ? undefined : genParams?.selectedFields,
                             stream: config.isStreamingEnabled,
@@ -1111,14 +1243,17 @@ export class GenerationService {
 
                     let finalResult: Record<string, any>;
 
-                    if (useNativeOutput) {
+                    if (splitFieldRequests) {
+                        // In split mode, result is already assembled with the right fields
+                        finalResult = result;
+                    } else if (useNativeOutput) {
                         const rawText = typeof result === 'string' ? result : JSON.stringify(result);
                         finalResult = parseNativeOutput(rawText);
                     } else {
                         finalResult = result;
                     }
 
-                    if (!useNativeOutput && hasFieldSelection && schema.output.length > 0) {
+                    if (!splitFieldRequests && !useNativeOutput && hasFieldSelection && schema.output.length > 0) {
                         // In both Generator and Converter modes with field selection: merge generated fields with existing data
                         const existingItem: Partial<SynthLogItem> = {
                             reasoning: originalReasoning,

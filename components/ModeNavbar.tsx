@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useEffect, useState } from 'react';
+import { Dispatch, ReactNode, SetStateAction, useEffect, useState } from 'react';
 import { AppMode } from '../interfaces/enums/AppMode';
 import { confirmService } from '../services/confirmService';
 import { Sparkles, ShieldCheck } from 'lucide-react';
@@ -9,6 +9,7 @@ interface ModeNavbarProps {
     sessionName: string | null;
     onSessionNameChange: Dispatch<SetStateAction<string | null>>;
     isDirty: boolean;
+    jobMonitorBadge?: ReactNode;
 }
 
 export default function ModeNavbar({
@@ -16,7 +17,8 @@ export default function ModeNavbar({
     onModeChange,
     sessionName,
     onSessionNameChange,
-    isDirty
+    isDirty,
+    jobMonitorBadge
 }: ModeNavbarProps) {
     const [draftSessionName, setDraftSessionName] = useState<string>(sessionName || '');
 
@@ -83,6 +85,11 @@ export default function ModeNavbar({
                     <span className="ml-2 text-[10px] text-amber-300 font-semibold px-2 py-0.5 bg-amber-950/40 rounded-full border border-amber-900/40">
                         Unsaved
                     </span>
+                )}
+                {jobMonitorBadge && (
+                    <div className="relative ml-3">
+                        {jobMonitorBadge}
+                    </div>
                 )}
             </div>
         </nav>

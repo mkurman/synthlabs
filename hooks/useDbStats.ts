@@ -28,8 +28,8 @@ export function useDbStats({ environment, sessionUid, setDbStats }: UseDbStatsOp
     }, [environment, sessionUid, setDbStats]);
 
     useEffect(() => {
-        // Update stats periodically for both environments
-        const interval = setInterval(updateDbStats, 10000);
+        // Update stats periodically for both environments (every 5 minutes)
+        const interval = setInterval(updateDbStats, 5 * 60 * 1000);
         // Also update immediately
         updateDbStats();
         return () => clearInterval(interval);

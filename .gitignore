@@ -36,3 +36,4 @@ pnpm-lock*
 .opencode
 .firebase
 .backend-vault.json
+.backend-config.json

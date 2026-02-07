@@ -32,15 +32,15 @@ export default function DeepPhaseConfigPanel({
         </h4>
         <div className="flex items-center gap-2">
           <label className="text-[10px] font-bold text-slate-400 uppercase">Enabled</label>
-          <input 
-            type="checkbox" 
-            checked={phase.enabled} 
-            onChange={e => onUpdatePhase({ enabled: e.target.checked })} 
-            className="accent-sky-500" 
+          <input
+            type="checkbox"
+            checked={phase.enabled}
+            onChange={e => onUpdatePhase({ enabled: e.target.checked })}
+            className="accent-sky-500"
           />
         </div>
       </div>
-      
+
       {phase.enabled && (
         <div className="space-y-4">
           <div className="space-y-1">
@@ -65,7 +65,6 @@ export default function DeepPhaseConfigPanel({
               }}
               className="w-full bg-slate-950/70 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-sky-500 outline-none"
             >
-              <option value={ProviderType.Gemini}>Native Gemini</option>
               {EXTERNAL_PROVIDERS.map(ep => (
                 <option key={ep} value={ep}>{ep === ExternalProvider.Other ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}</option>
               ))}
@@ -128,22 +127,22 @@ export default function DeepPhaseConfigPanel({
           )}
         </div>
       )}
-      
+
       <div className="space-y-1">
         <div className="flex justify-between items-center mb-1">
           <label className="text-[10px] text-slate-400 font-bold uppercase">Phase System Prompt</label>
-          <button 
-            onClick={onCopyToAll} 
+          <button
+            onClick={onCopyToAll}
             className="text-[9px] text-sky-400 hover:text-sky-300 underline"
           >
             Apply Config to All Phases
           </button>
         </div>
-        <textarea 
-          value={phase.systemPrompt || ''} 
-          onChange={e => onUpdatePhase({ systemPrompt: e.target.value })} 
-          className="w-full h-32 bg-slate-950 border border-slate-700/70 rounded p-2 text-[10px] font-mono text-slate-200 focus:border-sky-500 outline-none resize-y" 
-          spellCheck={false} 
+        <textarea
+          value={phase.systemPrompt || ''}
+          onChange={e => onUpdatePhase({ systemPrompt: e.target.value })}
+          className="w-full h-32 bg-slate-950 border border-slate-700/70 rounded p-2 text-[10px] font-mono text-slate-200 focus:border-sky-500 outline-none resize-y"
+          spellCheck={false}
         />
       </div>
 

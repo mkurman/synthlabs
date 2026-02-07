@@ -2,7 +2,7 @@ export enum SettingsPanelTab {
   Providers = 'providers',
   Generation = 'generation',
   HuggingFace = 'huggingface',
-  Firebase = 'firebase',
+  DatabaseProvider = 'database-provider',
   Storage = 'storage',
   Prompts = 'prompts'
 }

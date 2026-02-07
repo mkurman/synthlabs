@@ -1,7 +1,6 @@
-export const registerUpdateSessionRoute = (app, { getDb }) => {
+export const registerUpdateSessionRoute = (app, { repo }) => {
     app.put('/api/sessions/:id', async (req, res) => {
         try {
-            const db = getDb();
             const sessionId = req.params.id;
             const data = req.body || {};
 
@@ -9,25 +8,7 @@ export const registerUpdateSessionRoute = (app, { getDb }) => {
             delete data.id;
             delete data.createdAt;
 
-            const docRef = db.collection('synth_sessions').doc(sessionId);
-            const doc = await docRef.get();
-
-            const now = new Date().toISOString();
-            if (!doc.exists) {
-                // Create if doesn't exist (upsert behavior)
-                await docRef.set({
-                    ...data,
-                    sessionUid: sessionId,
-                    createdAt: now,
-                    updatedAt: now
-                });
-            } else {
-                // Update existing
-                await docRef.update({
-                    ...data,
-                    updatedAt: now
-                });
-            }
+            await repo.upsertSession(sessionId, data);
 
             res.json({ ok: true, id: sessionId });
         } catch (error) {

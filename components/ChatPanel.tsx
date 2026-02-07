@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Bot, Sparkles,
-    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, ArrowUp, Brain, RotateCcw, Zap
+    ChevronDown, ChevronRight, Wrench, Plus, History, Copy, Check, Square, SendHorizontal, Trash2, ArrowDown, ArrowUp, Brain, RotateCcw, Zap, ShieldAlert, FileText, Loader2
 } from 'lucide-react';
 import { ChatService } from '../services/chatService';
-import type { ToolCall } from '../services/chatService';
+import type { ToolCall, SummarizationCallback } from '../services/chatService';
 import type { ChatMessage, ChatUsageSummary } from '../types';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
 import type { AssistantDefaults } from '../services/settingsService';
-import { PROVIDERS } from '../constants';
+import { PROVIDERS, ContextCompactionStrategy } from '../constants';
 import { ToolExecutor } from '../services/toolService';
 import type { ToolApprovalInfo } from '../services/toolService';
 import { VerifierItem } from '../types';
@@ -221,6 +221,13 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     // Continue Button State
     const [showContinueButton, setShowContinueButton] = useState(false);
 
+    // Summarization Status State
+    const [summarizationStatus, setSummarizationStatus] = useState<'idle' | 'starting' | 'summarizing' | 'complete' | 'error'>('idle');
+    const [lastSummary, setLastSummary] = useState<string | null>(null);
+
+    // Copy feedback state (tracks which message index was copied)
+    const [copiedMsgIdx, setCopiedMsgIdx] = useState<number | null>(null);
+
     // Usage Tracking State
     const [totalPromptTokens, setTotalPromptTokens] = useState(0);
     const [totalCompletionTokens, setTotalCompletionTokens] = useState(0);
@@ -414,6 +421,32 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         }
     }, [toolExecutor]);
 
+    // Apply context management settings from SettingsService
+    useEffect(() => {
+        if (!chatServiceRef.current) return;
+
+        SettingsService.getSettingsAsync().then((settings) => {
+            const contextConfig = settings.contextManagement;
+            if (contextConfig) {
+                // Map string strategy to enum
+                const strategyMap: Record<string, ContextCompactionStrategy> = {
+                    'none': ContextCompactionStrategy.None,
+                    'truncate-old': ContextCompactionStrategy.TruncateOld,
+                    'truncate-middle': ContextCompactionStrategy.TruncateMiddle,
+                    'summarize': ContextCompactionStrategy.Summarize
+                };
+
+                chatServiceRef.current?.setContextCompactionEnabled(contextConfig.enabled ?? true);
+                chatServiceRef.current?.setContextConfig({
+                    strategy: strategyMap[contextConfig.strategy ?? 'truncate-middle'] ?? ContextCompactionStrategy.TruncateMiddle,
+                    triggerThreshold: contextConfig.triggerThreshold ?? 0.85,
+                    responseReserve: contextConfig.responseReserve ?? 4096,
+                    keepRecentMessages: contextConfig.keepRecentMessages ?? 10
+                });
+            }
+        }).catch(console.error);
+    }, []);
+
     useChatPersistence({ currentSessionId: currentSessionId || '', messages });
     const { handleScrollToBottom } = useChatScroll({
         messages,
@@ -530,6 +563,23 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     };
 
 
+    // Summarization status callback
+    const handleSummarizationStatus: SummarizationCallback = useCallback((status, summary) => {
+        setSummarizationStatus(status);
+        if (status === 'complete' && summary) {
+            setLastSummary(summary);
+            // Auto-clear summarization status after a brief delay
+            setTimeout(() => {
+                setSummarizationStatus('idle');
+            }, 2000);
+        } else if (status === 'error') {
+            // Clear error status after a delay
+            setTimeout(() => {
+                setSummarizationStatus('idle');
+            }, 3000);
+        }
+    }, []);
+
     const processTurn = async () => {
         // Use prop executor or local ref
         const executor = toolExecutor || toolExecutorRef.current;
@@ -580,7 +630,8 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                         return next;
                     });
                 },
-                abortControllerRef.current?.signal
+                abortControllerRef.current?.signal,
+                handleSummarizationStatus
             );
 
             const { thinking: finalThink, content: finalContent, toolCalls } = ChatService.parseResponse(fullText);
@@ -803,16 +854,71 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                 <span className="animate-pulse">▍</span>
                             )}
 
-                            {/* Actions: Copy & Delete */}
+                            {/* Actions: Copy, Send Again (user), Regenerate (assistant) & Delete */}
                             {!isStreaming && (
-                                <div className={`absolute -bottom-6 right-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-slate-950/70 rounded px-1 py-0.5 border border-slate-700/70`}>
+                                <div className="absolute -bottom-6 right-0 opacity-0 group-hover:opacity-100 transition-all duration-200 flex items-center gap-0.5 bg-slate-950/90 backdrop-blur-sm rounded-lg px-1 py-0.5 border border-slate-700/70 shadow-lg animate-in fade-in slide-in-from-top-1 duration-150">
                                     <button
-                                        onClick={() => copyToClipboard(msg.content || '', () => { })}
-                                        className="p-1 text-slate-300 hover:text-white transition-colors"
-                                        title="Copy"
+                                        onClick={() => {
+                                            copyToClipboard(msg.content || '', (copied) => {
+                                                if (copied) {
+                                                    setCopiedMsgIdx(idx);
+                                                    setTimeout(() => setCopiedMsgIdx(null), 2000);
+                                                }
+                                            });
+                                        }}
+                                        className={`p-1.5 rounded-md transition-all duration-150 hover:scale-110 active:scale-95 flex items-center gap-1 ${copiedMsgIdx === idx
+                                                ? 'text-emerald-400 bg-emerald-500/10'
+                                                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                                            }`}
+                                        title={copiedMsgIdx === idx ? "Copied!" : "Copy"}
                                     >
-                                        <Copy size={12} />
+                                        {copiedMsgIdx === idx ? (
+                                            <>
+                                                <Check size={12} />
+                                                <span className="text-[10px] font-medium animate-in fade-in duration-150">Copied</span>
+                                            </>
+                                        ) : (
+                                            <Copy size={12} />
+                                        )}
                                     </button>
+                                    {isUser && (
+                                        <button
+                                            onClick={() => {
+                                                // Send again: set input to this message content and submit
+                                                const content = msg.content || '';
+                                                setInput(content);
+                                                // Use setTimeout to ensure state is updated before submit
+                                                setTimeout(() => {
+                                                    if (chatServiceRef.current && content.trim()) {
+                                                        setInput('');
+                                                        setIsStreaming(true);
+                                                        interactionStartRef.current = Date.now();
+                                                        interactionUsageAddedRef.current = false;
+                                                        interactionUsageRef.current = null;
+                                                        setLastUsage(null);
+                                                        const newHistory = [...messages, { role: ChatRole.User, content } as ChatMessage];
+                                                        setMessages(newHistory);
+                                                        chatServiceRef.current.addUserMessage(content);
+                                                        if (abortControllerRef.current) abortControllerRef.current.abort();
+                                                        abortControllerRef.current = new AbortController();
+                                                        processTurn().then(() => {
+                                                            setIsStreaming(false);
+                                                            abortControllerRef.current = null;
+                                                        }).catch(err => {
+                                                            console.error(err);
+                                                            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(err) } as ChatMessage]);
+                                                            setIsStreaming(false);
+                                                            abortControllerRef.current = null;
+                                                        });
+                                                    }
+                                                }, 0);
+                                            }}
+                                            className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-md transition-all duration-150 hover:scale-110 active:scale-95 hover:translate-x-0.5"
+                                            title="Send again"
+                                        >
+                                            <SendHorizontal size={12} />
+                                        </button>
+                                    )}
                                     {isAssistantMessage && (
                                         <button
                                             onClick={() => {
@@ -846,7 +952,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                     }
                                                 }
                                             }}
-                                            className="p-1 text-slate-300 hover:text-sky-400 transition-colors"
+                                            className="p-1.5 text-slate-400 hover:text-sky-400 hover:bg-sky-500/10 rounded-md transition-all duration-150 hover:scale-110 active:scale-95 hover:rotate-[-45deg]"
                                             title="Regenerate"
                                         >
                                             <RotateCcw size={12} />
@@ -861,7 +967,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                 (chatServiceRef.current as any).history = newMessages;
                                             }
                                         }}
-                                        className="p-1 text-slate-300 hover:text-red-400 transition-colors"
+                                        className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-all duration-150 hover:scale-110 active:scale-95"
                                         title="Delete"
                                     >
                                         <Trash2 size={12} />
@@ -937,6 +1043,47 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                 </div>
             </div>
 
+            {/* Summarization Status Banner */}
+            {summarizationStatus !== 'idle' && (
+                <div className={`px-4 py-2 flex items-center gap-2 border-b transition-all duration-300 ${
+                    summarizationStatus === 'error'
+                        ? 'bg-rose-950/30 border-rose-900/50'
+                        : summarizationStatus === 'complete'
+                            ? 'bg-emerald-950/30 border-emerald-900/50'
+                            : 'bg-sky-950/30 border-sky-900/50'
+                }`}>
+                    {summarizationStatus === 'starting' && (
+                        <>
+                            <Loader2 size={14} className="text-sky-400 animate-spin" />
+                            <span className="text-xs text-sky-300">Preparing context compaction...</span>
+                        </>
+                    )}
+                    {summarizationStatus === 'summarizing' && (
+                        <>
+                            <FileText size={14} className="text-sky-400" />
+                            <Loader2 size={14} className="text-sky-400 animate-spin" />
+                            <span className="text-xs text-sky-300">Summarizing conversation history...</span>
+                        </>
+                    )}
+                    {summarizationStatus === 'complete' && (
+                        <>
+                            <Check size={14} className="text-emerald-400" />
+                            <span className="text-xs text-emerald-300">Context compacted successfully</span>
+                            {lastSummary && (
+                                <span className="text-[10px] text-emerald-400/60 ml-2 truncate max-w-[200px]" title={lastSummary}>
+                                    ({lastSummary.slice(0, 50)}...)
+                                </span>
+                            )}
+                        </>
+                    )}
+                    {summarizationStatus === 'error' && (
+                        <>
+                            <span className="text-xs text-rose-300">Summarization failed, using truncation instead</span>
+                        </>
+                    )}
+                </div>
+            )}
+
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar" ref={messagesContainerRef}>
                 {messages.length === 0 ? (
@@ -985,6 +1132,67 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                     </button>
                 </div>
             )}
+
+            {/* Sticky Approval Banner */}
+            {Object.keys(pendingToolCalls).length > 0 && (() => {
+                const pendingEntries = Object.entries(pendingToolCalls);
+                const [toolCallId, pendingCall] = pendingEntries[0];
+                const { toolCall, approvalInfo } = pendingCall;
+
+                // Generate human-readable description
+                const getApprovalDescription = () => {
+                    const args = toolCall.args || {};
+                    switch (toolCall.name) {
+                        case 'markSessionVerificationStatus':
+                            return `Assistant wants to mark session as "${args.status}"`;
+                        case 'runAutoScore':
+                            return `Assistant wants to run auto-scoring${args.sessionId ? ` on session ${String(args.sessionId).slice(0, 8)}...` : ' on current session'}`;
+                        case 'runRewrite':
+                            return `Assistant wants to rewrite ${(args.fields as string[])?.join(', ') || 'fields'}`;
+                        case 'updateItem':
+                            return `Assistant wants to update item at index ${args.index}`;
+                        case 'discardItems':
+                            return `Assistant wants to discard ${(args.indices as number[])?.length || 0} items`;
+                        default:
+                            return approvalInfo?.approvalSettingName || `Assistant wants to execute ${toolCall.name}`;
+                    }
+                };
+
+                return (
+                    <div className="mx-3 mb-2 p-4 bg-black/80 border border-white/20 rounded-xl backdrop-blur-sm">
+                        <div className="flex items-start gap-3">
+                            <ShieldAlert className="w-5 h-5 text-white flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm text-white font-medium">{getApprovalDescription()}</p>
+                                <p className="text-[10px] text-white/50 mt-1 font-mono">
+                                    {toolCall.name} • {JSON.stringify(toolCall.args).slice(0, 60)}...
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-1.5 mt-4">
+                            <button
+                                onClick={() => handleToolApproval(toolCallId, ToolApprovalAction.Approve)}
+                                className="w-full px-3 py-2.5 bg-white hover:bg-gray-100 text-black text-xs font-semibold rounded-lg transition-colors"
+                            >
+                                Approve
+                            </button>
+                            <button
+                                onClick={() => handleToolApproval(toolCallId, ToolApprovalAction.AutoApprove)}
+                                className="w-full px-3 py-2.5 bg-transparent hover:bg-white/10 text-white text-xs font-medium rounded-lg transition-colors border border-white/50"
+                                title="Always approve this tool"
+                            >
+                                Always approve this action
+                            </button>
+                            <button
+                                onClick={() => handleToolApproval(toolCallId, ToolApprovalAction.Reject)}
+                                className="w-full px-3 py-2.5 bg-transparent hover:bg-white/10 text-white text-xs font-medium rounded-lg transition-colors border border-white/30"
+                            >
+                                Reject
+                            </button>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Usage Info */}
             <div className="px-4 pt-2 border-t border-slate-800/70 bg-slate-950">

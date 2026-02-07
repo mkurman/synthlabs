@@ -1,14 +1,58 @@
-import { ProviderType, ApiType, ResponsesSchemaName } from '../../../interfaces/enums';
+import { ProviderType, ApiType, ResponsesSchemaName, ExternalProvider } from '../../../interfaces/enums';
 import { SettingsService } from '../../settingsService';
 import * as GeminiService from '../../geminiService';
 import * as ExternalApiService from '../../externalApiService';
 import * as PromptSchemaAdapter from '../../promptSchemaAdapter';
-import { JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK } from '../../../constants';
+import { JSON_SCHEMA_INSTRUCTION_PREFIX, JSON_OUTPUT_FALLBACK, PROVIDERS } from '../../../constants';
 import { cleanResponse } from './responseParser';
+import { isBackendAiAvailable, streamRewriteViaBackend, rewriteViaBackend } from '../../api/backendAiClient';
+
+/**
+ * Get the base URL for a provider:
+ * - If customBaseUrl is set, use it
+ * - For 'other' provider, use global customEndpointUrl from settings
+ * - For known providers, use their URL from PROVIDERS constant
+ */
+function getBaseUrlForProvider(config: { customBaseUrl?: string; externalProvider: ExternalProvider | string }): string {
+    // If explicitly set, use that
+    if (config.customBaseUrl) return config.customBaseUrl;
+
+    // For 'other' provider, use global customEndpointUrl
+    if (config.externalProvider === ExternalProvider.Other || config.externalProvider === 'other') {
+        return SettingsService.getCustomBaseUrl() || '';
+    }
+
+    // For known providers, use their default URL from PROVIDERS constant
+    const providerConfig = PROVIDERS[config.externalProvider as ExternalProvider];
+    return providerConfig?.url || '';
+}
+
+/**
+ * Resolve provider string, base URL, and API key for backend routing.
+ * Handles the Gemini vs External duality.
+ */
+function resolveBackendParams(config: RewriterConfig): {
+    provider: string;
+    baseUrl: string;
+    apiKey: string;
+} {
+    if (config.provider === ProviderType.Gemini) {
+        return {
+            provider: 'gemini',
+            baseUrl: config.customBaseUrl || PROVIDERS['gemini']?.url || '',
+            apiKey: config.apiKey || SettingsService.getApiKey('gemini'),
+        };
+    }
+    return {
+        provider: config.externalProvider as string,
+        baseUrl: getBaseUrlForProvider(config),
+        apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
+    };
+}
 
 export interface RewriterConfig {
     provider: ProviderType;
-    externalProvider: import('../../../types').ExternalProvider;
+    externalProvider: ExternalProvider;
     apiType?: ApiType;
     apiKey: string;
     model: string;
@@ -26,6 +70,21 @@ export interface RewriterConfig {
 export type RewriterStreamCallback = (chunk: string, accumulated: string) => void;
 
 /**
+ * Build a system prompt from schema for rewrite calls
+ */
+function buildSchemaSystemPrompt(schema?: import('../../../types').PromptSchema): string {
+    if (schema) {
+        return schema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
+            type: 'object',
+            properties: Object.fromEntries(schema.output.map(f => [f.name, { type: 'string', description: f.description }])),
+            required: schema.output.filter(f => !f.optional).map(f => f.name),
+            additionalProperties: true
+        });
+    }
+    return '\n\n' + JSON_OUTPUT_FALLBACK;
+}
+
+/**
  * Calls the AI service to rewrite content
  * Returns the cleaned response text
  */
@@ -35,21 +94,47 @@ export async function callRewriterAI(
     signal?: AbortSignal
 ): Promise<string> {
     const schema = config.promptSchema;
+    const systemPrompt = buildSchemaSystemPrompt(schema);
 
-    if (config.provider === ProviderType.Gemini) {
-        let geminiSystemPrompt = '\n\n' + JSON_OUTPUT_FALLBACK;
-        if (schema) {
-            geminiSystemPrompt = schema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
-                type: 'object',
-                properties: Object.fromEntries(schema.output.map(f => [f.name, { type: 'string', description: f.description }])),
-                required: schema.output.filter(f => !f.optional).map(f => f.name),
-                additionalProperties: true
+    // Try backend routing first
+    const useBackend = await isBackendAiAvailable();
+    if (useBackend) {
+        try {
+            const { provider, baseUrl, apiKey } = resolveBackendParams(config);
+            const result = await rewriteViaBackend({
+                provider,
+                model: config.model,
+                apiKey,
+                baseUrl,
+                field: 'reasoning',
+                originalContent: userPrompt,
+                systemPrompt,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
+                useRawPrompt: true,
+                signal,
             });
+
+            const cleaned = result.content;
+            if (schema) {
+                const validation = PromptSchemaAdapter.parseAndValidateResponse(cleaned, schema);
+                if (!validation.isValid) {
+                    console.warn('[VerifierRewriter] Missing required fields:', validation.missingFields);
+                    return cleanResponse(cleaned) + '\n\n[ERROR: Missing required fields: ' + validation.missingFields.join(', ') + ']';
+                }
+                return cleanResponse(validation.data);
+            }
+            return cleanResponse(cleaned);
+        } catch (backendError: any) {
+            if (backendError?.name === 'AbortError' || signal?.aborted) throw backendError;
+            console.warn('[aiCaller] Backend AI failed for callRewriterAI, falling back to direct call:', backendError);
         }
-        
+    }
+
+    // Fallback: direct API calls
+    if (config.provider === ProviderType.Gemini) {
         const result = await GeminiService.generateReasoningTrace(
             userPrompt,
-            geminiSystemPrompt,
+            systemPrompt,
             {
                 maxRetries: config.maxRetries ?? 2,
                 retryDelay: config.retryDelay ?? 1000,
@@ -69,7 +154,7 @@ export async function callRewriterAI(
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
             apiType: config.apiType || ApiType.Chat,
-            customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+            customBaseUrl: getBaseUrlForProvider(config),
             promptSchema: schema,
             userPrompt,
             signal,
@@ -103,21 +188,40 @@ export async function callRewriterAIStreaming(
     signal?: AbortSignal
 ): Promise<string> {
     const schema = config.promptSchema;
+    const systemPrompt = buildSchemaSystemPrompt(schema);
 
-    if (config.provider === ProviderType.Gemini) {
-        let geminiSystemPrompt = '\n\n' + JSON_OUTPUT_FALLBACK;
-        if (schema) {
-            geminiSystemPrompt = schema.prompt + '\n\n' + JSON_SCHEMA_INSTRUCTION_PREFIX + ' ' + JSON.stringify({
-                type: 'object',
-                properties: Object.fromEntries(schema.output.map(f => [f.name, { type: 'string', description: f.description }])),
-                required: schema.output.filter(f => !f.optional).map(f => f.name),
-                additionalProperties: true
+    // Try backend routing first
+    const useBackend = await isBackendAiAvailable();
+    if (useBackend) {
+        try {
+            const { provider, baseUrl, apiKey } = resolveBackendParams(config);
+            const result = await streamRewriteViaBackend({
+                provider,
+                model: config.model,
+                apiKey,
+                baseUrl,
+                field: 'reasoning',
+                originalContent: userPrompt,
+                systemPrompt,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
+                useRawPrompt: true,
+                onChunk: (chunk, accumulated, _usage) => {
+                    onChunk(chunk, accumulated);
+                },
+                signal,
             });
+            return cleanResponse(result.content);
+        } catch (backendError: any) {
+            if (backendError?.name === 'AbortError' || signal?.aborted) throw backendError;
+            console.warn('[aiCaller] Backend AI failed for callRewriterAIStreaming, falling back to direct call:', backendError);
         }
+    }
 
+    // Fallback: direct API calls
+    if (config.provider === ProviderType.Gemini) {
         const result = await GeminiService.generateReasoningTrace(
             userPrompt,
-            geminiSystemPrompt,
+            systemPrompt,
             {
                 maxRetries: config.maxRetries ?? 2,
                 retryDelay: config.retryDelay ?? 1000,
@@ -134,7 +238,7 @@ export async function callRewriterAIStreaming(
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
             apiType: config.apiType || ApiType.Chat,
-            customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+            customBaseUrl: getBaseUrlForProvider(config),
             promptSchema: schema,
             userPrompt,
             signal,
@@ -146,7 +250,7 @@ export async function callRewriterAIStreaming(
             onStreamChunk: (chunk, accumulated) => onChunk(chunk, accumulated)
         });
 
-        return typeof result === 'string' ? result : cleanResponse(result);
+        return cleanResponse(result);
     }
 }
 
@@ -158,8 +262,40 @@ export async function callRewriterAIStreamingWithSystemPrompt(
     userPrompt: string,
     config: RewriterConfig,
     onChunk: RewriterStreamCallback,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: { field?: 'query' | 'reasoning' | 'answer'; useRawPrompt?: boolean }
 ): Promise<string> {
+    // Try backend AI streaming if available (both Gemini and External)
+    const { provider, baseUrl, apiKey } = resolveBackendParams(config);
+    const useBackend = await isBackendAiAvailable();
+
+    if (useBackend) {
+        try {
+            const result = await streamRewriteViaBackend({
+                provider,
+                model: config.model,
+                apiKey,
+                baseUrl,
+                field: options?.field || 'reasoning',
+                originalContent: userPrompt,
+                systemPrompt,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
+                useRawPrompt: options?.useRawPrompt,
+                onChunk: (chunk, accumulated, _usage) => {
+                    onChunk(chunk, accumulated);
+                },
+                signal,
+            });
+            return cleanResponse(result.content);
+        } catch (backendError: any) {
+            if (backendError?.name === 'AbortError' || signal?.aborted) {
+                throw backendError;
+            }
+            console.warn('[aiCaller] Backend AI failed, falling back to direct call:', backendError);
+        }
+    }
+
+    // Fallback: direct API calls
     if (config.provider === ProviderType.Gemini) {
         const result = await GeminiService.generateReasoningTrace(
             userPrompt,
@@ -181,7 +317,7 @@ export async function callRewriterAIStreamingWithSystemPrompt(
         apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
         model: config.model,
         apiType: config.apiType || ApiType.Chat,
-        customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+        customBaseUrl: baseUrl,
         systemPrompt,
         userPrompt,
         signal,
@@ -193,7 +329,7 @@ export async function callRewriterAIStreamingWithSystemPrompt(
         onStreamChunk: (chunk, accumulated) => onChunk(chunk, accumulated)
     });
 
-    return typeof result === 'string' ? result : cleanResponse(result);
+    return cleanResponse(result);
 }
 
 /**
@@ -205,6 +341,31 @@ export async function callRewriterAIRaw(
     config: RewriterConfig,
     signal?: AbortSignal
 ): Promise<any> {
+    // Try backend routing first
+    const useBackend = await isBackendAiAvailable();
+    if (useBackend) {
+        try {
+            const { provider, baseUrl, apiKey } = resolveBackendParams(config);
+            const result = await rewriteViaBackend({
+                provider,
+                model: config.model,
+                apiKey,
+                baseUrl,
+                field: 'reasoning',
+                originalContent: userPrompt,
+                systemPrompt,
+                generationParams: config.generationParams || SettingsService.getDefaultGenerationParams(),
+                useRawPrompt: true,
+                signal,
+            });
+            return result.content;
+        } catch (backendError: any) {
+            if (backendError?.name === 'AbortError' || signal?.aborted) throw backendError;
+            console.warn('[aiCaller] Backend AI failed for callRewriterAIRaw, falling back to direct call:', backendError);
+        }
+    }
+
+    // Fallback: direct API calls
     if (config.provider === ProviderType.Gemini) {
         const result = await GeminiService.generateReasoningTrace(
             userPrompt,
@@ -222,7 +383,7 @@ export async function callRewriterAIRaw(
             apiKey: config.apiKey || SettingsService.getApiKey(config.externalProvider),
             model: config.model,
             apiType: config.apiType || ApiType.Chat,
-            customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+            customBaseUrl: getBaseUrlForProvider(config),
             systemPrompt,
             userPrompt,
             signal,

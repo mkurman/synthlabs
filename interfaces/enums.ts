@@ -29,7 +29,6 @@ export enum Environment {
 }
 
 export enum ProviderType {
-  Gemini = 'gemini',
   External = 'external'
 }
 
@@ -52,6 +51,7 @@ export enum ExternalProvider {
   Groq = 'groq',
   Ollama = 'ollama',
   Chutes = 'chutes',
+  Gemini = 'gemini',
   HuggingFace = 'huggingface',
   Other = 'other'
 }
@@ -116,3 +116,4 @@ export { CreatorControlsTab } from './enums/CreatorControlsTab';
 export { SessionVerificationStatus } from './enums/SessionVerificationStatus';
 export { VerifierDataSource } from './enums/VerifierDataSource';
 export { BackendApplyStatus } from './enums/BackendApplyStatus';
+export { DbProvider } from './enums/DbProvider';

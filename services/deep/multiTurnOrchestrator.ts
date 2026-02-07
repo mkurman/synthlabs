@@ -51,12 +51,12 @@ export const orchestrateMultiTurnConversation = async (
 
   const messages: ChatMessage[] = [];
 
-  const formatAssistantContent = (answer: string, reasoning?: string): string => {
-    if (reasoning && reasoning.trim()) {
-      return `<think>${reasoning.trim()}</think>\n\n${answer.trim()}`;
-    }
-    return answer.trim();
-  };
+  /** Build a clean ChatMessage for an assistant turn */
+  const buildAssistantMessage = (answer: string, reasoning?: string): ChatMessage => ({
+    role: ChatRole.Assistant,
+    content: answer.trim(),
+    reasoning_content: reasoning?.trim() || '',
+  });
 
   logger.group("🔄 STARTING MULTI-TURN CONVERSATION ORCHESTRATION");
   logger.log("Initial Input:", initialInput.substring(0, 100) + "...");
@@ -115,11 +115,7 @@ export const orchestrateMultiTurnConversation = async (
       firstReasoning = generatedResponse.reasoning;
     }
 
-    messages.push({
-      role: ChatRole.Assistant,
-      content: formatAssistantContent(firstResponse, firstReasoning),
-      reasoning: firstReasoning
-    });
+    messages.push(buildAssistantMessage(firstResponse, firstReasoning));
 
     for (let i = 0; i < userAgentConfig.followUpCount; i++) {
       if (signal?.aborted) break;
@@ -178,11 +174,10 @@ export const orchestrateMultiTurnConversation = async (
         throw new Error(`[MULTI-TURN] Schema requires '${OutputFieldName.Reasoning}' field but model did not produce it for follow-up response.`);
       }
 
-      messages.push({
-        role: ChatRole.Assistant,
-        content: formatAssistantContent(responseResult.answer || responseResult.reasoning || "Response generated.", responseResult.reasoning),
-        reasoning_content: responseResult.reasoning
-      });
+      messages.push(buildAssistantMessage(
+        responseResult.answer || responseResult.reasoning || "Response generated.",
+        responseResult.reasoning
+      ));
     }
 
     if (signal?.aborted) {

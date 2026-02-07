@@ -9,6 +9,7 @@ interface ModelSelectorProps {
     onChange: (model: string) => void;
     apiKey?: string;
     customBaseUrl?: string;
+    refreshToken?: number;
     disabled?: boolean;
     placeholder?: string;
     className?: string;
@@ -20,6 +21,7 @@ export default function ModelSelector({
     onChange,
     apiKey = '',
     customBaseUrl,
+    refreshToken,
     disabled = false,
     placeholder = 'Select or enter model',
     className = ''
@@ -78,6 +80,19 @@ export default function ModelSelector({
             setIsLoading(false);
         }
     }, [provider, apiKey, customBaseUrl, needsApiKey]);
+
+    // Explicit refresh trigger (e.g., base URL blur)
+    const refreshTokenRef = useRef<number | null>(null);
+    useEffect(() => {
+        if (typeof refreshToken !== 'number') {
+            return;
+        }
+        if (refreshTokenRef.current === refreshToken) {
+            return;
+        }
+        refreshTokenRef.current = refreshToken;
+        loadModels(true);
+    }, [refreshToken, loadModels]);
 
     // Load models only when dropdown is open (debounced to avoid spamming providers)
     useEffect(() => {

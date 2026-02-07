@@ -19,8 +19,11 @@ import * as VerifierRewriterService from '../services/verifierRewriterService';
 import * as ExternalApiService from '../services/externalApiService';
 import * as GeminiService from '../services/geminiService';
 import { SettingsService, AVAILABLE_PROVIDERS } from '../services/settingsService';
+import { PromptService } from '../services/promptService';
+import { PromptCategory, PromptRole } from '../interfaces/enums';
+import { PROVIDERS } from '../constants';
 import ReasoningHighlighter from './ReasoningHighlighter';
-import { parseThinkTagsForDisplay } from '../utils/thinkTagParser';
+import { parseThinkTagsForDisplay, extractMessageParts, sanitizeReasoningContent } from '../utils/thinkTagParser';
 import ConversationView from './ConversationView';
 import ChatPanel from './ChatPanel';
 import { ToolExecutor } from '../services/toolService';
@@ -45,6 +48,9 @@ import { useVerifierInlineEditing } from '../hooks/useVerifierInlineEditing';
 import { useHuggingFaceData } from '../hooks/useHuggingFaceData';
 import { useVerifierHfImport } from '../hooks/useVerifierHfImport';
 import { normalizeImportItem } from '../services/verifierImportService';
+import * as backendClient from '../services/backendClient';
+import { encryptKey } from '../utils/keyEncryption';
+import { isBackendAiAvailable, chatViaBackend } from '../services/api/backendAiClient';
 import ImportTab from './verifier/ImportTab';
 import ExportTab from './verifier/ExportTab';
 import type { SessionData } from '../interfaces';
@@ -64,9 +70,11 @@ interface VerifierPanelProps {
     chatOpen?: boolean;
     onChatToggle?: (open: boolean) => void;
     onSessionSelect: (session: SessionData) => Promise<void>;
+    onJobCreated?: (jobId: string, type: string) => void;
+    refreshTrigger?: number;
 }
 
-export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen, onChatToggle, onSessionSelect }: VerifierPanelProps) {
+export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen, onChatToggle, onSessionSelect, onJobCreated, refreshTrigger }: VerifierPanelProps) {
     const [data, setData] = useState<VerifierItem[]>([]);
     const [viewMode, setViewMode] = useState<VerifierViewMode>(VerifierViewMode.List);
     const [dataSource, setDataSource] = useState<VerifierDataSource | null>(null);
@@ -77,6 +85,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const [importLimit, setImportLimit] = useState<number>(100);
     const [isLimitEnabled, setIsLimitEnabled] = useState(true);
     const [isImporting, setIsImporting] = useState(false);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [hfRowsToFetch, setHfRowsToFetch] = useState<number>(100);
     const [hfSkipRows, setHfSkipRows] = useState<number>(0);
     const [hfImportError, setHfImportError] = useState<string | null>(null);
@@ -129,21 +138,74 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const [editValue, setEditValue] = useState('');
     const [rewritingField, setRewritingField] = useState<{ itemId: string; field: VerifierRewriteTarget; messageIndex?: number } | null>(null);
     const [streamingContent, setStreamingContent] = useState<string>('');  // Real-time streaming content
+    const [messageRewriteStates, setMessageRewriteStates] = useState<Record<string, { field: VerifierRewriteTarget; content: string; reasoningContent?: string }>>({});
+    const messageRewriteAbortControllers = useRef<Record<string, AbortController>>({});
 
     // Regenerate Dropdown State
     const [showRegenerateDropdown, setShowRegenerateDropdown] = useState<string | null>(null);
+
+    const getMessageRewriteKey = useCallback((itemId: string, messageIndex: number) => `${itemId}:${messageIndex}`, []);
+    const setMessageRewriteStart = useCallback((itemId: string, messageIndex: number, field: VerifierRewriteTarget) => {
+        const key = getMessageRewriteKey(itemId, messageIndex);
+        setMessageRewriteStates(prev => ({ ...prev, [key]: { field, content: '', reasoningContent: '' } }));
+    }, [getMessageRewriteKey]);
+    const setMessageRewriteContent = useCallback((itemId: string, messageIndex: number, content: string) => {
+        const key = getMessageRewriteKey(itemId, messageIndex);
+        setMessageRewriteStates(prev => {
+            const existing = prev[key];
+            if (!existing) return prev;
+            return { ...prev, [key]: { ...existing, content } };
+        });
+    }, [getMessageRewriteKey]);
+    const setMessageRewriteBothContent = useCallback((itemId: string, messageIndex: number, reasoningContent: string, content: string) => {
+        const key = getMessageRewriteKey(itemId, messageIndex);
+        setMessageRewriteStates(prev => {
+            const existing = prev[key];
+            if (!existing) return prev;
+            return { ...prev, [key]: { ...existing, content, reasoningContent } };
+        });
+    }, [getMessageRewriteKey]);
+    const clearMessageRewriteState = useCallback((itemId: string, messageIndex: number) => {
+        const key = getMessageRewriteKey(itemId, messageIndex);
+        delete messageRewriteAbortControllers.current[key];
+        setMessageRewriteStates(prev => {
+            if (!prev[key]) return prev;
+            const next = { ...prev };
+            delete next[key];
+            return next;
+        });
+    }, [getMessageRewriteKey]);
+    const cancelMessageRewrite = useCallback((itemId: string, messageIndex: number) => {
+        const key = getMessageRewriteKey(itemId, messageIndex);
+        const controller = messageRewriteAbortControllers.current[key];
+        if (controller) {
+            controller.abort();
+        }
+        clearMessageRewriteState(itemId, messageIndex);
+    }, [getMessageRewriteKey, clearMessageRewriteState]);
+    const toStreamingField = useCallback((field: VerifierRewriteTarget | undefined): StreamingField | undefined => {
+        if (field === VerifierRewriteTarget.MessageReasoning) return StreamingField.Reasoning;
+        if (field === VerifierRewriteTarget.MessageAnswer) return StreamingField.Answer;
+        if (field === VerifierRewriteTarget.MessageBoth) return StreamingField.Both;
+        if (field === VerifierRewriteTarget.MessageQuery) return StreamingField.Query;
+        return undefined;
+    }, []);
 
     // Rewriter Config State
     const [isRewriterPanelOpen, setIsRewriterPanelOpen] = useState(false);
     const [rewriterConfig, setRewriterConfig] = useState<VerifierRewriterService.RewriterConfig>(() => {
         const settings = SettingsService.getSettings();
         const externalProvider = settings.defaultProvider || ExternalProvider.OpenRouter;
+        // Only use custom base URL for 'other' provider - other providers have their own URLs in PROVIDERS constant
+        const customBaseUrl = externalProvider === ExternalProvider.Other
+            ? (SettingsService.getCustomBaseUrl() || '')
+            : '';
         return {
             provider: ProviderType.External,
             externalProvider: externalProvider as ExternalProvider,
             apiKey: '',
             model: SettingsService.getDefaultModel(externalProvider) || '',
-            customBaseUrl: '',
+            customBaseUrl,
             maxRetries: 3,
             retryDelay: 2000,
             promptCategory: 'verifier', promptRole: 'message_rewrite',
@@ -166,15 +228,27 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
 
     // Autoscore Config State
     const [isAutoscorePanelOpen, setIsAutoscorePanelOpen] = useState(false);
-    const [autoscoreConfig, setAutoscoreConfig] = useState<AutoscoreConfig>(() => {
+    const getInitialAutoscoreConfig = () => {
         const settings = SettingsService.getSettings();
         const gpModel = settings.generalPurposeModel;
+        const externalProvider = (gpModel?.externalProvider || ExternalProvider.OpenRouter) as ExternalProvider;
+        const provider = ProviderType.External;
+        const keyProvider = (externalProvider as ExternalProvider);
+        const apiKey = SettingsService.getApiKey(keyProvider) || '';
+        // Only use custom base URL for 'other' provider - other providers have their own URLs in PROVIDERS constant
+        const customBaseUrl = externalProvider === ExternalProvider.Other
+            ? (SettingsService.getCustomBaseUrl() || '')
+            : '';
+        const model = gpModel?.model
+            || SettingsService.getDefaultModel(keyProvider)
+            || 'deepseek/deepseek-v3.2';
+
         return {
-            provider: gpModel?.provider === ProviderType.External ? ProviderType.External : ProviderType.Gemini,
-            externalProvider: (gpModel?.externalProvider || 'openrouter') as any,
-            apiKey: '',
-            model: gpModel?.model || 'gemini-1.5-pro',
-            customBaseUrl: '',
+            provider,
+            externalProvider,
+            apiKey,
+            model,
+            customBaseUrl,
             promptCategory: 'verifier', promptRole: 'autoscore',
             concurrency: 5,
             sleepTime: 0,
@@ -182,7 +256,48 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
             retryDelay: 2000,
             generationParams: SettingsService.getDefaultGenerationParams()
         };
+    };
+    const getInitialRewriterConfig = () => {
+        const settings = SettingsService.getSettings();
+        const gpModel = settings.generalPurposeModel;
+        const externalProvider = (gpModel?.externalProvider || ExternalProvider.OpenRouter) as ExternalProvider;
+        const provider = ProviderType.External;
+        const keyProvider = (externalProvider as ExternalProvider);
+        const apiKey = SettingsService.getApiKey(keyProvider) || '';
+        // Only use custom base URL for 'other' provider - other providers have their own URLs in PROVIDERS constant
+        const customBaseUrl = externalProvider === ExternalProvider.Other
+            ? (SettingsService.getCustomBaseUrl() || '')
+            : '';
+        const model = gpModel?.model
+            || SettingsService.getDefaultModel(keyProvider)
+            || 'deepseek/deepseek-v3.2';
+        return {
+            provider,
+            externalProvider,
+            apiKey,
+            model,
+            customBaseUrl,
+            promptCategory: 'verifier', promptRole: 'rewriter',
+            concurrency: 5,
+            sleepTime: 0,
+            maxRetries: 3,
+            retryDelay: 2000,
+            generationParams: SettingsService.getDefaultGenerationParams()
+        };
+    };
+
+    const [autoscoreConfig, setAutoscoreConfig] = useState<AutoscoreConfig>(getInitialAutoscoreConfig);
+    const [autoscoreBaseUrlDraft, setAutoscoreBaseUrlDraft] = useState<string>(() => {
+        return getInitialAutoscoreConfig().customBaseUrl || '';
     });
+    const [rewriterBaseUrlDraft, setRewriterBaseUrlDraft] = useState<string>(() => {
+        return getInitialRewriterConfig().customBaseUrl || '';
+    });
+    const [autoscoreModelRefreshTick, setAutoscoreModelRefreshTick] = useState(0);
+    const [rewriterModelRefreshTick, setRewriterModelRefreshTick] = useState(0);
+    useEffect(() => {
+        setAutoscoreBaseUrlDraft(autoscoreConfig.customBaseUrl || '');
+    }, [autoscoreConfig.customBaseUrl]);
     const [isAutoscoring, setIsAutoscoring] = useState(false);
     const [autoscoreProgress, setAutoscoreProgress] = useState({ current: 0, total: 0 });
 
@@ -236,6 +351,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     });
 
     const { startEditing, cancelEditing, saveEditing } = useVerifierInlineEditing({
+        data,
         editingField,
         editValue,
         setEditingField,
@@ -270,7 +386,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         if (!FirebaseService.isFirebaseConfigured()) {
             return [];
         }
-        const { sessions } = await FirebaseService.getSessionsFromFirebase();
+        const { sessions } = await FirebaseService.getSessionsFromFirebase(undefined, undefined, undefined, true);
         setAvailableSessions(sessions);
         return sessions;
     }, []);
@@ -312,7 +428,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
             throw new Error('Firebase not configured.');
         }
         const fetchCount = Math.max(1, offset + limit);
-        const items = await FirebaseService.fetchAllLogs(fetchCount, sessionId);
+        const items = await FirebaseService.fetchAllLogs(fetchCount, sessionId, true);
         if (items.length === 0) {
             const shouldDelete = await confirmService.confirm({
                 title: 'Empty session found',
@@ -544,6 +660,38 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         }
     }, [dataSource, fetchMoreRows]);
 
+    // Handler for deleting a message and all messages after it
+    const handleDeleteMessagesFromHere = useCallback(async (itemId: string, messageIndex: number) => {
+        const item = data.find(i => i.id === itemId);
+        if (!item?.messages) return;
+
+        const deleteCount = item.messages.length - messageIndex;
+        const confirmed = await confirmService.confirm({
+            message: `Delete message #${messageIndex + 1} and ${deleteCount > 1 ? `all ${deleteCount - 1} message(s) after it` : 'no other messages'}? (${deleteCount} total)`,
+            confirmLabel: 'Delete',
+            cancelLabel: 'Cancel',
+            variant: 'danger'
+        });
+        if (!confirmed) return;
+
+        const newMessages = item.messages.slice(0, messageIndex);
+
+        const updatedItem = {
+            ...item,
+            messages: newMessages,
+            isMultiTurn: newMessages.length > 1,
+            hasUnsavedChanges: true
+        };
+
+        setData((prev: VerifierItem[]) => prev.map(i =>
+            i.id === itemId ? updatedItem : i
+        ));
+
+        if (autoSaveEnabled && dataSource === VerifierDataSource.Database) {
+            handleDbUpdate(updatedItem);
+        }
+    }, [data, autoSaveEnabled, dataSource, handleDbUpdate, setData]);
+
     // Handler for rewriting user query messages with streaming
     const handleMessageQueryRewrite = async (itemId: string, messageIndex: number) => {
         console.log('handleMessageQueryRewrite called:', { itemId, messageIndex });
@@ -564,12 +712,14 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
             return;
         }
 
-        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageQuery, messageIndex });
-        setStreamingContent('');
+        setMessageRewriteStart(itemId, messageIndex, VerifierRewriteTarget.MessageQuery);
+        const rewriteKey = getMessageRewriteKey(itemId, messageIndex);
+        const abortController = new AbortController();
+        messageRewriteAbortControllers.current[rewriteKey] = abortController;
 
         try {
             console.log('Calling query rewrite streaming...');
-            const userPrompt = `You are an expert at improving and clarifying user queries. 
+            const userPrompt = `You are an expert at improving and clarifying user queries.
 Given a user's question or request, rewrite it to be clearer, more specific, and better structured.
 Preserve the original intent while improving clarity.
 Return ONLY the improved query text.
@@ -593,12 +743,13 @@ Expected Output Format:
                     // Try to extract from JSON if LLM returns JSON
                     const extracted = extractJsonFields(accumulated);
                     if (extracted.answer) {
-                        setStreamingContent(extracted.answer);
+                        setMessageRewriteContent(itemId, messageIndex, extracted.answer);
                     } else {
                         // Fall back to raw content
-                        setStreamingContent(accumulated);
+                        setMessageRewriteContent(itemId, messageIndex, accumulated);
                     }
-                }
+                },
+                abortController.signal
             );
             console.log('Query rewrite result:', newValue);
 
@@ -607,33 +758,31 @@ Expected Output Format:
             // extractJsonFields maps 'response' to 'answer'
             const finalQuery = extracted.answer || newValue.trim();
 
-            const updatedItem = { ...item };
-            if (updatedItem.messages) {
-                const newMessages = [...updatedItem.messages];
-                newMessages[messageIndex] = {
-                    ...newMessages[messageIndex],
+            // Use functional updater to read current state (avoids race with concurrent edits)
+            let updatedItemForDb: VerifierItem | null = null;
+            setData((prev: VerifierItem[]) => prev.map(i => {
+                if (i.id !== itemId) return i;
+                const currentMessages = [...(i.messages || [])];
+                if (!currentMessages[messageIndex]) return i;
+                currentMessages[messageIndex] = {
+                    ...currentMessages[messageIndex],
                     content: finalQuery
                 };
-                updatedItem.messages = newMessages;
-            }
+                const updated = { ...i, messages: currentMessages, hasUnsavedChanges: true };
+                updatedItemForDb = updated;
+                return updated;
+            }));
 
-
-
-            const finalItem = { ...updatedItem, hasUnsavedChanges: true };
-            setData((prev: VerifierItem[]) => {
-                return prev.map(i => i.id === itemId ? finalItem : i);
-            });
-
-            if (autoSaveEnabled && dataSource === VerifierDataSource.Database) {
-                handleDbUpdate(finalItem);
+            if (autoSaveEnabled && dataSource === VerifierDataSource.Database && updatedItemForDb) {
+                handleDbUpdate(updatedItemForDb);
             }
             toast.success('Query rewritten');
-        } catch (error) {
+        } catch (error: any) {
+            if (error?.name === 'AbortError' || abortController.signal.aborted) return;
             console.error("Query rewrite failed:", error);
             toast.error("Rewrite failed. See console for details.");
         } finally {
-            setRewritingField(null);
-            setStreamingContent('');
+            clearMessageRewriteState(itemId, messageIndex);
         }
     };
 
@@ -650,8 +799,10 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageAnswer, messageIndex });
-        setStreamingContent('');  // Clear previous streaming content
+        setMessageRewriteStart(itemId, messageIndex, VerifierRewriteTarget.MessageAnswer);
+        const rewriteKey = getMessageRewriteKey(itemId, messageIndex);
+        const abortController = new AbortController();
+        messageRewriteAbortControllers.current[rewriteKey] = abortController;
 
         try {
             console.log('Calling rewriteMessageStreaming...');
@@ -660,16 +811,17 @@ Expected Output Format:
                     item,
                     messageIndex,
                     config: rewriterConfig,
-                    promptSet: SettingsService.getSettings().promptSet
+                    promptSet: SettingsService.getSettings().promptSet,
+                    signal: abortController.signal
                 },
                 (_chunk, accumulated) => {
                     // Parse JSON on-the-fly and extract answer field
                     const extracted = extractJsonFields(accumulated);
                     if (extracted.answer) {
-                        setStreamingContent(extracted.answer);
+                        setMessageRewriteContent(itemId, messageIndex, extracted.answer);
                     } else {
                         // Fallback to raw content
-                        setStreamingContent(accumulated);
+                        setMessageRewriteContent(itemId, messageIndex, accumulated);
                     }
                 }
             );
@@ -679,51 +831,33 @@ Expected Output Format:
             const extracted = extractJsonFields(newValue);
             const finalAnswer = extracted.answer || newValue;
 
-            let updatedItem: VerifierItem | null = null;
-            setData((prev: VerifierItem[]) => {
-                console.log('Updating data...');
-                return prev.map(i => {
-                    if (i.id === itemId && i.messages) {
-                        console.log('Found target item, updating message:', messageIndex);
-                        const newMessages = [...i.messages];
-
-                        // Robustly preserve existing reasoning
-                        let existingReasoningBlock = '';
-                        const thinkMatch = newMessages[messageIndex].content.match(/<think>([\s\S]*?)<\/think>/);
-
-                        if (thinkMatch) {
-                            // Found think tags in content, preserve them
-                            existingReasoningBlock = thinkMatch[0];
-                        } else if (newMessages[messageIndex].reasoning) {
-                            // No tags in content but reasoning field exists, reconstruct it
-                            existingReasoningBlock = `<think>${newMessages[messageIndex].reasoning}</think>`;
-                        }
-
-                        // Ensure proper spacing
-                        const prefix = existingReasoningBlock ? existingReasoningBlock + '\n' : '';
-
-                        newMessages[messageIndex] = {
-                            ...newMessages[messageIndex],
-                            content: prefix + finalAnswer.trim()
-                        };
-                        console.log('Updated message:', newMessages[messageIndex]);
-                        updatedItem = { ...i, messages: newMessages, hasUnsavedChanges: true };
-                        return updatedItem;
-                    }
-                    return i;
-                });
-            });
+            // Use functional updater to read current state (avoids race with concurrent edits)
+            let updatedItemForDb: VerifierItem | null = null;
+            setData((prev: VerifierItem[]) => prev.map(i => {
+                if (i.id !== itemId) return i;
+                const currentMessages = [...(i.messages || [])];
+                if (!currentMessages[messageIndex]) return i;
+                const { reasoning: existingReasoning } = extractMessageParts(currentMessages[messageIndex]);
+                currentMessages[messageIndex] = {
+                    ...currentMessages[messageIndex],
+                    content: finalAnswer.trim(),
+                    reasoning_content: existingReasoning,
+                };
+                const updated: VerifierItem = { ...i, messages: currentMessages, hasUnsavedChanges: true };
+                updatedItemForDb = updated;
+                return updated;
+            }));
             console.log('Data updated successfully');
 
-            if (autoSaveEnabled && dataSource === VerifierDataSource.Database && updatedItem) {
-                handleDbUpdate(updatedItem);
+            if (autoSaveEnabled && dataSource === VerifierDataSource.Database && updatedItemForDb) {
+                handleDbUpdate(updatedItemForDb);
             }
-        } catch (error) {
+        } catch (error: any) {
+            if (error?.name === 'AbortError' || abortController.signal.aborted) return;
             console.error("Rewrite failed:", error);
             toast.error("Rewrite failed. See console for details.");
         } finally {
-            setRewritingField(null);
-            setStreamingContent('');
+            clearMessageRewriteState(itemId, messageIndex);
         }
     };
 
@@ -741,8 +875,10 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageReasoning, messageIndex });
-        setStreamingContent('');  // Clear previous streaming content
+        setMessageRewriteStart(itemId, messageIndex, VerifierRewriteTarget.MessageReasoning);
+        const rewriteKey = getMessageRewriteKey(itemId, messageIndex);
+        const abortController = new AbortController();
+        messageRewriteAbortControllers.current[rewriteKey] = abortController;
 
         try {
             console.log('Calling rewriteMessageReasoningStreaming...');
@@ -752,19 +888,20 @@ Expected Output Format:
                     item,
                     messageIndex,
                     config: rewriterConfig,
-                    promptSet: SettingsService.getSettings().promptSet
+                    promptSet: SettingsService.getSettings().promptSet,
+                    signal: abortController.signal
                 },
                 (_chunk, accumulated) => {
                     // Parse JSON on-the-fly and extract reasoning field
                     const extracted = extractJsonFields(accumulated);
                     if (extracted.reasoning) {
-                        setStreamingContent(extracted.reasoning);
+                        setMessageRewriteContent(itemId, messageIndex, extracted.reasoning);
                     } else if (extracted.answer) {
                         // Fallback to generic key content (response/text/etc)
-                        setStreamingContent(extracted.answer);
+                        setMessageRewriteContent(itemId, messageIndex, extracted.answer);
                     } else {
                         // Fallback to raw content
-                        setStreamingContent(accumulated);
+                        setMessageRewriteContent(itemId, messageIndex, accumulated);
                     }
                 }
             );
@@ -773,41 +910,42 @@ Expected Output Format:
             // Parse the final result to extract reasoning and answer
             const extracted = extractJsonFields(rawResult);
             // Fallback to extracted.answer if reasoning key missing (handles 'response'/'text' keys)
-            const finalReasoning = extracted.reasoning || extracted.answer || rawResult;
+            const finalReasoning = sanitizeReasoningContent(extracted.reasoning || extracted.answer || rawResult);
             // For reasoning only rewrite, we typically preserve the original answer, 
             // unless the model explicitly returned a NEW answer in the answer field (and reasoning field was present)
             // But if we used extracted.answer as reasoning, we should keep original answer.
             const modelGeneratedAnswer = extracted.reasoning && extracted.answer ? extracted.answer : undefined;
-            const finalAnswer = modelGeneratedAnswer || item.messages![messageIndex].content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+            const finalAnswer = modelGeneratedAnswer || extractMessageParts(item.messages![messageIndex]).content;
 
-            const updatedItem = { ...item };
-            if (updatedItem.messages) {
-                const newMessages = [...updatedItem.messages];
-                const thinkTag = finalReasoning ? `<think>${finalReasoning}</think>\n` : '';
-                newMessages[messageIndex] = {
-                    ...newMessages[messageIndex],
-                    content: thinkTag + finalAnswer,
-                    reasoning: finalReasoning
-                };
-                updatedItem.messages = newMessages;
-            }
-
-            const finalUpdatedItem = { ...updatedItem, hasUnsavedChanges: true };
+            // Use functional updater to read current state (avoids race with concurrent edits)
+            let updatedItemForDb: VerifierItem | null = null;
             setData((prev: VerifierItem[]) => {
                 console.log('Updating data...');
-                return prev.map(i => i.id === itemId ? finalUpdatedItem : i);
+                return prev.map(i => {
+                    if (i.id !== itemId) return i;
+                    const currentMessages = [...(i.messages || [])];
+                    if (!currentMessages[messageIndex]) return i;
+                    currentMessages[messageIndex] = {
+                        ...currentMessages[messageIndex],
+                        content: finalAnswer,
+                        reasoning_content: finalReasoning,
+                    };
+                    const updated = { ...i, messages: currentMessages, hasUnsavedChanges: true };
+                    updatedItemForDb = updated;
+                    return updated;
+                });
             });
             console.log('Data updated successfully');
 
-            if (autoSaveEnabled && dataSource === VerifierDataSource.Database) {
-                handleDbUpdate(updatedItem);
+            if (autoSaveEnabled && dataSource === VerifierDataSource.Database && updatedItemForDb) {
+                handleDbUpdate(updatedItemForDb);
             }
-        } catch (error) {
+        } catch (error: any) {
+            if (error?.name === 'AbortError' || abortController.signal.aborted) return;
             console.error("Reasoning rewrite failed:", error);
             toast.error("Rewrite failed. See console for details.");
         } finally {
-            setRewritingField(null);
-            setStreamingContent('');
+            clearMessageRewriteState(itemId, messageIndex);
         }
     };
 
@@ -824,71 +962,103 @@ Expected Output Format:
             return;
         }
 
-        setRewritingField({ itemId, field: VerifierRewriteTarget.MessageBoth, messageIndex });
-        setStreamingContent('');  // Clear previous streaming content
+        setMessageRewriteStart(itemId, messageIndex, VerifierRewriteTarget.MessageBoth);
+        const rewriteKey = getMessageRewriteKey(itemId, messageIndex);
+        const abortController = new AbortController();
+        messageRewriteAbortControllers.current[rewriteKey] = abortController;
+
+        const splitFieldRequests = SettingsService.getDefaultGenerationParams().splitFieldRequests ?? false;
 
         try {
-            // Use streaming to show progress while generating both fields
-            // Use specialized streaming function for both fields
-            const rawResult = await VerifierRewriterService.rewriteMessageBothStreaming(
-                {
-                    item,
-                    messageIndex,
-                    config: rewriterConfig,
-                    promptSet: SettingsService.getSettings().promptSet
-                },
-                (_chunk, accumulated) => {
-                    // Parse JSON on-the-fly and show reasoning first, then answer
-                    const extracted = extractJsonFields(accumulated);
-                    // Show reasoning while it's being generated, then show combined
-                    if (extracted.reasoning && !extracted.hasAnswerStart) {
-                        setStreamingContent(extracted.reasoning);
-                    } else if (extracted.answer) {
-                        setStreamingContent(extracted.answer);
-                    } else {
-                        setStreamingContent(accumulated);
+            let finalReasoning: string;
+            let finalAnswer: string;
+
+            if (splitFieldRequests) {
+                // Split mode: two sequential plain-text requests
+                let splitReasoningAccumulated = '';
+                const result = await VerifierRewriterService.rewriteMessageBothSplitStreaming(
+                    {
+                        item,
+                        messageIndex,
+                        config: rewriterConfig,
+                        promptSet: SettingsService.getSettings().promptSet,
+                        signal: abortController.signal
+                    },
+                    (_chunk, accumulated) => {
+                        // Phase 1: streaming reasoning
+                        splitReasoningAccumulated = accumulated;
+                        setMessageRewriteBothContent(itemId, messageIndex, accumulated, '');
+                    },
+                    (_chunk, accumulated) => {
+                        // Phase 2: streaming answer (show final reasoning from phase 1)
+                        setMessageRewriteBothContent(itemId, messageIndex, splitReasoningAccumulated, accumulated);
                     }
-                }
-            );
-
-            console.log('handleMessageBothRewrite streaming result:', rawResult);
-
-            // Parse final result for both fields
-            const extracted = extractJsonFields(rawResult);
-            const finalReasoning = extracted.reasoning || '';
-            const finalAnswer = extracted.answer || rawResult;
-
-            let updatedItem: VerifierItem | null = null;
-            setData((prev: VerifierItem[]) => {
-                const updated = prev.map(i => {
-                    if (i.id === itemId && i.messages) {
-                        const newMessages = [...i.messages];
-                        const thinkTag = finalReasoning ? `<think>${finalReasoning}</think>\n` : '';
-                        newMessages[messageIndex] = {
-                            ...newMessages[messageIndex],
-                            content: thinkTag + finalAnswer,
-                            reasoning: finalReasoning
-                        };
-                        updatedItem = { ...i, messages: newMessages, hasUnsavedChanges: true };
-                        return updatedItem;
+                );
+                finalReasoning = sanitizeReasoningContent(result.reasoning);
+                finalAnswer = result.answer;
+            } else {
+                // Original mode: single JSON request
+                const rawResult = await VerifierRewriterService.rewriteMessageBothStreaming(
+                    {
+                        item,
+                        messageIndex,
+                        config: rewriterConfig,
+                        promptSet: SettingsService.getSettings().promptSet,
+                        signal: abortController.signal
+                    },
+                    (_chunk, accumulated) => {
+                        const extracted = extractJsonFields(accumulated);
+                        if (extracted.reasoning && !extracted.hasAnswerStart) {
+                            setMessageRewriteBothContent(itemId, messageIndex, extracted.reasoning, '');
+                        } else if (extracted.hasAnswerStart) {
+                            setMessageRewriteBothContent(itemId, messageIndex, extracted.reasoning || '', extracted.answer || '');
+                        } else {
+                            setMessageRewriteBothContent(itemId, messageIndex, '', accumulated);
+                        }
                     }
-                    return i;
-                });
-                console.log('Updated data:', updated.find(x => x.id === itemId)?.messages?.[messageIndex]);
+                );
+
+                console.log('handleMessageBothRewrite streaming result:', rawResult);
+
+                const extracted = extractJsonFields(rawResult);
+                const parsedThink = parseThinkTagsForDisplay(rawResult);
+                const parsedAnswerThink = parseThinkTagsForDisplay(extracted.answer || '');
+                finalReasoning = sanitizeReasoningContent(
+                    extracted.reasoning || parsedAnswerThink.reasoning || parsedThink.reasoning || ''
+                );
+                finalAnswer = extracted.answer
+                    ? (parsedAnswerThink.hasThinkTags ? parsedAnswerThink.answer : extracted.answer)
+                    : (parsedThink.hasThinkTags ? parsedThink.answer : rawResult);
+            }
+
+            // Use functional updater to read current state (avoids race with concurrent edits)
+            let updatedItemForDb: VerifierItem | null = null;
+            setData((prev: VerifierItem[]) => prev.map(i => {
+                if (i.id !== itemId) return i;
+                const currentMessages = [...(i.messages || [])];
+                if (!currentMessages[messageIndex]) return i;
+                const preservedReasoning = extractMessageParts(currentMessages[messageIndex]).reasoning;
+                currentMessages[messageIndex] = {
+                    ...currentMessages[messageIndex],
+                    content: finalAnswer,
+                    reasoning_content: finalReasoning || preservedReasoning,
+                };
+                const updated: VerifierItem = { ...i, messages: currentMessages, hasUnsavedChanges: true };
+                updatedItemForDb = updated;
                 return updated;
-            });
+            }));
             console.log('Data updated successfully');
 
-            if (autoSaveEnabled && dataSource === VerifierDataSource.Database && updatedItem) {
-                handleDbUpdate(updatedItem);
+            if (autoSaveEnabled && dataSource === VerifierDataSource.Database && updatedItemForDb) {
+                handleDbUpdate(updatedItemForDb);
             }
             toast.success('Regenerated message reasoning and answer');
-        } catch (error) {
+        } catch (error: any) {
+            if (error?.name === 'AbortError' || abortController.signal.aborted) return;
             console.error("Both rewrite failed:", error);
             toast.error("Rewrite failed. See console for details.");
         } finally {
-            setRewritingField(null);
-            setStreamingContent('');
+            clearMessageRewriteState(itemId, messageIndex);
         }
     };
 
@@ -950,7 +1120,7 @@ Expected Output Format:
             const extracted = extractJsonFields(newValue);
             let finalValue = newValue;
             if (field === VerifierRewriteTarget.Reasoning) {
-                finalValue = extracted.reasoning || extracted.answer || newValue;
+                finalValue = sanitizeReasoningContent(extracted.reasoning || extracted.answer || newValue);
             } else if (field === VerifierRewriteTarget.Answer) {
                 finalValue = extracted.answer || extracted.reasoning || newValue;
             } else if (field === VerifierRewriteTarget.Query) {
@@ -994,38 +1164,65 @@ Expected Output Format:
         setRewritingField({ itemId, field: VerifierRewriteTarget.Both });
         setStreamingContent('');  // Clear previous streaming content
 
+        const splitFieldRequests = SettingsService.getDefaultGenerationParams().splitFieldRequests ?? false;
+
         try {
-            // Use streaming for real-time display
-            const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
-                {
-                    item: itemForRewrite,
-                    field: OutputFieldName.Reasoning,  // Start with reasoning field prompt
-                    config: rewriterConfig,
-                    promptSet: SettingsService.getSettings().promptSet
-                },
-                (_chunk, accumulated) => {
-                    // Parse JSON on-the-fly and show reasoning first, then answer
-                    const extracted = extractJsonFields(accumulated);
-                    if (extracted.reasoning && !extracted.hasAnswerStart) {
-                        setStreamingContent(extracted.reasoning);
-                    } else if (extracted.answer) {
-                        setStreamingContent(extracted.answer);
-                    } else {
+            let finalReasoning: string;
+            let finalAnswer: string;
+
+            if (splitFieldRequests) {
+                // Split mode: two sequential plain-text requests
+                const result = await VerifierRewriterService.rewriteBothSplitStreaming(
+                    {
+                        item: itemForRewrite,
+                        field: OutputFieldName.Reasoning,
+                        config: rewriterConfig,
+                        promptSet: SettingsService.getSettings().promptSet
+                    },
+                    (_chunk, accumulated) => {
+                        // Phase 1: streaming reasoning
+                        setStreamingContent(accumulated);
+                    },
+                    (_chunk, accumulated) => {
+                        // Phase 2: streaming answer
                         setStreamingContent(accumulated);
                     }
-                }
-            );
+                );
+                finalReasoning = sanitizeReasoningContent(result.reasoning);
+                finalAnswer = result.answer;
+            } else {
+                // Original mode: single JSON request
+                const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
+                    {
+                        item: itemForRewrite,
+                        field: OutputFieldName.Reasoning,  // Start with reasoning field prompt
+                        config: rewriterConfig,
+                        promptSet: SettingsService.getSettings().promptSet
+                    },
+                    (_chunk, accumulated) => {
+                        const extracted = extractJsonFields(accumulated);
+                        if (extracted.reasoning && !extracted.hasAnswerStart) {
+                            setStreamingContent(extracted.reasoning);
+                        } else if (extracted.answer) {
+                            setStreamingContent(extracted.answer);
+                        } else {
+                            setStreamingContent(accumulated);
+                        }
+                    }
+                );
 
-            // Parse final result for both fields
-            const extracted = extractJsonFields(rawResult);
-            // Robustly handle generic keys, prioritizing specialized fields if present
-            const finalReasoning = extracted.reasoning || extracted.answer || rawResult;
-            // If extracted.answer was used for reasoning (because answer key was missing/generic), keep original answer
-            // Logic: if we have both reasoning AND answer keys, assume answer key is Answer.
-            // If we only have answer key (mapped from 'response'), assume it's Reasoning (since we asked for reasoning rewrite primarily).
-            const finalAnswer = (extracted.reasoning && extracted.answer) ? extracted.answer : item.answer;
+                const extracted = extractJsonFields(rawResult);
+                finalReasoning = sanitizeReasoningContent(extracted.reasoning || extracted.answer || rawResult);
+                finalAnswer = (extracted.reasoning && extracted.answer) ? extracted.answer : item.answer;
+            }
 
-            const updatedItem = { ...item, reasoning: finalReasoning, answer: finalAnswer, hasUnsavedChanges: true };
+            const updatedItem = {
+                ...item,
+                reasoning: finalReasoning,
+                reasoning_content: finalReasoning,
+                answer: finalAnswer,
+                hasUnsavedChanges: true
+            };
 
             setData((prev: VerifierItem[]) => prev.map(i =>
                 i.id === itemId
@@ -1051,8 +1248,9 @@ Expected Output Format:
     const autoscoreSingleItem = async (item: VerifierItem, signal?: AbortSignal): Promise<number> => {
         const { provider, externalProvider, apiKey, model, customBaseUrl, maxRetries, retryDelay, generationParams } = autoscoreConfig;
 
-        const effectiveApiKey = apiKey || SettingsService.getApiKey(provider === ProviderType.External ? externalProvider : ProviderType.Gemini);
-        const effectiveBaseUrl = customBaseUrl || SettingsService.getCustomBaseUrl();
+        const providerString = provider === ProviderType.Gemini ? 'gemini' : externalProvider;
+        const effectiveApiKey = apiKey || SettingsService.getApiKey(provider === ProviderType.External ? externalProvider : 'gemini');
+        const effectiveBaseUrl = customBaseUrl || PROVIDERS[providerString]?.url || '';
 
         const systemPrompt = `You are an expert evaluator. Score the quality of the reasoning and answer on a scale of 1-5, where 1 is poor and 5 is excellent.`;
 
@@ -1066,6 +1264,32 @@ Based on the criteria above, provide a 1-5 score.`;
 
         let rawResult: string = '';
 
+        // Try backend routing first
+        const useBackend = await isBackendAiAvailable();
+        if (useBackend) {
+            try {
+                const result = await chatViaBackend({
+                    provider: providerString,
+                    model,
+                    apiKey: effectiveApiKey,
+                    baseUrl: effectiveBaseUrl,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt },
+                    ],
+                    generationParams: generationParams || SettingsService.getDefaultGenerationParams(),
+                    signal,
+                });
+                rawResult = result.content || '';
+                const match = rawResult.match(/[1-5]/);
+                return match ? parseInt(match[0]) : 0;
+            } catch (backendError: any) {
+                if (backendError?.name === 'AbortError' || signal?.aborted) throw backendError;
+                console.warn('[autoscore] Backend AI failed, falling back to direct call:', backendError);
+            }
+        }
+
+        // Fallback: direct API calls
         if (provider === ProviderType.Gemini) {
             const result = await GeminiService.generateReasoningTrace(userPrompt, systemPrompt, {
                 maxRetries: maxRetries,
@@ -1129,18 +1353,45 @@ Based on the criteria above, provide a 1-5 score.`;
         return { scored, skipped, errors };
     }, [autoSaveEnabled, data, dataSource, handleDbUpdate, setScore]);
 
+    const handleRefreshRowsFromDb = useCallback(async (startIndex: number, endIndex: number): Promise<VerifierItem[]> => {
+        const slice = data.slice(startIndex, endIndex);
+        if (slice.length === 0) return [];
+        const refreshed: VerifierItem[] = [];
+        for (const item of slice) {
+            if (!item.id) {
+                refreshed.push(item);
+                continue;
+            }
+            const fresh = await FirebaseService.fetchLogItem(item.id);
+            refreshed.push(fresh ? normalizeImportItem(fresh) : item);
+        }
+        const updated = [...data];
+        for (let i = 0; i < refreshed.length; i++) {
+            updated[startIndex + i] = refreshed[i];
+        }
+        setData(updated);
+        return refreshed;
+    }, [data, setData]);
+
+
+    const activeVerifierSessionId = resolveActiveSessionId() || data[0]?.sessionUid || currentSessionUid;
+
     useVerifierToolExecutor({
         data,
         setData,
+        currentSessionUid: activeVerifierSessionId,
         autoSaveEnabled,
         handleFetchMore,
         handleDbUpdate,
+        refreshRowsFromDb: handleRefreshRowsFromDb,
         sessions: availableSessions,
         refreshSessions: refreshSessionsList,
         renameSession,
         autoscoreItems: handleAutoscoreItems,
         loadSessionById: handleLoadSessionById,
         loadSessionRows: handleLoadSessionRows,
+        autoscoreConfig,
+        rewriterConfig,
         toolExecutorRef
     });
 
@@ -1188,6 +1439,82 @@ Based on the criteria above, provide a 1-5 score.`;
         });
         if (!confirmRewrite) return;
 
+        // --- Backend job path (DB mode + backend available) ---
+        if (dataSource === VerifierDataSource.Database && backendClient.isBackendEnabled()) {
+            const sessionId = resolveActiveSessionId();
+            if (!sessionId) {
+                toast.error('No session selected. Select a specific session to run a backend rewrite job.');
+                return;
+            }
+
+            // Map mode to fields array
+            const fields: string[] = mode === VerifierRewriteTarget.Both
+                ? ['reasoning', 'answer']
+                : [mode]; // 'query' | 'reasoning' | 'answer'
+
+            // Resolve provider / model / baseUrl / apiKey (same pattern as toolService)
+            const effectiveProvider = rewriterConfig.externalProvider || SettingsService.getSettings().defaultProvider || 'openrouter';
+            const effectiveModel = rewriterConfig.model || SettingsService.getDefaultModel(effectiveProvider) || '';
+            const effectiveBaseUrl = (rewriterConfig.customBaseUrl && rewriterConfig.customBaseUrl !== '' ? rewriterConfig.customBaseUrl : null)
+                || SettingsService.getProviderUrl(effectiveProvider)
+                || PROVIDERS[effectiveProvider]?.url
+                || '';
+            const apiKey = (rewriterConfig.apiKey && rewriterConfig.apiKey !== '' ? rewriterConfig.apiKey : null)
+                || SettingsService.getApiKey(effectiveProvider)
+                || '';
+
+            if (!apiKey) {
+                toast.error(`No API key found for provider "${effectiveProvider}". Configure it in Settings or the Rewriter panel.`);
+                return;
+            }
+
+            try {
+                const encryptedKey = await encryptKey(apiKey);
+
+                // Resolve system prompt: custom > unified prompt from prompt set
+                const effectiveSystemPrompt = rewriterConfig.systemPrompt && rewriterConfig.systemPrompt.trim() !== ''
+                    ? rewriterConfig.systemPrompt
+                    : undefined;
+
+                let fieldPrompts: Record<string, string> | undefined;
+                if (!effectiveSystemPrompt) {
+                    const promptSet = SettingsService.getSettings().promptSet || 'default';
+                    const schema = PromptService.getPromptSchema(PromptCategory.Verifier, PromptRole.Rewriter, promptSet);
+                    if (schema.prompt) {
+                        fieldPrompts = {};
+                        for (const field of fields) {
+                            fieldPrompts[field] = schema.prompt;
+                        }
+                    }
+                }
+
+                const itemIds = itemsToProcess.map(i => i.id);
+                const jobId = await backendClient.startRewrite({
+                    sessionId,
+                    provider: effectiveProvider,
+                    model: effectiveModel,
+                    baseUrl: effectiveBaseUrl,
+                    apiKey: encryptedKey,
+                    fields,
+                    itemIds,
+                    sleepMs: rewriterConfig.delayMs ?? 500,
+                    concurrency: rewriterConfig.concurrency ?? 1,
+                    maxRetries: rewriterConfig.maxRetries ?? 3,
+                    retryDelay: rewriterConfig.retryDelay ?? 2000,
+                    systemPrompt: effectiveSystemPrompt,
+                    fieldPrompts,
+                });
+
+                onJobCreated?.(jobId, 'rewrite');
+                toast.success(`Rewrite job started for ${itemsToProcess.length} items (${fields.join(', ')})`);
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                toast.error(`Failed to start rewrite job: ${msg}`);
+            }
+            return;
+        }
+
+        // --- Client-side fallback (non-DB mode or no backend) ---
         setIsRewritingAll(true);
         setRewriteProgress({ current: 0, total: itemsToProcess.length });
 
@@ -1207,28 +1534,54 @@ Based on the criteria above, provide a 1-5 score.`;
                     query: item.query || (item as any).QUERY || item.full_seed || ''
                 };
 
+                const bulkSplitFieldRequests = SettingsService.getDefaultGenerationParams().splitFieldRequests ?? false;
+
                 try {
                     if (mode === VerifierRewriteTarget.Both) {
-                        // Both: Use the same strategy as handleBothRewrite (request reasoning, expect both)
-                        const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
-                            {
-                                item: itemForRewrite,
-                                field: OutputFieldName.Reasoning,
-                                config: rewriterConfig,
-                                promptSet: SettingsService.getSettings().promptSet
-                            },
-                            () => { } // No-op for streaming callback in bulk mode
-                        );
+                        let finalReasoning: string;
+                        let finalAnswer: string;
 
-                        const extracted = extractJsonFields(rawResult);
-                        const finalReasoning = extracted.reasoning || extracted.answer || rawResult;
-                        const finalAnswer = (extracted.reasoning && extracted.answer) ? extracted.answer : item.answer;
+                        if (bulkSplitFieldRequests) {
+                            const result = await VerifierRewriterService.rewriteBothSplitStreaming(
+                                {
+                                    item: itemForRewrite,
+                                    field: OutputFieldName.Reasoning,
+                                    config: rewriterConfig,
+                                    promptSet: SettingsService.getSettings().promptSet
+                                },
+                                () => { },
+                                () => { }
+                            );
+                            finalReasoning = sanitizeReasoningContent(result.reasoning);
+                            finalAnswer = result.answer;
+                        } else {
+                            const rawResult = await VerifierRewriterService.rewriteFieldStreaming(
+                                {
+                                    item: itemForRewrite,
+                                    field: OutputFieldName.Reasoning,
+                                    config: rewriterConfig,
+                                    promptSet: SettingsService.getSettings().promptSet
+                                },
+                                () => { }
+                            );
+
+                            const extracted = extractJsonFields(rawResult);
+                            finalReasoning = sanitizeReasoningContent(extracted.reasoning || extracted.answer || rawResult);
+                            finalAnswer = (extracted.reasoning && extracted.answer) ? extracted.answer : item.answer;
+                        }
 
                         setData((prev: VerifierItem[]) => prev.map(i =>
-                            i.id === item.id ? { ...i, reasoning: finalReasoning, answer: finalAnswer, hasUnsavedChanges: true } : i
+                            i.id === item.id
+                                ? {
+                                    ...i,
+                                    reasoning: finalReasoning,
+                                    reasoning_content: finalReasoning,
+                                    answer: finalAnswer,
+                                    hasUnsavedChanges: true
+                                }
+                                : i
                         ));
                     } else {
-                        // Single field: Reasoning or Answer
                         const rewritableField = mode === VerifierRewriteTarget.Query
                             ? OutputFieldName.Query
                             : mode === VerifierRewriteTarget.Reasoning
@@ -1248,16 +1601,21 @@ Based on the criteria above, provide a 1-5 score.`;
                         const extracted = extractJsonFields(rawResult);
                         let finalValue = rawResult;
                         if (mode === VerifierRewriteTarget.Reasoning) {
-                            finalValue = extracted.reasoning || extracted.answer || rawResult;
+                            finalValue = sanitizeReasoningContent(extracted.reasoning || extracted.answer || rawResult);
                         } else if (mode === VerifierRewriteTarget.Answer) {
                             finalValue = extracted.answer || extracted.reasoning || rawResult;
                         } else if (mode === VerifierRewriteTarget.Query) {
-                            // extractJsonFields maps 'response'/'query' keys to 'answer' property
                             finalValue = extracted.answer || rawResult;
                         }
 
-                        // Prepare updated item for state and auto-save
-                        const updatedItem = { ...item, [mode]: finalValue, hasUnsavedChanges: true };
+                        const updatedItem = mode === VerifierRewriteTarget.Reasoning
+                            ? {
+                                ...item,
+                                reasoning: finalValue,
+                                reasoning_content: finalValue,
+                                hasUnsavedChanges: true
+                            }
+                            : { ...item, [mode]: finalValue, hasUnsavedChanges: true };
 
                         setData((prev: VerifierItem[]) => prev.map(i =>
                             i.id === item.id ? updatedItem : i
@@ -1284,18 +1642,11 @@ Based on the criteria above, provide a 1-5 score.`;
 
         setIsRewritingAll(false);
         toast.success(`Bulk rewrite (${mode}) of ${itemsToProcess.length} items complete!`);
-        // Optional: clear selection?
-        // setSelectedItemIds(new Set());
     };
 
     const handleAutoscoreSelected = async () => {
         const selectedItems = getSelectedItems();
-        // Option: Filter only unrated items? Or rescore all selected?
-        // User just said "autoscore". Let's assume unrated only to be safe/consistent with "Auto", but maybe warn?
-        // Actually, if I select items, I probably want to score them.
-        // But the previous "Autoscore All" was specifically "itemsToScore = filteredData.filter(i => i.score === 0)".
-        // I will keep ONLY unrated check for now.
-        const itemsToScore = selectedItems.filter(i => i.score === 0);
+        const itemsToScore = selectedItems.filter(i => !!i.score || i.score === 0);
 
         if (itemsToScore.length === 0) {
             toast.info("No unrated items in selection.");
@@ -1311,6 +1662,59 @@ Based on the criteria above, provide a 1-5 score.`;
         });
         if (!confirmAutoscore) return;
 
+        // --- Backend job path (DB mode + backend available) ---
+        if (dataSource === VerifierDataSource.Database && backendClient.isBackendEnabled()) {
+            const sessionId = resolveActiveSessionId();
+            if (!sessionId) {
+                toast.error('No session selected. Select a specific session to run a backend autoscore job.');
+                return;
+            }
+
+            // Resolve provider / model / baseUrl / apiKey (same pattern as toolService)
+            const providerString = autoscoreConfig.provider === ProviderType.External
+                ? autoscoreConfig.externalProvider
+                : ProviderType.Gemini;
+            const effectiveModel = autoscoreConfig.model || '';
+            const effectiveBaseUrl = autoscoreConfig.customBaseUrl
+                || PROVIDERS[providerString]?.url
+                || '';
+            const apiKey = autoscoreConfig.apiKey
+                || SettingsService.getApiKey(providerString)
+                || '';
+
+            if (!apiKey) {
+                toast.error(`No API key found for provider "${providerString}". Configure it in the Auto-Score settings.`);
+                return;
+            }
+
+            try {
+                const encryptedKey = await encryptKey(apiKey);
+                const itemIds = itemsToScore.map(i => i.id);
+
+                const jobId = await backendClient.startAutoScore({
+                    sessionId,
+                    provider: providerString,
+                    model: effectiveModel,
+                    baseUrl: effectiveBaseUrl,
+                    apiKey: encryptedKey,
+                    itemIds,
+                    sleepMs: autoscoreConfig.sleepTime ?? 0,
+                    concurrency: autoscoreConfig.concurrency ?? 5,
+                    maxRetries: autoscoreConfig.maxRetries ?? 3,
+                    retryDelay: autoscoreConfig.retryDelay ?? 2000,
+                    force: false,
+                });
+
+                onJobCreated?.(jobId, 'autoscore');
+                toast.success(`Autoscore job started for ${itemsToScore.length} unrated items`);
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                toast.error(`Failed to start autoscore job: ${msg}`);
+            }
+            return;
+        }
+
+        // --- Client-side fallback (non-DB mode or no backend) ---
         setIsAutoscoring(true);
         setAutoscoreProgress({ current: 0, total: itemsToScore.length });
 
@@ -1384,12 +1788,23 @@ Based on the criteria above, provide a 1-5 score.`;
             const chunk = itemsToUpdate.slice(i, i + chunkSize);
             await Promise.all(chunk.map(async (item) => {
                 try {
-                    await FirebaseService.updateLogItem(item.id, {
-                        reasoning: item.reasoning,
-                        answer: item.answer,
-                        score: item.score,
-                        isDuplicate: item.isDuplicate
-                    });
+                    const isMultiTurnItem = Array.isArray(item.messages) && item.messages.length > 0;
+                    const updates = isMultiTurnItem
+                        ? {
+                            query: item.query,
+                            messages: item.messages,
+                            isMultiTurn: true,
+                            score: item.score,
+                            isDuplicate: item.isDuplicate
+                        }
+                        : {
+                            reasoning: item.reasoning,
+                            reasoning_content: item.reasoning_content || item.reasoning,
+                            answer: item.answer,
+                            score: item.score,
+                            isDuplicate: item.isDuplicate
+                        };
+                    await FirebaseService.updateLogItem(item.id, updates);
                     successCount++;
                 } catch (e) {
                     console.error("Update failed", item.id, e);
@@ -1460,6 +1875,40 @@ Based on the criteria above, provide a 1-5 score.`;
     const totalPages = Math.ceil(filteredData.length / pageSize);
     const startIndex = (currentPage - 1) * pageSize;
     const currentItems = filteredData.slice(startIndex, startIndex + pageSize);
+
+    const handleRefreshCurrentPage = useCallback(async () => {
+        if (!FirebaseService.isFirebaseConfigured() || currentItems.length === 0) return;
+        setIsRefreshing(true);
+        try {
+            const updated = [...data];
+            let refreshedCount = 0;
+            for (const item of currentItems) {
+                if (!item.id) continue;
+                const fresh = await FirebaseService.fetchLogItem(item.id);
+                if (fresh) {
+                    const idx = updated.findIndex(d => d.id === item.id);
+                    if (idx !== -1) {
+                        updated[idx] = normalizeImportItem(fresh);
+                        refreshedCount++;
+                    }
+                }
+            }
+            setData(updated);
+            analyzeDuplicates(updated);
+            toast.success(`Refreshed ${refreshedCount} items from database`);
+        } catch (e: any) {
+            toast.error('Refresh failed: ' + e.message);
+        } finally {
+            setIsRefreshing(false);
+        }
+    }, [analyzeDuplicates, currentItems, data, setData]);
+
+    // Auto-refresh when a backend job completes (refreshTrigger incremented by parent)
+    useEffect(() => {
+        if (refreshTrigger && refreshTrigger > 0 && dataSource === VerifierDataSource.Database) {
+            handleRefreshCurrentPage();
+        }
+    }, [refreshTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
         <div ref={verifierRootRef} className="bg-slate-950/70 rounded-xl border border-slate-800/70 p-6 h-full min-h-0 flex flex-col overflow-auto">
@@ -1666,32 +2115,44 @@ Based on the criteria above, provide a 1-5 score.`;
                                     <select
                                         value={rewriterConfig.externalProvider}
                                         onChange={e => {
-                                            const newProvider = e.target.value as ExternalProvider;
+                                            const val = e.target.value;
+                                            const nextExternalProvider = (val as ExternalProvider);
+                                            const nextKeyProvider = (val as ExternalProvider);
+                                            let settingsBaseUrl = null;
+                                            if (nextKeyProvider === ExternalProvider.Other) {
+                                                settingsBaseUrl = SettingsService.getCustomBaseUrl() || '';
+                                            } 
+                                            const nextBaseUrl = settingsBaseUrl || (PROVIDERS[val]?.url || '');
+                                            const nextApiKey = SettingsService.getApiKey(nextKeyProvider) || '';
+                                            const nextModel = SettingsService.getDefaultModel(nextKeyProvider) || rewriterConfig.model;
+                                            setRewriterBaseUrlDraft(nextBaseUrl);
                                             setRewriterConfig(prev => ({
                                                 ...prev,
-                                                externalProvider: newProvider,
-                                                model: prev.model || SettingsService.getDefaultModel(newProvider) || prev.model
+                                                provider: ProviderType.External,
+                                                externalProvider: nextExternalProvider,
+                                                apiKey: nextApiKey,
+                                                model: prev.model || nextModel,
+                                                customBaseUrl: nextBaseUrl
                                             }));
+                                            setRewriterModelRefreshTick(prev => prev + 1);
+                                            e.stopPropagation();
                                         }}
-                                        className="w-full bg-slate-950/70 border border-slate-700/70 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-sky-500"
+                                        className="w-full bg-slate-950/70 border border-slate-700/70 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
                                     >
-                                        {['gemini', ...AVAILABLE_PROVIDERS].map(p => (
-                                            <option key={p} value={p}>
-                                                {p === 'gemini' ? 'Native Gemini' : p.charAt(0).toUpperCase() + p.slice(1)}
-                                            </option>
+                                        {AVAILABLE_PROVIDERS.map(p => (
+                                            <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
                                         ))}
                                     </select>
                                 </div>
                                 <div>
                                     <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Model</label>
                                     <ModelSelector
-                                        provider={(rewriterConfig.externalProvider === 'gemini'
-                                            ? ProviderType.Gemini
-                                            : rewriterConfig.externalProvider) as ModelListProvider}
+                                        provider={(rewriterConfig.externalProvider) as ModelListProvider}
                                         value={rewriterConfig.model}
                                         onChange={(model) => setRewriterConfig(prev => ({ ...prev, model }))}
                                         apiKey={rewriterConfig.apiKey || SettingsService.getApiKey(rewriterConfig.externalProvider)}
                                         customBaseUrl={rewriterConfig.customBaseUrl}
+                                        refreshToken={rewriterModelRefreshTick}
                                         placeholder="Select or enter model"
                                         className="w-full"
                                     />
@@ -1710,9 +2171,17 @@ Based on the criteria above, provide a 1-5 score.`;
                                     <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Custom Base URL</label>
                                     <input
                                         type="text"
-                                        value={rewriterConfig.customBaseUrl || ''}
-                                        onChange={e => setRewriterConfig(prev => ({ ...prev, customBaseUrl: e.target.value }))}
-                                        placeholder="Optional"
+                                        value={rewriterBaseUrlDraft}
+                                        onChange={e => setRewriterBaseUrlDraft(e.target.value)}
+                                        onBlur={() => {
+                                            const trimmed = rewriterBaseUrlDraft.trim();
+                                            if (trimmed === (rewriterConfig.customBaseUrl || '')) {
+                                                return;
+                                            }
+                                            setRewriterConfig(prev => ({ ...prev, customBaseUrl: trimmed }));
+                                            setRewriterModelRefreshTick(prev => prev + 1);
+                                        }}
+                                        placeholder={PROVIDERS[autoscoreConfig.externalProvider]?.url || 'Optional'}
                                         className="w-full bg-slate-950/70 border border-slate-700/70 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-sky-500"
                                     />
                                 </div>
@@ -1759,6 +2228,40 @@ Based on the criteria above, provide a 1-5 score.`;
                                         />
                                     </div>
                                 </div>
+                                <div className="col-span-4 mt-2">
+                                    {(() => {
+                                        const promptSet = SettingsService.getSettings().promptSet || 'default';
+                                        const activeSchema = PromptService.getPromptSchema(PromptCategory.Verifier, PromptRole.Rewriter, promptSet);
+                                        const activePrompt = activeSchema?.prompt || '';
+                                        const displayValue = rewriterConfig.systemPrompt || activePrompt;
+                                        const isModified = !!(rewriterConfig.systemPrompt && rewriterConfig.systemPrompt !== activePrompt);
+                                        return (
+                                            <>
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">System Prompt</label>
+                                                    <span className="text-[9px] text-slate-500">
+                                                        Prompt set: <span className="text-sky-400">{promptSet}</span>
+                                                        {isModified ? ' (modified)' : ' (default)'}
+                                                    </span>
+                                                </div>
+                                                <textarea
+                                                    value={displayValue}
+                                                    onChange={e => setRewriterConfig(prev => ({ ...prev, systemPrompt: e.target.value }))}
+                                                    rows={4}
+                                                    className="w-full bg-slate-950/70 border border-slate-700/70 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-sky-500 resize-y"
+                                                />
+                                                {isModified && (
+                                                    <button
+                                                        onClick={() => setRewriterConfig(prev => ({ ...prev, systemPrompt: '' }))}
+                                                        className="text-[9px] text-slate-500 hover:text-red-400 mt-1 transition-colors"
+                                                    >
+                                                        Reset to prompt set default
+                                                    </button>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
+                                </div>
 
                             </div>
                         )}
@@ -1781,19 +2284,30 @@ Based on the criteria above, provide a 1-5 score.`;
                                 <div>
                                     <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Provider</label>
                                     <select
-                                        value={autoscoreConfig.provider === ProviderType.External ? autoscoreConfig.externalProvider : ProviderType.Gemini}
+                                        value={autoscoreConfig.externalProvider}
                                         onChange={e => {
                                             const val = e.target.value;
-                                            const isExt = val !== ProviderType.Gemini;
+                                            const nextExternalProvider = (val as ExternalProvider);
+                                            const nextKeyProvider = (val as ExternalProvider);
+                                            let settingsBaseUrl = null;
+                                            if (nextKeyProvider === ExternalProvider.Other) {
+                                                settingsBaseUrl = SettingsService.getCustomBaseUrl() || '';
+                                            } 
+                                            const nextBaseUrl = settingsBaseUrl || (PROVIDERS[val]?.url || '');
+                                            const nextApiKey = SettingsService.getApiKey(nextKeyProvider) || '';
+                                            const nextModel = SettingsService.getDefaultModel(nextKeyProvider) || autoscoreConfig.model;
                                             setAutoscoreConfig(prev => ({
                                                 ...prev,
-                                                provider: isExt ? ProviderType.External : ProviderType.Gemini,
-                                                externalProvider: isExt ? val as ExternalProvider : prev.externalProvider
+                                                provider: ProviderType.External,
+                                                externalProvider: nextExternalProvider,
+                                                apiKey: nextApiKey,
+                                                model: prev.model || nextModel,
+                                                customBaseUrl: nextBaseUrl
                                             }));
+                                            setAutoscoreModelRefreshTick(prev => prev + 1);
                                         }}
                                         className="w-full bg-slate-950/70 border border-slate-700/70 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
                                     >
-                                        <option value={ProviderType.Gemini}>Gemini</option>
                                         {AVAILABLE_PROVIDERS.map(p => (
                                             <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
                                         ))}
@@ -1802,14 +2316,44 @@ Based on the criteria above, provide a 1-5 score.`;
                                 <div>
                                     <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Model</label>
                                     <ModelSelector
-                                        provider={(autoscoreConfig.provider === ProviderType.External
-                                            ? autoscoreConfig.externalProvider
-                                            : ProviderType.Gemini) as ModelListProvider}
+                                        provider={(autoscoreConfig.externalProvider) as ModelListProvider}
                                         value={autoscoreConfig.model}
                                         onChange={(model) => setAutoscoreConfig(prev => ({ ...prev, model }))}
-                                        apiKey={autoscoreConfig.apiKey || SettingsService.getApiKey(autoscoreConfig.provider === ProviderType.External ? autoscoreConfig.externalProvider : ProviderType.Gemini)}
+                                        apiKey={autoscoreConfig.apiKey || SettingsService.getApiKey(autoscoreConfig.externalProvider)}
+                                        customBaseUrl={autoscoreConfig.customBaseUrl || SettingsService.getCustomBaseUrl()}
+                                        refreshToken={autoscoreModelRefreshTick}
                                         placeholder="Select or enter model"
                                         className="w-full"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">API Key</label>
+                                    <input
+                                        type="password"
+                                        value={autoscoreConfig.apiKey || ''}
+                                        onChange={e => setAutoscoreConfig(prev => ({ ...prev, apiKey: e.target.value }))}
+                                        placeholder={SettingsService.getApiKey(autoscoreConfig.externalProvider)
+                                            ? 'Using Global Key (Settings)'
+                                            : 'Enter API Key...'}
+                                        className="w-full bg-slate-950/70 border border-slate-700/70 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Custom Base URL</label>
+                                    <input
+                                        type="text"
+                                        value={autoscoreBaseUrlDraft}
+                                        onChange={e => setAutoscoreBaseUrlDraft(e.target.value)}
+                                        onBlur={() => {
+                                            const trimmed = autoscoreBaseUrlDraft.trim();
+                                            if (trimmed === (autoscoreConfig.customBaseUrl || '')) {
+                                                return;
+                                            }
+                                            setAutoscoreConfig(prev => ({ ...prev, customBaseUrl: trimmed }));
+                                            setAutoscoreModelRefreshTick(prev => prev + 1);
+                                        }}
+                                        placeholder={PROVIDERS[autoscoreConfig.externalProvider]?.url || 'Optional'}
+                                        className="w-full bg-slate-950/70 border border-slate-700/70 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500"
                                     />
                                 </div>
                                 <div>
@@ -2029,9 +2573,22 @@ Based on the criteria above, provide a 1-5 score.`;
                                 <button onClick={autoResolveDuplicates} className="text-xs bg-slate-900/60 hover:bg-slate-800/70 text-slate-200 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2">
                                     <RefreshCcw className="w-3.5 h-3.5" /> Auto-Resolve Dupes
                                 </button>
+                                {dataSource === VerifierDataSource.Database && (
+                                    <button
+                                        onClick={handleRefreshCurrentPage}
+                                        disabled={isRefreshing}
+                                        className="text-xs bg-slate-900/60 hover:bg-slate-800/70 text-slate-200 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+                                        title="Refresh current page from database"
+                                    >
+                                        {isRefreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5" />}
+                                        Refresh Page
+                                    </button>
+                                )}
                                 <div className="h-4 w-px bg-slate-900/60 mx-2"></div>
                                 {/* Page Size Selector */}
                                 <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="bg-slate-950/70 border border-slate-700/70 text-xs text-slate-200 rounded px-2 py-1.5 outline-none">
+                                    <option value="1">1 / page</option>
+                                    <option value="5">5 / page</option>
                                     <option value="10">10 / page</option>
                                     <option value="25">25 / page</option>
                                     <option value="50">50 / page</option>
@@ -2102,6 +2659,9 @@ Based on the criteria above, provide a 1-5 score.`;
                                                     />
                                                     <span className="text-[10px] font-mono text-slate-400 bg-slate-900/60 px-1.5 py-0.5 rounded border border-slate-700/70" title="Index in dataset (0-based)">
                                                         #{data.indexOf(item)}
+                                                    </span>
+                                                    <span className="text-[10px] font-mono text-slate-300 bg-slate-900/70 px-1.5 py-0.5 rounded border border-slate-700/70 max-w-[34rem] overflow-x-auto whitespace-nowrap" title={`Log document ID: ${item.id}`}>
+                                                        id:{item.id}
                                                     </span>
                                                     <div className="flex gap-1">
                                                         {[1, 2, 3, 4, 5].map(star => (
@@ -2216,36 +2776,42 @@ Based on the criteria above, provide a 1-5 score.`;
                                                             )}
                                                         </button>
                                                     </div>
-                                                    <div className={expandedConversations.has(item.id) ? '' : 'max-h-48 overflow-y-auto'}>
-                                                        <ConversationView
-                                                            messages={item.messages}
-                                                            onEditStart={(idx, content) => {
-                                                                setEditingField({ itemId: item.id, field: VerifierRewriteTarget.MessageAnswer, messageIndex: idx, originalValue: content });
-                                                                setEditValue(content);
-                                                            }}
-                                                            onEditSave={saveEditing}
-                                                            onEditCancel={cancelEditing}
-                                                            onEditChange={setEditValue}
-                                                            onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
-                                                            onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
-                                                            onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
-                                                            onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
-                                                            editingIndex={editingField?.itemId === item.id && editingField.field === VerifierRewriteTarget.MessageAnswer ? editingField.messageIndex : undefined}
-                                                            editValue={editValue}
-                                                            rewritingIndex={
-                                                                rewritingField?.itemId === item.id &&
-                                                                    (rewritingField.field === VerifierRewriteTarget.MessageAnswer || rewritingField.field === VerifierRewriteTarget.MessageReasoning || rewritingField.field === VerifierRewriteTarget.MessageBoth || rewritingField.field === VerifierRewriteTarget.MessageQuery)
-                                                                    ? rewritingField.messageIndex
-                                                                    : undefined
-                                                            }
-                                                            streamingContent={rewritingField?.itemId === item.id ? streamingContent : undefined}
-                                                            streamingField={
-                                                                rewritingField?.field === VerifierRewriteTarget.MessageReasoning ? StreamingField.Reasoning :
-                                                                    rewritingField?.field === VerifierRewriteTarget.MessageAnswer ? StreamingField.Answer :
-                                                                        rewritingField?.field === VerifierRewriteTarget.MessageBoth ? StreamingField.Both :
-                                                                            rewritingField?.field === VerifierRewriteTarget.MessageQuery ? StreamingField.Query : undefined
-                                                            }
-                                                        />
+                                                    <div className={expandedConversations.has(item.id) ? 'max-h-[42rem] overflow-y-auto pr-1' : 'max-h-[26rem] overflow-y-auto pr-1'}>
+                                                        {(() => {
+                                                            const rewritingByIndex: Record<number, { content: string; reasoningContent?: string; field?: StreamingField }> = {};
+                                                            Object.entries(messageRewriteStates).forEach(([key, state]) => {
+                                                                const [stateItemId, stateMessageIndex] = key.split(':');
+                                                                if (stateItemId !== item.id) return;
+                                                                const index = Number(stateMessageIndex);
+                                                                if (!Number.isFinite(index)) return;
+                                                                rewritingByIndex[index] = {
+                                                                    content: state.content,
+                                                                    reasoningContent: state.reasoningContent,
+                                                                    field: toStreamingField(state.field)
+                                                                };
+                                                            });
+                                                            return (
+                                                                <ConversationView
+                                                                    messages={item.messages}
+                                                                    onEditStart={(idx, content) => {
+                                                                        setEditingField({ itemId: item.id, field: VerifierRewriteTarget.MessageAnswer, messageIndex: idx, originalValue: content });
+                                                                        setEditValue(content);
+                                                                    }}
+                                                                    onEditSave={saveEditing}
+                                                                    onEditCancel={cancelEditing}
+                                                                    onEditChange={setEditValue}
+                                                                    onRewrite={(idx) => handleMessageRewrite(item.id, idx)}
+                                                                    onRewriteReasoning={(idx) => handleMessageReasoningRewrite(item.id, idx)}
+                                                                    onRewriteBoth={(idx) => handleMessageBothRewrite(item.id, idx)}
+                                                                    onRewriteQuery={(idx) => handleMessageQueryRewrite(item.id, idx)}
+                                                                    onCancelRewrite={(idx) => cancelMessageRewrite(item.id, idx)}
+                                                                    onDeleteFromHere={(idx) => handleDeleteMessagesFromHere(item.id, idx)}
+                                                                    editingIndex={editingField?.itemId === item.id && editingField.field === VerifierRewriteTarget.MessageAnswer ? editingField.messageIndex : undefined}
+                                                                    editValue={editValue}
+                                                                    rewritingByIndex={rewritingByIndex}
+                                                                />
+                                                            );
+                                                        })()}
                                                     </div>
                                                 </div>
                                             ) : (
@@ -2381,7 +2947,14 @@ Based on the criteria above, provide a 1-5 score.`;
                                             )}
 
                                             <div className="flex justify-between items-center text-[10px] text-slate-500 border-t border-slate-800/70 pt-2 mt-1">
-                                                <span className="truncate max-w-[150px]">{item.modelUsed}</span>
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <span className="truncate max-w-[150px]">{item.modelUsed}</span>
+                                                    {item.sessionUid && (
+                                                        <span className="bg-slate-800/60 text-slate-400 font-mono px-1.5 py-0.5 rounded border border-slate-700/50 truncate max-w-[160px]" title={`Session: ${item.sessionUid}`}>
+                                                            {item.sessionUid.slice(0, 8)}
+                                                        </span>
+                                                    )}
+                                                </div>
                                                 {item.deepMetadata && <span className="bg-sky-900/20 text-sky-400 px-1.5 py-0.5 rounded">Deep</span>}
                                             </div>
                                         </div>

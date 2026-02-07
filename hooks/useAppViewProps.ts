@@ -178,6 +178,8 @@ interface UseAppViewPropsInput {
     rewritingField?: { itemId: string; field: LogFeedRewriteTarget } | null;
     streamingContent?: string;
     onRewrite?: (itemId: string, field: LogFeedRewriteTarget) => void;
+    // Score change prop
+    onScoreChange?: (itemId: string, score: number) => void;
 }
 
 export function useAppViewProps(input: UseAppViewPropsInput) {
@@ -351,7 +353,8 @@ export function useAppViewProps(input: UseAppViewPropsInput) {
         onEditValueChange: input.onEditValueChange,
         rewritingField: input.rewritingField,
         streamingContent: input.streamingContent,
-        onRewrite: input.onRewrite
+        onRewrite: input.onRewrite,
+        onScoreChange: input.onScoreChange
     }), [input]);
 
     const verifierProps: VerifierContentProps = useMemo(() => ({

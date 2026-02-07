@@ -1,9 +1,8 @@
 import { getCachedSessions, setCachedSessions, clearSessionsCache } from '../../cache/sessionCache.js';
 
-export const registerListSessionsRoute = (app, { getDb }) => {
+export const registerListSessionsRoute = (app, { repo }) => {
     app.get('/api/sessions', async (_req, res) => {
         try {
-            const db = getDb();
             const defaultLimit = Number(process.env.SESSION_LIST_PAGE_SIZE || 50);
             const limitParam = Number(_req.query?.limit || defaultLimit);
             const cursor = _req.query?.cursor;
@@ -22,13 +21,7 @@ export const registerListSessionsRoute = (app, { getDb }) => {
                     return;
                 }
             }
-            let query = db.collection('synth_sessions').orderBy('updatedAt', 'desc');
-            if (cursor) {
-                const cursorDoc = await db.collection('synth_sessions').doc(String(cursor)).get();
-                if (cursorDoc.exists) {
-                    query = query.startAfter(cursorDoc);
-                }
-            }
+
             const pageLimit = Math.min(limitParam, 200);
             const sessions = [];
             const {
@@ -40,7 +33,7 @@ export const registerListSessionsRoute = (app, { getDb }) => {
                 engineMode = '',
                 model = ''
             } = _req.query || {};
-            
+
             const searchTerm = String(search).trim().toLowerCase();
             const modelTerm = String(model).trim().toLowerCase();
             const onlyLogs = String(onlyWithLogs) === '1';
@@ -48,22 +41,23 @@ export const registerListSessionsRoute = (app, { getDb }) => {
             const maxRowsNum = maxRows !== '' ? Number(maxRows) : null;
 
             const isFiltering = Boolean(search || onlyWithLogs || minRows !== '' || maxRows !== '' || appMode || engineMode || model);
-            let lastScannedDoc = null;
+            let currentCursor = cursor || null;
             let hasMore = false;
 
             while (sessions.length < pageLimit) {
-                const snapshot = await query.limit(pageLimit).get();
-                if (snapshot.empty) {
+                const result = await repo.listSessions({ limit: pageLimit, cursor: currentCursor });
+                const batch = result.items;
+
+                if (batch.length === 0) {
                     hasMore = false;
                     break;
                 }
-                lastScannedDoc = snapshot.docs[snapshot.docs.length - 1];
-                query = query.startAfter(lastScannedDoc);
-                const batch = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                currentCursor = result.nextCursor;
+                hasMore = result.hasMore;
 
                 if (!isFiltering) {
                     sessions.push(...batch);
-                    hasMore = snapshot.docs.length === pageLimit;
                     break;
                 }
 
@@ -84,15 +78,13 @@ export const registerListSessionsRoute = (app, { getDb }) => {
                     return true;
                 });
                 sessions.push(...filteredBatch);
-                if (snapshot.docs.length < pageLimit) {
-                    hasMore = false;
+                if (!hasMore) {
                     break;
                 }
-                hasMore = true;
             }
 
             const filtered = sessions.slice(0, pageLimit);
-            const nextCursor = lastScannedDoc ? lastScannedDoc.id : null;
+            const nextCursor = currentCursor;
             const payload = { sessions: filtered, nextCursor, hasMore };
             setCachedSessions(cacheKey, payload);
             res.json(payload);

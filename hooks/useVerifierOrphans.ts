@@ -24,6 +24,10 @@ export function useVerifierOrphans({
         if (!FirebaseService.isFirebaseConfigured()) {
             return;
         }
+        // Skip if orphan check ran recently (6h cooldown)
+        if (FirebaseService.isOrphanCheckOnCooldown()) {
+            return;
+        }
         setIsSyncing(true);
         setOrphanSyncProgress(null);
         try {

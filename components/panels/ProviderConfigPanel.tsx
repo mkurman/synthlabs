@@ -56,21 +56,6 @@ export default function ProviderConfigPanel({
 }: ProviderConfigPanelProps) {
     return (
         <div className="animate-in fade-in slide-in-from-left-2 duration-300 space-y-4">
-            <div className="bg-slate-950 p-1 rounded-lg border border-slate-800/70">
-                <select
-                    value={providerSelectValue}
-                    onChange={(e) => onProviderSelect(e.target.value)}
-                    className="w-full bg-transparent text-xs font-bold text-white outline-none px-2 py-1 cursor-pointer"
-                >
-                    <option value={ProviderTypeEnum.Gemini} className="bg-slate-950 text-sky-400 font-bold">Native Gemini</option>
-                    {externalProviders.map(ep => (
-                        <option key={ep} value={ep} className="bg-slate-950 text-slate-100">
-                            {ep === ExternalProviderEnum.Other ? 'Custom Endpoint (other)' : ep.charAt(0).toUpperCase() + ep.slice(1)}
-                        </option>
-                    ))}
-                </select>
-            </div>
-
             {provider === ProviderTypeEnum.External && (
                 <div className="space-y-1">
                     <label className="text-[10px] text-slate-400 font-bold uppercase">API Type</label>

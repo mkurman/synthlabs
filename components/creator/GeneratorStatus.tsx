@@ -21,6 +21,8 @@ interface GeneratorStatusProps {
     unsavedCount: number;
     onSyncAll?: () => void;
     showMiniDbPanel: boolean;
+    isStreamingEnabled?: boolean;
+    onStreamingChange?: (enabled: boolean) => void;
 }
 
 export default function GeneratorStatus({
@@ -39,7 +41,9 @@ export default function GeneratorStatus({
     sparklineHistory,
     unsavedCount,
     onSyncAll,
-    showMiniDbPanel
+    showMiniDbPanel,
+    isStreamingEnabled,
+    onStreamingChange
 }: GeneratorStatusProps) {
     return (
         <div className="bg-slate-950/70 border-b border-slate-800/70 p-4 space-y-4">
@@ -65,6 +69,26 @@ export default function GeneratorStatus({
                         className="h-full bg-sky-500 transition-all duration-300"
                         style={{ width: `${Math.min(100, (progress.current / Math.max(1, progress.total)) * 100)}%` }}
                     />
+                </div>
+            )}
+
+            {/* Streaming Toggle */}
+            {onStreamingChange && (
+                <div className="flex justify-end items-center">
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                        <span className="text-xs font-medium text-slate-300 group-hover:text-slate-200 transition-colors">
+                            Streaming
+                        </span>
+                        <div className="relative">
+                            <input
+                                type="checkbox"
+                                checked={isStreamingEnabled ?? true}
+                                onChange={(e) => onStreamingChange(e.target.checked)}
+                                className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-slate-800/70 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-sky-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                        </div>
+                    </label>
                 </div>
             )}
 

@@ -1,7 +1,14 @@
-import type { AutoscoreToolParams, AutoscoreToolResult, SessionListToolParams, VerifierItem } from '../types';
-import { ToolFieldName } from '../interfaces/enums';
+import type { AutoscoreConfig, AutoscoreToolParams, AutoscoreToolResult, SessionListToolParams, VerifierItem } from '../types';
+import { ToolFieldName, ProviderType, PromptCategory, PromptRole } from '../interfaces/enums';
+import { PROVIDERS } from '../constants';
 import * as FirebaseService from './firebaseService';
+import * as backendClient from './backendClient';
+import { encryptKey } from '../utils/keyEncryption';
+import { addJob as trackJobInStorage } from './jobStorageService';
+import { SettingsService } from './settingsService';
+import { PromptService } from './promptService';
 import type { SessionData } from '../interfaces';
+import type { RewriterConfig } from './verifierRewriterService';
 
 export interface ToolDefinition {
     name: string;
@@ -24,15 +31,23 @@ export interface RegisteredTool {
 export interface ToolContext {
     data: VerifierItem[];
     setData: any;
+    currentSessionUid?: string;
     autoSaveEnabled?: boolean;
     handleDbUpdate?: (item: VerifierItem) => Promise<void>;
     fetchMoreFromDb?: (start: number, end: number) => Promise<void>;
+    refreshRowsFromDb?: (startIndex: number, endIndex: number) => Promise<VerifierItem[]>;
     sessions?: SessionData[];
     refreshSessions?: () => Promise<SessionData[]>;
     renameSession?: (sessionId: string, newName: string) => Promise<void>;
     autoscoreItems?: (params: AutoscoreToolParams) => Promise<AutoscoreToolResult>;
     loadSessionById?: (sessionId: string) => Promise<void>;
     loadSessionRows?: (sessionId: string, offset: number, limit: number) => Promise<VerifierItem[]>;
+    getApiKey?: (provider: string) => string;
+    getExternalProvider?: () => string;
+    getCustomBaseUrl?: () => string;
+    getModel?: () => string;
+    getAutoscoreConfig?: () => AutoscoreConfig | null;
+    getRewriterConfig?: () => RewriterConfig | null;
 }
 
 export interface ToolRegistrationOptions {
@@ -58,31 +73,79 @@ export class ToolExecutor {
         // 1. getTotalItemsCount
         this.registerTool({
             name: 'getTotalItemsCount',
-            description: 'Get the total number of items in the current verification dataset.',
+            description: 'Get the total number of items in the current verification dataset. Requires sessionId to confirm which session you are querying.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to query. Must match the currently loaded session. Use getCurrentSessionId to get this value.'
+                    }
+                },
+                required: ['sessionId']
+            }
+        }, async ({ sessionId }: { sessionId: string }) => {
+            const { data, currentSessionUid } = this.contextProvider();
+
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+            if (!currentSessionUid) {
+                return { error: 'No session is currently loaded. Load a session first using loadSessionById.' };
+            }
+            if (sessionId !== currentSessionUid) {
+                return { error: `Session mismatch. You provided "${sessionId}" but currently loaded is "${currentSessionUid}".` };
+            }
+
+            return { sessionId, count: data.length };
+        });
+
+        // 1b. getCurrentSessionId
+        this.registerTool({
+            name: 'getCurrentSessionId',
+            description: 'Get the session ID (sessionUid) of the currently loaded/viewing session in the verifier panel. Use this to get the session ID for tools like runAutoScore, fetchSessionRows, etc.',
             parameters: {
                 type: 'object',
                 properties: {},
             }
         }, async () => {
-            const { data } = this.contextProvider();
-            return { count: data.length };
+            const { currentSessionUid } = this.contextProvider();
+            if (!currentSessionUid) {
+                return { sessionId: null, message: 'No session is currently loaded. Load a session first using loadSession.' };
+            }
+            return { sessionId: currentSessionUid };
         });
 
         // 2. getItems
         this.registerTool({
             name: 'getItems',
-            description: 'Get a list of items from the dataset. Returns partial fields by default to save tokens.',
+            description: 'Get a list of items from the dataset. Returns partial fields by default to save tokens. Requires sessionId to confirm which session you are querying.',
             parameters: {
                 type: 'object',
                 properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to query. Must match the currently loaded session. Use getCurrentSessionId to get this value.'
+                    },
                     start: { type: 'number', description: 'Start index (0-based)' },
                     end: { type: 'number', description: 'End index (exclusive)' },
                     field: { type: 'string', enum: [ToolFieldName.Query, ToolFieldName.Reasoning, ToolFieldName.Answer, ToolFieldName.All, ToolFieldName.Messages], description: 'Specific field to retrieve. Defaults to "all" if not specified.' }
                 },
-                required: ['start']
+                required: ['sessionId', 'start']
             }
-        }, async ({ start, end, field }) => {
-            const { data } = this.contextProvider();
+        }, async ({ sessionId, start, end, field }: { sessionId: string; start: number; end?: number; field?: string }) => {
+            const { data, currentSessionUid } = this.contextProvider();
+
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+            if (!currentSessionUid) {
+                return { error: 'No session is currently loaded. Load a session first using loadSessionById.' };
+            }
+            if (sessionId !== currentSessionUid) {
+                return { error: `Session mismatch. You provided "${sessionId}" but currently loaded is "${currentSessionUid}".` };
+            }
+
             const safeStart = Math.max(0, start || 0);
             const safeEnd = end ? Math.min(data.length, end) : Math.min(data.length, safeStart + 5); // Default 5 items
 
@@ -118,16 +181,31 @@ export class ToolExecutor {
         // 3. getItem
         this.registerTool({
             name: 'getItem',
-            description: 'Get a single specific item by index with full details.',
+            description: 'Get a single specific item by index with full details. Requires sessionId to confirm which session you are querying.',
             parameters: {
                 type: 'object',
                 properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to query. Must match the currently loaded session. Use getCurrentSessionId to get this value.'
+                    },
                     index: { type: 'number', description: 'Index of the item' }
                 },
-                required: ['index']
+                required: ['sessionId', 'index']
             }
-        }, async ({ index }) => {
-            const { data } = this.contextProvider();
+        }, async ({ sessionId, index }: { sessionId: string; index: number }) => {
+            const { data, currentSessionUid } = this.contextProvider();
+
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+            if (!currentSessionUid) {
+                return { error: 'No session is currently loaded. Load a session first using loadSessionById.' };
+            }
+            if (sessionId !== currentSessionUid) {
+                return { error: `Session mismatch. You provided "${sessionId}" but currently loaded is "${currentSessionUid}".` };
+            }
+
             if (index < 0 || index >= data.length) {
                 return { error: `Index ${index} out of bounds. Total items: ${data.length}` };
             }
@@ -153,18 +231,32 @@ export class ToolExecutor {
         // 4. updateItem
         this.registerTool({
             name: 'updateItem',
-            description: 'Update a specific field of an item in the local state. Updates are immediately reflected in UI.',
+            description: 'Update a specific field of an item in the local state. Updates are immediately reflected in UI. Requires sessionId to confirm which session you are modifying.',
             parameters: {
                 type: 'object',
                 properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to modify. Must match the currently loaded session. Use getCurrentSessionId to get this value.'
+                    },
                     index: { type: 'number' },
                     field: { type: 'string', enum: [ToolFieldName.Query, ToolFieldName.Reasoning, ToolFieldName.Answer] },
                     value: { type: 'string', description: 'The new value for the field' }
                 },
-                required: ['index', 'field', 'value']
+                required: ['sessionId', 'index', 'field', 'value']
             }
-        }, async ({ index, field, value }) => {
-            const { setData } = this.contextProvider();
+        }, async ({ sessionId, index, field, value }: { sessionId: string; index: number; field: string; value: string }) => {
+            const { setData, currentSessionUid } = this.contextProvider();
+
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+            if (!currentSessionUid) {
+                return { error: 'No session is currently loaded. Load a session first using loadSessionById.' };
+            }
+            if (sessionId !== currentSessionUid) {
+                return { error: `Session mismatch. You provided "${sessionId}" but currently loaded is "${currentSessionUid}".` };
+            }
 
             // We use functional update to ensure we're working with the latest state
             // even if multiple updates happen in the same render cycle
@@ -212,17 +304,42 @@ export class ToolExecutor {
         // 5. fetchRows (New Tool)
         this.registerTool({
             name: 'fetchRows',
-            description: 'Fetch more rows from the database. Use this when the current list is exhausted or you need to process more items.',
+            description: 'Fetch rows from the database. Supports two modes: (1) append mode (default) — fetches the next batch of rows after the current list, (2) fresh mode — re-fetches rows at the given indices from the database and replaces them in the UI. Use fresh mode after auto-scoring or rewriting to see updated data. Requires sessionId to confirm which session you are fetching from.',
             parameters: {
                 type: 'object',
                 properties: {
-                    start: { type: 'number', description: 'Start index' },
-                    end: { type: 'number', description: 'End index' }
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to fetch from. Must match the currently loaded session. Use getCurrentSessionId to get this value.'
+                    },
+                    start: { type: 'number', description: 'Start index (0-based)' },
+                    end: { type: 'number', description: 'End index (exclusive)' },
+                    fresh: { type: 'boolean', description: 'When true, re-fetches rows at start..end from the database and replaces them in the UI. Useful to see updated scores/rewrites.' }
                 },
-                required: ['start']
+                required: ['sessionId', 'start']
             }
-        }, async ({ start, end }) => {
-            const { fetchMoreFromDb } = this.contextProvider() as any;
+        }, async ({ sessionId, start, end, fresh }: { sessionId: string; start: number; end?: number; fresh?: boolean }) => {
+            const ctx = this.contextProvider();
+
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+            if (!ctx.currentSessionUid) {
+                return { error: 'No session is currently loaded. Load a session first using loadSessionById.' };
+            }
+            if (sessionId !== ctx.currentSessionUid) {
+                return { error: `Session mismatch. You provided "${sessionId}" but currently loaded is "${ctx.currentSessionUid}".` };
+            }
+
+            if (fresh) {
+                if (!ctx.refreshRowsFromDb) {
+                    return { error: 'Fresh row refresh not available in this context.' };
+                }
+                const effectiveEnd = end ?? (start + 1);
+                const refreshed = await ctx.refreshRowsFromDb(start, effectiveEnd);
+                return { success: true, message: `Refreshed ${refreshed.length} rows (indices ${start}–${effectiveEnd - 1}) from the database.`, count: refreshed.length };
+            }
+            const { fetchMoreFromDb } = ctx as any;
             if (fetchMoreFromDb) {
                 await fetchMoreFromDb(start, end);
                 return { success: true, message: "Fetched more rows." };
@@ -396,6 +513,8 @@ export class ToolExecutor {
                 query: item.query ? item.query : '',
                 reasoning_length: item.reasoning?.length || 0,
                 answer: item.answer ? item.answer : '',
+                // Include score fields
+                ...((item as any).score !== undefined && { score: (item as any).score }),
                 ...(item.messages && { messages: item.messages })
             }));
         });
@@ -464,17 +583,32 @@ export class ToolExecutor {
         // 14. autoscoreItems
         this.registerTool({
             name: 'autoscoreItems',
-            description: 'Set scores for a set of items by indices. Scores are applied to items locally.',
+            description: 'Set scores for a set of items by indices. Scores are applied to items locally. Requires sessionId to confirm which session you are modifying.',
             parameters: {
                 type: 'object',
                 properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to modify. Must match the currently loaded session. Use getCurrentSessionId to get this value.'
+                    },
                     indices: { type: 'array', items: { type: 'number' }, description: 'Item indices to score' },
                     scores: { type: 'array', items: { type: 'number' }, description: 'Scores corresponding to indices' }
                 },
-                required: ['indices', 'scores']
+                required: ['sessionId', 'indices', 'scores']
             }
-        }, async (params: AutoscoreToolParams = {}) => {
-            const { autoscoreItems } = this.contextProvider();
+        }, async (params: AutoscoreToolParams & { sessionId: string }) => {
+            const { autoscoreItems, currentSessionUid } = this.contextProvider();
+
+            if (!params.sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+            if (!currentSessionUid) {
+                return { error: 'No session is currently loaded. Load a session first using loadSessionById.' };
+            }
+            if (params.sessionId !== currentSessionUid) {
+                return { error: `Session mismatch. You provided "${params.sessionId}" but currently loaded is "${currentSessionUid}".` };
+            }
+
             if (!autoscoreItems) {
                 return { error: 'Autoscore not available in this context.' };
             }
@@ -484,17 +618,31 @@ export class ToolExecutor {
         // 15. updateItemsInDb
         this.registerTool({
             name: 'updateItemsInDb',
-            description: 'Persist changes for a range of items to the database (Firebase). Use this after making local updates.',
+            description: 'Persist changes for a range of items to the database (Firebase). Use this after making local updates. Requires sessionId to confirm which session you are saving.',
             parameters: {
                 type: 'object',
                 properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to save. Must match the currently loaded session. Use getCurrentSessionId to get this value.'
+                    },
                     start: { type: 'number', description: 'Start index' },
                     end: { type: 'number', description: 'End index' }
                 },
-                required: ['start']
+                required: ['sessionId', 'start']
             }
-        }, async ({ start, end }) => {
-            const { data } = this.contextProvider();
+        }, async ({ sessionId, start, end }: { sessionId: string; start: number; end?: number }) => {
+            const { data, currentSessionUid } = this.contextProvider();
+
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+            if (!currentSessionUid) {
+                return { error: 'No session is currently loaded. Load a session first using loadSessionById.' };
+            }
+            if (sessionId !== currentSessionUid) {
+                return { error: `Session mismatch. You provided "${sessionId}" but currently loaded is "${currentSessionUid}".` };
+            }
             const safeStart = Math.max(0, start || 0);
             const safeEnd = end ? Math.min(data.length, end) : safeStart + 1;
 
@@ -534,6 +682,412 @@ export class ToolExecutor {
         }, {
             requiresApproval: true,
             approvalSettingName: 'Save updates to DB'
+        });
+
+        // 16. getSessionByVerificationStatus
+        this.registerTool({
+            name: 'getSessionByVerificationStatus',
+            description: 'Get the latest or oldest session filtered by verification status (unreviewed, verified, garbage).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    status: { type: 'string', enum: ['unreviewed', 'verified', 'garbage'], description: 'Verification status to filter by' },
+                    order: { type: 'string', enum: ['latest', 'oldest'], description: 'Sort order: latest or oldest first. Defaults to latest.' }
+                },
+                required: ['status']
+            }
+        }, async ({ status, order }: { status: string; order?: string }) => {
+            const { sessions } = this.contextProvider();
+            if (!sessions || sessions.length === 0) {
+                return { error: 'Sessions list not available in this context.' };
+            }
+
+            const filtered = sessions.filter(s => {
+                const vs = (s as any).verificationStatus || 'unreviewed';
+                return vs === status;
+            });
+
+            if (filtered.length === 0) {
+                return { error: `No sessions found with status "${status}".` };
+            }
+
+            const sorted = [...filtered].sort((a, b) => {
+                const aTime = a.updatedAt || new Date(a.createdAt || 0).getTime();
+                const bTime = b.updatedAt || new Date(b.createdAt || 0).getTime();
+                return order === 'oldest' ? aTime - bTime : bTime - aTime;
+            });
+
+            const session = sorted[0];
+            return {
+                id: session.id,
+                sessionUid: session.sessionUid,
+                name: session.name,
+                rows: session.itemCount ?? session.logCount ?? 0,
+                updatedAt: session.updatedAt,
+                createdAt: session.createdAt,
+                status: session.status,
+                verificationStatus: (session as any).verificationStatus || 'unreviewed',
+                totalMatching: filtered.length
+            };
+        });
+
+        // 17. markSessionVerificationStatus (requires approval)
+        this.registerTool({
+            name: 'markSessionVerificationStatus',
+            description: 'Mark a session as verified, garbage, or unreviewed. Requires approval.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    sessionId: { type: 'string', description: 'Session ID (document ID) to update' },
+                    status: { type: 'string', enum: ['verified', 'garbage', 'unreviewed'], description: 'New verification status' }
+                },
+                required: ['sessionId', 'status']
+            }
+        }, async ({ sessionId, status }: { sessionId: string; status: string }) => {
+            await backendClient.updateSessionVerificationStatus(sessionId, status);
+            const { refreshSessions } = this.contextProvider();
+            if (refreshSessions) {
+                await refreshSessions();
+            }
+            return { success: true, message: `Session ${sessionId} marked as ${status}.` };
+        }, {
+            requiresApproval: true,
+            approvalSettingName: 'Mark session status'
+        });
+
+        // 18. runAutoScore (requires approval)
+        this.registerTool({
+            name: 'runAutoScore',
+            description: 'Start an incremental auto-scoring background job on the backend. Scores unscored items in a session using the auto-score panel settings (provider, model, API key). Returns a jobId to check progress with checkJobStatus. Requires approval. If sessionId is not provided, uses the currently loaded session.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    sessionId: { type: 'string', description: 'Session ID (sessionUid) to score. Defaults to the currently loaded session if not specified.' },
+                    limit: { type: 'number', description: 'Max items to score. Scores all unscored if not specified.' },
+                    startIndex: { type: 'number', description: 'Start from this item index (0-based). Use with endIndex to score a specific range.' },
+                    endIndex: { type: 'number', description: 'Stop at this item index (exclusive). Use with startIndex to score a specific range.' },
+                    sleepMs: { type: 'number', description: 'Delay between scoring calls in ms. Uses auto-score panel setting if not specified.' },
+                    force: { type: 'boolean', description: 'If true, re-score ALL items (including already scored). Default is false (only unscored).' }
+                }
+            }
+        }, async ({ sessionId, limit, startIndex, endIndex, sleepMs, force }: {
+            sessionId?: string; limit?: number; startIndex?: number; endIndex?: number; sleepMs?: number; force?: boolean;
+        }) => {
+            const ctx = this.contextProvider();
+            const effectiveSessionId = sessionId || ctx.currentSessionUid;
+            if (!effectiveSessionId) {
+                return { error: 'No sessionId provided and no session is currently loaded. Load a session first or provide a sessionId.' };
+            }
+            const autoscoreConfig = ctx.getAutoscoreConfig?.();
+
+            if (!autoscoreConfig) {
+                return { error: 'Auto-score configuration not available. Open the Verifier panel to configure auto-scoring settings.' };
+            }
+
+            // Resolve provider string and base URL from autoscore config
+            const providerString = autoscoreConfig.provider === ProviderType.External
+                ? autoscoreConfig.externalProvider
+                : ProviderType.Gemini;
+            const effectiveModel = autoscoreConfig.model || '';
+            const effectiveBaseUrl = autoscoreConfig.customBaseUrl
+                || PROVIDERS[providerString]?.url
+                || '';
+            const apiKey = autoscoreConfig.apiKey
+                || SettingsService.getApiKey(providerString)
+                || '';
+
+            if (!apiKey) {
+                return { error: `No API key found for provider "${providerString}". Configure it in the auto-score settings panel.` };
+            }
+            if (!effectiveModel) {
+                return { error: 'No model configured in auto-score settings.' };
+            }
+            if (!effectiveBaseUrl) {
+                return { error: 'No base URL configured for the auto-score provider.' };
+            }
+
+            const effectiveSleepMs = sleepMs ?? autoscoreConfig.sleepTime ?? 500;
+
+            // Convert startIndex/endIndex to offset/limit for the backend
+            let effectiveOffset: number | undefined;
+            let effectiveLimit: number | undefined = limit && limit > 0 ? limit : undefined;
+
+            if (typeof startIndex === 'number' && startIndex > 0) {
+                effectiveOffset = startIndex;
+            }
+            if (typeof endIndex === 'number' && endIndex > 0) {
+                const rangeLimit = endIndex - (effectiveOffset || 0);
+                if (rangeLimit > 0) {
+                    effectiveLimit = effectiveLimit ? Math.min(effectiveLimit, rangeLimit) : rangeLimit;
+                }
+            }
+
+            const encryptedKey = await encryptKey(apiKey);
+            const effectiveConcurrency = autoscoreConfig.concurrency ?? 1;
+            const effectiveMaxRetries = autoscoreConfig.maxRetries ?? 3;
+            const effectiveRetryDelay = autoscoreConfig.retryDelay ?? 2000;
+
+            const jobId = await backendClient.startAutoScore({
+                sessionId: effectiveSessionId,
+                provider: providerString,
+                model: effectiveModel,
+                baseUrl: effectiveBaseUrl,
+                apiKey: encryptedKey,
+                limit: effectiveLimit,
+                offset: effectiveOffset,
+                sleepMs: effectiveSleepMs,
+                concurrency: effectiveConcurrency,
+                maxRetries: effectiveMaxRetries,
+                retryDelay: effectiveRetryDelay,
+                force: !!force,
+            });
+            await trackJobInStorage({ id: jobId, type: 'autoscore', status: 'pending', createdAt: Date.now(), updatedAt: Date.now() });
+            return { jobId, message: `Auto-scoring job started using ${effectiveModel}. Use checkJobStatus to monitor progress.` };
+        }, {
+            requiresApproval: true,
+            approvalSettingName: 'Run auto-scoring job'
+        });
+
+        // 19. runRewrite (requires approval)
+        this.registerTool({
+            name: 'runRewrite',
+            description: 'Start an incremental rewriting background job on the backend. Rewrites selected fields (query, reasoning, answer) for items in a session. Returns a jobId to check progress with checkJobStatus. Requires approval. If sessionId is not provided, uses the currently loaded session.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    sessionId: { type: 'string', description: 'Session ID (sessionUid) to rewrite. Defaults to the currently loaded session if not specified.' },
+                    fields: { type: 'array', items: { type: 'string', enum: ['query', 'reasoning', 'answer'] }, description: 'Fields to rewrite (e.g. ["reasoning", "answer"])' },
+                    provider: { type: 'string', description: 'AI provider name. Uses current provider if not specified.' },
+                    model: { type: 'string', description: 'Model identifier. Uses current model if not specified.' },
+                    baseUrl: { type: 'string', description: 'Provider API base URL. Uses current setting if not specified.' },
+                    limit: { type: 'number', description: 'Max items to rewrite. Rewrites all if not specified.' },
+                    startIndex: { type: 'number', description: 'Skip the first N items (0-based offset). Useful to resume from where a previous job left off.' },
+                    sleepMs: { type: 'number', description: 'Delay between rewrite calls in ms (default: 500)' },
+                    systemPrompt: { type: 'string', description: 'Custom system prompt for rewriting. Uses rewriter panel prompt or default if not specified.' }
+                },
+                required: ['fields']
+            }
+        }, async ({ sessionId, fields, provider, model, baseUrl, limit, startIndex, sleepMs, systemPrompt }: {
+            sessionId?: string; fields: string[]; provider?: string; model?: string; baseUrl?: string; limit?: number; startIndex?: number; sleepMs?: number; systemPrompt?: string;
+        }) => {
+            const ctx = this.contextProvider();
+            const effectiveSessionId = sessionId || ctx.currentSessionUid;
+            if (!effectiveSessionId) {
+                return { error: 'No sessionId provided and no session is currently loaded. Load a session first or provide a sessionId.' };
+            }
+
+            // Use rewriterConfig from the Rewriter panel as source of truth
+            const rewriterConfig = ctx.getRewriterConfig?.();
+            const settings = SettingsService.getSettings();
+
+            // Resolve provider - explicit param > rewriterConfig > settings > default 'openrouter'
+            const effectiveProvider = provider
+                || (rewriterConfig?.externalProvider && String(rewriterConfig.externalProvider).trim() !== '' ? rewriterConfig.externalProvider : null)
+                || settings.defaultProvider
+                || 'openrouter';
+
+            // Resolve model
+            const effectiveModel = model
+                || (rewriterConfig?.model && rewriterConfig.model !== '' ? rewriterConfig.model : null)
+                || SettingsService.getDefaultModel(effectiveProvider)
+                || '';
+
+            // Resolve base URL
+            const effectiveBaseUrl = baseUrl
+                || (rewriterConfig?.customBaseUrl && rewriterConfig.customBaseUrl !== '' ? rewriterConfig.customBaseUrl : null)
+                || SettingsService.getProviderUrl(effectiveProvider)
+                || PROVIDERS[effectiveProvider]?.url
+                || '';
+
+            // Resolve API key - rewriterConfig > settings (only use rewriterConfig apiKey if non-empty)
+            const apiKey = (rewriterConfig?.apiKey && rewriterConfig.apiKey !== '' ? rewriterConfig.apiKey : null)
+                || SettingsService.getApiKey(effectiveProvider)
+                || '';
+
+            if (!apiKey) {
+                return { error: `No API key found for provider "${effectiveProvider}". Configure it in the Rewriter panel or Settings.` };
+            }
+            if (!effectiveModel) {
+                return { error: `No model specified and no default model configured for "${effectiveProvider}".` };
+            }
+            if (!effectiveBaseUrl) {
+                return { error: `No base URL configured for provider "${effectiveProvider}".` };
+            }
+
+            const encryptedKey = await encryptKey(apiKey);
+            const effectiveSleepMs = sleepMs ?? rewriterConfig?.delayMs ?? 500;
+            const effectiveConcurrency = rewriterConfig?.concurrency ?? 1;
+            const effectiveMaxRetries = rewriterConfig?.maxRetries ?? 3;
+            const effectiveRetryDelay = rewriterConfig?.retryDelay ?? 2000;
+
+            // Use explicit prompt > rewriterConfig prompt > undefined (use prompt set)
+            const effectiveSystemPrompt = systemPrompt
+                || (rewriterConfig?.systemPrompt && rewriterConfig.systemPrompt.trim() !== '' ? rewriterConfig.systemPrompt : undefined);
+
+            // If no single system prompt override, load unified rewriter prompt from current prompt set
+            let fieldPrompts: Record<string, string> | undefined;
+            if (!effectiveSystemPrompt) {
+                const promptSet = settings.promptSet || 'default';
+                const schema = PromptService.getPromptSchema(PromptCategory.Verifier, PromptRole.Rewriter, promptSet);
+                if (schema.prompt) {
+                    // Use the same unified prompt for all fields
+                    fieldPrompts = {};
+                    for (const field of fields) {
+                        fieldPrompts[field] = schema.prompt;
+                    }
+                }
+            }
+
+            const jobId = await backendClient.startRewrite({
+                sessionId: effectiveSessionId,
+                provider: effectiveProvider,
+                model: effectiveModel,
+                baseUrl: effectiveBaseUrl,
+                apiKey: encryptedKey,
+                fields,
+                limit,
+                offset: startIndex,
+                sleepMs: effectiveSleepMs,
+                concurrency: effectiveConcurrency,
+                maxRetries: effectiveMaxRetries,
+                retryDelay: effectiveRetryDelay,
+                systemPrompt: effectiveSystemPrompt,
+                fieldPrompts,
+            });
+            await trackJobInStorage({ id: jobId, type: 'rewrite', status: 'pending', createdAt: Date.now(), updatedAt: Date.now() });
+            return { jobId, message: `Rewrite job started for fields: ${fields.join(', ')} using ${effectiveModel}. Use checkJobStatus to monitor progress.` };
+        }, {
+            requiresApproval: true,
+            approvalSettingName: 'Run rewrite job'
+        });
+
+        // 20. checkJobStatus
+        this.registerTool({
+            name: 'checkJobStatus',
+            description: 'Check the status and progress of a background job (auto-scoring, rewriting, etc.) by its job ID.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    jobId: { type: 'string', description: 'The job ID returned by runAutoScore or runRewrite' }
+                },
+                required: ['jobId']
+            }
+        }, async ({ jobId }: { jobId: string }) => {
+            const result = await backendClient.fetchJob(jobId);
+            return result;
+        });
+
+        // 21. runRemoveItems (requires approval) - starts a background job
+        this.registerTool({
+            name: 'runRemoveItems',
+            description: 'Start a background job to remove items from a session. Can remove by specific indices OR by score threshold. Items are deleted from the database. Returns a jobId to check progress with checkJobStatus. Requires approval.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to remove items from. Use getCurrentSessionId to get this value.'
+                    },
+                    indices: {
+                        type: 'array',
+                        items: { type: 'number' },
+                        description: 'List of item indices to remove. Mutually exclusive with scoreThreshold.'
+                    },
+                    scoreThreshold: {
+                        type: 'number',
+                        description: 'Remove all items with score below this threshold (0-10 scale). Mutually exclusive with indices.'
+                    },
+                    scoreField: {
+                        type: 'string',
+                        enum: ['score'],
+                        description: 'Which score field to use when filtering by scoreThreshold. Defaults to "score".'
+                    },
+                    dryRun: {
+                        type: 'boolean',
+                        description: 'If true, only returns what would be deleted without actually removing anything. Useful for previewing the operation.'
+                    }
+                },
+                required: ['sessionId']
+            }
+        }, async ({
+            sessionId,
+            indices,
+            scoreThreshold,
+            scoreField = 'score',
+            dryRun = false
+        }: {
+            sessionId: string;
+            indices?: number[];
+            scoreThreshold?: number;
+            scoreField?: string;
+            dryRun?: boolean;
+        }) => {
+            // Validate sessionId is provided
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+
+            // Validate that exactly one of indices or scoreThreshold is provided
+            if (indices && scoreThreshold !== undefined) {
+                return { error: 'Cannot use both indices and scoreThreshold. Choose one method.' };
+            }
+            if (!indices && scoreThreshold === undefined) {
+                return { error: 'Must provide either indices or scoreThreshold.' };
+            }
+
+            try {
+                const jobId = await backendClient.startRemoveItems({
+                    sessionId,
+                    indices,
+                    scoreThreshold,
+                    scoreField,
+                    dryRun,
+                });
+                await trackJobInStorage({ id: jobId, type: 'remove-items', status: 'pending', createdAt: Date.now(), updatedAt: Date.now() });
+                return {
+                    jobId,
+                    message: dryRun
+                        ? `Dry-run job started. Use checkJobStatus to see what would be removed.`
+                        : `Remove items job started. Use checkJobStatus to monitor progress.`
+                };
+            } catch (err: any) {
+                return { error: `Failed to start remove items job: ${err.message}` };
+            }
+        }, {
+            requiresApproval: true,
+            approvalSettingName: 'Remove items from dataset'
+        });
+
+        // 22. getScoreDistribution - queries the backend for full session data
+        this.registerTool({
+            name: 'getScoreDistribution',
+            description: 'Get a summary of score distribution for ALL items in a session (queries the database directly). Useful before using runRemoveItems with scoreThreshold. Returns statistics, distribution by score ranges, and preview of how many items would be affected at various thresholds.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to analyze. Use getCurrentSessionId to get this value.'
+                    },
+                    scoreField: {
+                        type: 'string',
+                        enum: ['score'],
+                        description: 'Which score field to analyze. Defaults to "score".'
+                    }
+                },
+                required: ['sessionId']
+            }
+        }, async ({ sessionId, scoreField = 'score' }: { sessionId: string; scoreField?: string }) => {
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+
+            try {
+                const result = await backendClient.getScoreDistribution(sessionId, scoreField);
+                return result;
+            } catch (err: any) {
+                return { error: `Failed to get score distribution: ${err.message}` };
+            }
         });
     }
 

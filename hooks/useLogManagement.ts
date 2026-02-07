@@ -350,12 +350,32 @@ export function useLogManagement({ sessionUid, environment }: UseLogManagementPr
     }
   }, [visibleLogs, sessionUid, environment]);
   
-  // Update a specific log
+  // Update a specific log (in-memory + persist to local storage and backend DB)
   const updateLog = useCallback((id: string, updates: Partial<SynthLogItem>) => {
-    setVisibleLogs(prev => prev.map(log =>
-      log.id === id ? { ...log, ...updates } : log
-    ));
-  }, []);
+    setVisibleLogs(prev => {
+      const updated = prev.map(log => {
+        if (log.id !== id) return log;
+        const updatedLog = { ...log, ...updates };
+
+        // Persist to local IndexedDB
+        if (sessionUid) {
+          LogStorageService.updateLog(sessionUid, updatedLog).catch(e =>
+            console.error('[updateLog] Local storage update failed:', e)
+          );
+        }
+
+        // Persist to backend DB if saved there
+        if (environment === Environment.Production && log.savedToDb) {
+          FirebaseService.updateLogItem(id, updates).catch(e =>
+            console.error('[updateLog] Backend DB update failed:', e)
+          );
+        }
+
+        return updatedLog;
+      });
+      return updated;
+    });
+  }, [sessionUid, environment]);
 
   // Get count of unsaved items
   const getUnsavedCount = useCallback(() => {

@@ -36,7 +36,7 @@ import { useDeepConfigActions } from './hooks/useDeepConfigActions';
 import { useStreamingHandlers } from './hooks/useStreamingHandlers';
 import { useDbStats } from './hooks/useDbStats';
 import { usePromptLifecycle } from './hooks/usePromptLifecycle';
-import { useFirebaseConfigInit } from './hooks/useFirebaseConfigInit';
+
 import { useSettingsInit } from './hooks/useSettingsInit';
 import { usePromptOptimization } from './hooks/usePromptOptimization';
 import { usePauseRef } from './hooks/usePauseRef';
@@ -64,6 +64,12 @@ import { sessionLoadService, SessionSummary } from './services/sessionLoadServic
 import { useSessionManager } from './hooks/useSessionManager';
 import { useSessionAutoSave } from './hooks/useSessionAutoSave';
 import { useSessionAnalytics } from './hooks/useSessionAnalytics';
+
+// Job Monitor
+import { useJobMonitor } from './hooks/useJobMonitor';
+import JobMonitorBadge from './components/JobMonitorBadge';
+import JobMonitorPanel from './components/panels/JobMonitorPanel';
+import JobDetailModal from './components/modals/JobDetailModal';
 
 export default function App() {
     // --- State: Modes ---
@@ -545,6 +551,14 @@ export default function App() {
         }
     });
 
+    // Job Monitor — auto-refresh verifier data when jobs complete
+    const [jobCompletionCounter, setJobCompletionCounter] = useState(0);
+    const jobMonitor = useJobMonitor({
+        onJobCompleted: (_jobId, _type) => {
+            setJobCompletionCounter(prev => prev + 1);
+        }
+    });
+
     // Live session data for auto-save
     const currentFullSession = useMemo(() => {
         const config = SessionService.buildSessionConfig({
@@ -783,8 +797,6 @@ export default function App() {
         sessionUid,
         setDbStats
     });
-
-    useFirebaseConfigInit({ updateDbStats });
 
     useSparklineHistory({
         isRunning,
@@ -1190,6 +1202,11 @@ export default function App() {
 
     useSettingsInit({ refreshPrompts });
 
+    // Handle score changes in Creator mode
+    const handleScoreChange = useCallback(async (itemId: string, score: number) => {
+        await updateLog(itemId, { score });
+    }, [updateLog]);
+
     const {
         sidebarProps,
         feedProps
@@ -1370,11 +1387,22 @@ export default function App() {
                         log.answer;
                 feedRewriter.handleRewrite(itemId, field, currentValue || '');
             }
-        }
+        },
+        onScoreChange: handleScoreChange
     });
 
     return (
         <div className="h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
+            {jobMonitor.selectedJobId && (
+                <JobDetailModal
+                    job={jobMonitor.jobs.find(j => j.id === jobMonitor.selectedJobId)}
+                    onClose={() => jobMonitor.setSelectedJobId(null)}
+                    onDismiss={(id) => { jobMonitor.dismissJob(id); jobMonitor.setSelectedJobId(null); }}
+                    onStop={(id) => jobMonitor.stopJob(id)}
+                    onRerun={(id) => { jobMonitor.rerunJob(id); jobMonitor.setSelectedJobId(null); }}
+                />
+            )}
+
             <AppOverlays
                 showCloudLoadModal={showCloudLoadModal}
                 cloudSessions={cloudSessions}
@@ -1405,6 +1433,7 @@ export default function App() {
                 onSettingsClose={() => setShowSettings(false)}
                 onSettingsChanged={async () => {
                     refreshPrompts();
+                    await refreshSessionsList();
                     await refreshLogs();
                 }}
             />
@@ -1481,7 +1510,28 @@ export default function App() {
                                 onModeChange={(mode: any) => handleAppViewChange(mode)}
                                 sessionName={sessionName}
                                 onSessionNameChange={setSessionName}
-                                isDirty={environment === Environment.Production && getUnsavedCount() > 0} // Only show 'Unsaved' for cloud needing sync
+                                isDirty={environment === Environment.Production && getUnsavedCount() > 0}
+                                jobMonitorBadge={
+                                    <div className="relative">
+                                        <JobMonitorBadge
+                                            activeCount={jobMonitor.activeCount}
+                                            totalCount={jobMonitor.jobs.length}
+                                            isOpen={jobMonitor.isPanelOpen}
+                                            onClick={() => jobMonitor.setIsPanelOpen(!jobMonitor.isPanelOpen)}
+                                        />
+                                        {jobMonitor.isPanelOpen && (
+                                            <JobMonitorPanel
+                                                jobs={jobMonitor.jobs}
+                                                onJobSelect={(id) => { jobMonitor.setSelectedJobId(id); jobMonitor.setIsPanelOpen(false); }}
+                                                onDismiss={jobMonitor.dismissJob}
+                                                onStop={jobMonitor.stopJob}
+                                                onClearCompleted={jobMonitor.clearCompleted}
+                                                onRefresh={jobMonitor.refreshJobs}
+                                                onClose={() => jobMonitor.setIsPanelOpen(false)}
+                                            />
+                                        )}
+                                    </div>
+                                }
                             />
                         </div>
                         <div className="flex-1 min-h-0 relative">
@@ -1499,6 +1549,8 @@ export default function App() {
                                         chatOpen={isVerifierAssistantOpen}
                                         onChatToggle={setVerifierAssistantOpen}
                                         onSessionSelect={handleCloudSessionSelect}
+                                        onJobCreated={jobMonitor.trackJob}
+                                        refreshTrigger={jobCompletionCounter}
                                     />
                                 </div>
                             ) : (

@@ -58,7 +58,7 @@ export function useVerifierDbImport({
                 return;
             }
 
-            const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUid);
+            const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUid, true);
             if (items.length === 0) {
                 toast.info('No items found matching criteria.');
                 if (sessionUid) {
@@ -106,10 +106,12 @@ export function useVerifierDbImport({
             );
 
             const limitToFetch = (end && start) ? (end - start) : (importLimit || 100);
+            const offsetToFetch = start > 0 ? start : data.length;
 
             const newItems = await FirebaseService.fetchLogsAfter({
                 limitCount: limitToFetch,
                 sessionUid,
+                offsetCount: offsetToFetch,
                 lastDoc
             });
 

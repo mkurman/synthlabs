@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2, Loader2, ChevronDown, Edit3, Check, X, RotateCcw, Brain } from 'lucide-react';
+import { Sparkles, Zap, Clock, Terminal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, RefreshCcw, Database, AlertTriangle, AlertCircle, MessageCircle, Upload, Trash2, Loader2, ChevronDown, Edit3, Check, X, RotateCcw, Brain, Star } from 'lucide-react';
 import ReasoningHighlighter from './ReasoningHighlighter';
 import { parseThinkTagsForDisplay } from '../utils/thinkTagParser';
 import ConversationView from './ConversationView';
@@ -42,6 +42,8 @@ interface LogFeedProps {
   rewritingField?: { itemId: string; field: LogFeedRewriteTarget } | null;
   streamingContent?: string;
   onRewrite?: (itemId: string, field: LogFeedRewriteTarget) => void;
+  // Score change prop
+  onScoreChange?: (itemId: string, score: number) => void;
 }
 
 const LogFeed: React.FC<LogFeedProps> = ({
@@ -50,7 +52,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
   streamingConversations, streamingVersion, showLatestOnly = false, isLoading = false,
   displayMode = FeedDisplayMode.Default,
   editingField, editValue = '', onStartEditing, onSaveEditing, onCancelEditing, onEditValueChange,
-  rewritingField, streamingContent, onRewrite
+  rewritingField, streamingContent, onRewrite, onScoreChange
 }) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
@@ -183,6 +185,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase p-2">Query</th>
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase p-2 w-32">Model</th>
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase p-2 w-24">Time</th>
+                {onScoreChange && <th className="text-center text-[10px] font-bold text-slate-400 uppercase p-2 w-24">Score</th>}
                 <th className="text-right text-[10px] font-bold text-slate-400 uppercase p-2 w-20">Actions</th>
               </tr>
             </thead>
@@ -211,6 +214,22 @@ const LogFeed: React.FC<LogFeedProps> = ({
                           {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
                         </span>
                       </td>
+                      {onScoreChange && (
+                        <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex gap-0.5 justify-center">
+                            {[1, 2, 3, 4, 5].map(star => (
+                              <button
+                                key={star}
+                                onClick={() => onScoreChange(item.id, star)}
+                                className="focus:outline-none transition-transform active:scale-90"
+                                title={`Rate ${star} stars`}
+                              >
+                                <Star className={`w-3 h-3 ${(item.score || 0) >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      )}
                       <td className="p-2 text-right" onClick={(e) => e.stopPropagation()}>
                         {onDelete && (
                           <button
@@ -224,7 +243,7 @@ const LogFeed: React.FC<LogFeedProps> = ({
                     </tr>
                     {isExpanded && (
                       <tr className="bg-slate-950/30">
-                        <td colSpan={5} className="p-4">
+                        <td colSpan={onScoreChange ? 6 : 5} className="p-4">
                           {item.isMultiTurn && item.messages ? (
                             <div className="space-y-2 max-h-60 overflow-y-auto">
                               <h5 className="text-[10px] uppercase text-slate-400 font-bold mb-2 flex items-center gap-1">
@@ -285,13 +304,27 @@ const LogFeed: React.FC<LogFeedProps> = ({
                       {renderSafeContent(item.query)}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                     <span className="text-[9px] text-slate-400">
                       {item.modelUsed.length > 15 ? item.modelUsed.slice(0, 15) + '...' : item.modelUsed}
                     </span>
                     <span className="text-[9px] font-mono text-slate-500">
                       {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
                     </span>
+                    {onScoreChange && (
+                      <div className="flex gap-0.5">
+                        {[1, 2, 3, 4, 5].map(star => (
+                          <button
+                            key={star}
+                            onClick={() => onScoreChange(item.id, star)}
+                            className="focus:outline-none transition-transform active:scale-90"
+                            title={`Rate ${star} stars`}
+                          >
+                            <Star className={`w-3 h-3 ${(item.score || 0) >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {onDelete && (
                       <button
                         onClick={() => window.confirm("Delete?") && onDelete(item.id)}
@@ -451,6 +484,22 @@ const LogFeed: React.FC<LogFeedProps> = ({
                     })()}
                   </span>
                 </div>
+
+                {/* Score Stars */}
+                {onScoreChange && (
+                  <div className="flex gap-0.5">
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <button
+                        key={star}
+                        onClick={() => onScoreChange(item.id, star)}
+                        className="focus:outline-none transition-transform active:scale-90"
+                        title={`Rate ${star} stars`}
+                      >
+                        <Star className={`w-4 h-4 ${(item.score || 0) >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* Generation Retry */}
                 {isInvalid && onRetry && (

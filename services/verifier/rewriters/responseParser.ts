@@ -6,7 +6,20 @@ export interface RewriteResult {
 }
 
 /**
- * Helper to extract content from potentially JSON-wrapped response
+ * Strip unwanted tags from AI responses:
+ * - <think> tags: remove tag markers but KEEP inner content (it's valid text)
+ * - <tool_call> tags: remove tags AND content entirely (model artifact/garbage)
+ */
+const stripUnwantedTags = (text: string): string =>
+    text
+        .replace(/<tool_call>[\s\S]*?<\/tool_call>\s*/gi, '') // closed tool_call: remove entirely
+        .replace(/^<tool_call>[\s\S]*/gi, '') // unclosed tool_call at start: remove entirely
+        .replace(/<\/?think>\s*/gi, '') // strip think tag markers only, keep inner content
+        .trim();
+
+/**
+ * Helper to extract content from potentially JSON-wrapped response.
+ * Always strips <think> tags — reasoning_content must never contain them.
  */
 export function cleanResponse(input: any): string {
     let content = input;
@@ -29,19 +42,20 @@ export function cleanResponse(input: any): string {
             // Not valid JSON, try to extract fields robustly
             const extracted = extractJsonFields(input);
             if (extracted.answer || extracted.reasoning) {
-                return extracted.answer || extracted.reasoning || input;
+                return stripUnwantedTags(extracted.answer || extracted.reasoning || input);
             }
             // Treat as raw string
-            return input;
+            return stripUnwantedTags(input);
         }
     }
 
     // If content is an object (either returned directly or parsed)
     if (typeof content === 'object' && content !== null) {
-        return content.response || content.answer || content.content || content.text || content.reasoning || JSON.stringify(content);
+        const raw = content.response || content.answer || content.content || content.text || content.reasoning || JSON.stringify(content);
+        return stripUnwantedTags(raw);
     }
 
-    return String(content);
+    return stripUnwantedTags(String(content));
 }
 
 /**

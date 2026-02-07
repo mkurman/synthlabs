@@ -1,41 +1,53 @@
 import { useEffect, useRef } from 'react';
 
 import { ToolExecutor } from '../services/toolService';
-import type { AutoscoreToolParams, AutoscoreToolResult, VerifierItem } from '../types';
+import { SettingsService } from '../services/settingsService';
+import type { AutoscoreConfig, AutoscoreToolParams, AutoscoreToolResult, VerifierItem } from '../types';
 import type { SessionData } from '../interfaces';
+import type { RewriterConfig } from '../services/verifierRewriterService';
 
 interface UseVerifierToolExecutorOptions {
     data: VerifierItem[];
     setData: (data: VerifierItem[]) => void;
+    currentSessionUid: string;
     autoSaveEnabled: boolean;
     handleFetchMore: (start: number, end: number) => Promise<void>;
     handleDbUpdate: (item: VerifierItem) => Promise<void>;
+    refreshRowsFromDb: (startIndex: number, endIndex: number) => Promise<VerifierItem[]>;
     sessions: SessionData[];
     refreshSessions: () => Promise<SessionData[]>;
     renameSession: (sessionId: string, newName: string) => Promise<void>;
     autoscoreItems: (params: AutoscoreToolParams) => Promise<AutoscoreToolResult>;
     loadSessionById: (sessionId: string) => Promise<void>;
     loadSessionRows: (sessionId: string, offset: number, limit: number) => Promise<VerifierItem[]>;
+    autoscoreConfig: AutoscoreConfig;
+    rewriterConfig: RewriterConfig;
     toolExecutorRef: React.MutableRefObject<ToolExecutor | null>;
 }
 
 export function useVerifierToolExecutor({
     data,
     setData,
+    currentSessionUid,
     autoSaveEnabled,
     handleFetchMore,
     handleDbUpdate,
+    refreshRowsFromDb,
     sessions,
     refreshSessions,
     renameSession,
     autoscoreItems,
     loadSessionById,
     loadSessionRows,
+    autoscoreConfig,
+    rewriterConfig,
     toolExecutorRef
 }: UseVerifierToolExecutorOptions): void {
     const dataRef = useRef(data);
     const setDataRef = useRef(setData);
+    const currentSessionUidRef = useRef(currentSessionUid);
     const fetchMoreRef = useRef(handleFetchMore);
+    const refreshRowsFromDbRef = useRef(refreshRowsFromDb);
     const autoSaveEnabledRef = useRef(autoSaveEnabled);
     const handleDbUpdateRef = useRef(handleDbUpdate);
     const sessionsRef = useRef(sessions);
@@ -44,17 +56,21 @@ export function useVerifierToolExecutor({
     const autoscoreItemsRef = useRef(autoscoreItems);
     const loadSessionByIdRef = useRef(loadSessionById);
     const loadSessionRowsRef = useRef(loadSessionRows);
+    const autoscoreConfigRef = useRef(autoscoreConfig);
+    const rewriterConfigRef = useRef(rewriterConfig);
 
     useEffect(() => {
         dataRef.current = data;
         setDataRef.current = setData;
-    }, [data, setData]);
+        currentSessionUidRef.current = currentSessionUid;
+    }, [data, setData, currentSessionUid]);
 
     useEffect(() => {
         fetchMoreRef.current = handleFetchMore;
+        refreshRowsFromDbRef.current = refreshRowsFromDb;
         autoSaveEnabledRef.current = autoSaveEnabled;
         handleDbUpdateRef.current = handleDbUpdate;
-    }, [autoSaveEnabled, handleDbUpdate, handleFetchMore]);
+    }, [autoSaveEnabled, handleDbUpdate, handleFetchMore, refreshRowsFromDb]);
 
     useEffect(() => {
         sessionsRef.current = sessions;
@@ -63,13 +79,16 @@ export function useVerifierToolExecutor({
         autoscoreItemsRef.current = autoscoreItems;
         loadSessionByIdRef.current = loadSessionById;
         loadSessionRowsRef.current = loadSessionRows;
-    }, [autoscoreItems, refreshSessions, renameSession, sessions, loadSessionById, loadSessionRows]);
+        autoscoreConfigRef.current = autoscoreConfig;
+        rewriterConfigRef.current = rewriterConfig;
+    }, [autoscoreItems, refreshSessions, renameSession, sessions, loadSessionById, loadSessionRows, autoscoreConfig, rewriterConfig]);
 
     useEffect(() => {
         if (!toolExecutorRef.current) {
             toolExecutorRef.current = new ToolExecutor(() => ({
                 data: dataRef.current,
                 setData: setDataRef.current,
+                currentSessionUid: currentSessionUidRef.current,
                 autoSaveEnabled: autoSaveEnabledRef.current,
                 handleDbUpdate: handleDbUpdateRef.current,
                 fetchMoreFromDb: async (start: number, end: number) => {
@@ -77,6 +96,12 @@ export function useVerifierToolExecutor({
                         return fetchMoreRef.current(start, end);
                     }
                     throw new Error('Fetch handler not ready');
+                },
+                refreshRowsFromDb: async (startIndex: number, endIndex: number) => {
+                    if (refreshRowsFromDbRef.current) {
+                        return refreshRowsFromDbRef.current(startIndex, endIndex);
+                    }
+                    throw new Error('Refresh rows handler not ready');
                 },
                 sessions: sessionsRef.current,
                 refreshSessions: async () => {
@@ -108,7 +133,19 @@ export function useVerifierToolExecutor({
                         return loadSessionRowsRef.current(sessionId, offset, limit);
                     }
                     throw new Error('Load session rows handler not ready');
-                }
+                },
+                getApiKey: (provider: string) => SettingsService.getApiKey(provider),
+                getExternalProvider: () => SettingsService.getSettings().defaultProvider || '',
+                getCustomBaseUrl: () => {
+                    const provider = SettingsService.getSettings().defaultProvider || '';
+                    return SettingsService.getProviderUrl(provider);
+                },
+                getModel: () => {
+                    const provider = SettingsService.getSettings().defaultProvider || '';
+                    return SettingsService.getDefaultModel(provider);
+                },
+                getAutoscoreConfig: () => autoscoreConfigRef.current || null,
+                getRewriterConfig: () => rewriterConfigRef.current || null,
             }));
         }
     }, [toolExecutorRef]);

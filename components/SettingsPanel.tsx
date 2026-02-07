@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Settings, X, Key, Cloud, Trash2, Save, Eye, EyeOff, AlertTriangle, Check, Database, Cpu, FileText, ChevronDown, ChevronRight, Layers, Zap, Bot, Sliders, RefreshCw, Server, Timer, Maximize2, Minimize2, FolderOpen } from 'lucide-react';
 import { SettingsService, AVAILABLE_PROVIDERS, EMPTY_STEP_CONFIG } from '../services/settingsService';
-import { ApiType, ExternalProvider, ProviderType, EngineMode, SettingsPanelTab, ApiSubTab, BackendApplyStatus } from '../interfaces/enums';
+import { ApiType, DbProvider, ExternalProvider, ProviderType, EngineMode, SettingsPanelTab, ApiSubTab, BackendApplyStatus } from '../interfaces/enums';
 import * as backendClient from '../services/backendClient';
 import GenerationParamsInput from './GenerationParamsInput';
 import { PromptService } from '../services/promptService';
@@ -63,6 +63,27 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     const [backendUrlInput, setBackendUrlInput] = useState<string>('');
     const [serviceAccountJson, setServiceAccountJson] = useState<string | null>(null);
     const [serviceAccountFileName, setServiceAccountFileName] = useState<string | null>(null);
+    const [cockroachCaCertFileName, setCockroachCaCertFileName] = useState<string | null>(null);
+    const hasCockroachCaCert = Boolean(settings.cockroachCaCertPem && settings.cockroachCaCertPem.trim().length > 0);
+
+    // Migration state
+    const [migrationStatus, setMigrationStatus] = useState<'idle' | 'starting' | 'started' | 'error'>('idle');
+    const [migrationJobId, setMigrationJobId] = useState<string | null>(null);
+    const [migrationError, setMigrationError] = useState('');
+
+    const handleMigrateFromFirebase = async () => {
+        setMigrationStatus('starting');
+        setMigrationError('');
+        setMigrationJobId(null);
+        try {
+            const jobId = await backendClient.startMigrateFromFirebase();
+            setMigrationJobId(jobId);
+            setMigrationStatus('started');
+        } catch (err: any) {
+            setMigrationError(err?.message || 'Failed to start migration');
+            setMigrationStatus('error');
+        }
+    };
 
     // Load settings and prompt sets when panel opens
     useEffect(() => {
@@ -82,8 +103,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
     }, [isOpen]);
 
     // All providers including Gemini for unified dropdowns (Gemini first)
-    const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];
-    const allProvidersForKeys = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS.filter(p => p !== ExternalProvider.Other), ExternalProvider.Other];
+    const allProviders = [...AVAILABLE_PROVIDERS];
+    const allProvidersForKeys = [...AVAILABLE_PROVIDERS.filter(p => p !== ExternalProvider.Other), ExternalProvider.Other];
 
     const handleServiceAccountFile = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0] as (File & { path?: string }) | undefined;
@@ -114,6 +135,29 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
         reader.onerror = () => {
             setBackendApplyStatus(BackendApplyStatus.Error);
             setBackendApplyError('Failed to read service account file.');
+        };
+        reader.readAsText(file);
+    };
+
+    const handleCockroachCaCertFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const contents = typeof reader.result === 'string' ? reader.result : '';
+            if (!contents.trim()) {
+                setBackendApplyStatus(BackendApplyStatus.Error);
+                setBackendApplyError('Selected CA certificate file is empty.');
+                return;
+            }
+            updateSetting('cockroachCaCertPem', contents);
+            setCockroachCaCertFileName(file.name || 'ca.crt');
+            setBackendApplyStatus(BackendApplyStatus.Idle);
+            setBackendApplyError('');
+        };
+        reader.onerror = () => {
+            setBackendApplyStatus(BackendApplyStatus.Error);
+            setBackendApplyError('Failed to read CA certificate file.');
         };
         reader.readAsText(file);
     };
@@ -190,7 +234,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                         { id: SettingsPanelTab.Generation, label: 'Generation', icon: Sliders },
                         { id: SettingsPanelTab.Prompts, label: 'Prompts', icon: FileText },
                         { id: SettingsPanelTab.HuggingFace, label: 'HuggingFace', icon: Cloud },
-                        { id: SettingsPanelTab.Firebase, label: 'Firebase', icon: Database },
+                        { id: SettingsPanelTab.DatabaseProvider, label: 'DB Provider', icon: Server },
                         { id: SettingsPanelTab.Storage, label: 'Storage', icon: Cpu },
                     ].map(tab => (
                         <button
@@ -215,758 +259,902 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             icon={<Key className="w-3.5 h-3.5 text-sky-400" />}
                             defaultExpanded
                         >
-                        <div className="space-y-4">
-                            {/* Sub-tabs: API Keys | Default Models */}
-                            <div className="flex gap-2 p-1 bg-slate-950/60 rounded-lg border border-slate-800/70">
-                                <button
-                                    onClick={() => setApiSubTab(ApiSubTab.Keys)}
-                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Keys
-                                        ? 'bg-slate-100 text-slate-900'
-                                        : 'text-slate-300 hover:text-white hover:bg-slate-900/50'
-                                        }`}
-                                >
-                                    <Key className="w-3.5 h-3.5" />
-                                    API Keys
-                                </button>
-                                <button
-                                    onClick={() => setApiSubTab(ApiSubTab.Defaults)}
-                                    className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Defaults
-                                        ? 'bg-slate-100 text-slate-900'
-                                        : 'text-slate-300 hover:text-white hover:bg-slate-900/50'
-                                        }`}
-                                >
-                                    <Layers className="w-3.5 h-3.5" />
-                                    Default Models
-                                </button>
-                            </div>
+                            <div className="space-y-4">
+                                {/* Sub-tabs: API Keys | Default Models */}
+                                <div className="flex gap-2 p-1 bg-slate-950/60 rounded-lg border border-slate-800/70">
+                                    <button
+                                        onClick={() => setApiSubTab(ApiSubTab.Keys)}
+                                        className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Keys
+                                            ? 'bg-slate-100 text-slate-900'
+                                            : 'text-slate-300 hover:text-white hover:bg-slate-900/50'
+                                            }`}
+                                    >
+                                        <Key className="w-3.5 h-3.5" />
+                                        API Keys
+                                    </button>
+                                    <button
+                                        onClick={() => setApiSubTab(ApiSubTab.Defaults)}
+                                        className={`flex-1 py-2 px-4 rounded-md text-xs font-bold transition-colors flex items-center justify-center gap-2 ${apiSubTab === ApiSubTab.Defaults
+                                            ? 'bg-slate-100 text-slate-900'
+                                            : 'text-slate-300 hover:text-white hover:bg-slate-900/50'
+                                            }`}
+                                    >
+                                        <Layers className="w-3.5 h-3.5" />
+                                        Default Models
+                                    </button>
+                                </div>
 
-                            {/* API Keys Sub-tab */}
-                            {apiSubTab === ApiSubTab.Keys && (
-                                <div className="space-y-2">
-                                    <p className="text-xs text-slate-400">
-                                        Configure API keys. Leave empty to use .env values.
-                                    </p>
-                                    <div className="space-y-2 h-full overflow-y-auto pr-1">
-                                        {allProvidersForKeys.map(provider => {
-                                            const providerConfig = PROVIDERS[provider];
-                                            const info = providerConfig || { name: provider, description: '' };
-                                            const envVarMap: Record<string, string | undefined> = {
-                                                'gemini': import.meta.env.VITE_GEMINI_API_KEY,
-                                                'openai': import.meta.env.VITE_OPENAI_API_KEY,
-                                                'anthropic': import.meta.env.VITE_ANTHROPIC_API_KEY,
-                                                'openrouter': import.meta.env.VITE_OPENROUTER_API_KEY,
-                                                'together': import.meta.env.VITE_TOGETHER_API_KEY,
-                                                'groq': import.meta.env.VITE_GROQ_API_KEY,
-                                                'cerebras': import.meta.env.VITE_CEREBRAS_API_KEY,
-                                                'featherless': import.meta.env.VITE_FEATHERLESS_API_KEY,
-                                                'qwen': import.meta.env.VITE_QWEN_API_KEY,
-                                                'qwen-deepinfra': import.meta.env.VITE_QWEN_API_KEY,
-                                                'kimi': import.meta.env.VITE_KIMI_API_KEY,
-                                                'z.ai': import.meta.env.VITE_ZAI_API_KEY,
-                                                'chutes': import.meta.env.VITE_CHUTES_API_KEY,
-                                                'huggingface': import.meta.env.VITE_HF_TOKEN,
-                                            };
-                                            const keyValue = provider === ProviderType.Gemini
-                                                ? settings.geminiApiKey
-                                                : settings.providerKeys[provider];
-                                            const hasEnvVar = envVarMap[provider] && !keyValue;
-                                            const isCustom = provider === ExternalProvider.Other;
-                                            const isOllama = provider === ExternalProvider.Ollama;
+                                {/* API Keys Sub-tab */}
+                                {apiSubTab === ApiSubTab.Keys && (
+                                    <div className="space-y-2">
+                                        <p className="text-xs text-slate-400">
+                                            Configure API keys. Leave empty to use .env values.
+                                        </p>
+                                        <div className="space-y-2 h-full overflow-y-auto pr-1">
+                                            {allProvidersForKeys.map(provider => {
+                                                const providerConfig = PROVIDERS[provider];
+                                                const info = providerConfig || { name: provider, description: '' };
+                                                const envVarMap: Record<string, string | undefined> = {
+                                                    'gemini': import.meta.env.VITE_GEMINI_API_KEY,
+                                                    'openai': import.meta.env.VITE_OPENAI_API_KEY,
+                                                    'anthropic': import.meta.env.VITE_ANTHROPIC_API_KEY,
+                                                    'openrouter': import.meta.env.VITE_OPENROUTER_API_KEY,
+                                                    'together': import.meta.env.VITE_TOGETHER_API_KEY,
+                                                    'groq': import.meta.env.VITE_GROQ_API_KEY,
+                                                    'cerebras': import.meta.env.VITE_CEREBRAS_API_KEY,
+                                                    'featherless': import.meta.env.VITE_FEATHERLESS_API_KEY,
+                                                    'qwen': import.meta.env.VITE_QWEN_API_KEY,
+                                                    'qwen-deepinfra': import.meta.env.VITE_QWEN_API_KEY,
+                                                    'kimi': import.meta.env.VITE_KIMI_API_KEY,
+                                                    'z.ai': import.meta.env.VITE_ZAI_API_KEY,
+                                                    'chutes': import.meta.env.VITE_CHUTES_API_KEY,
+                                                    'huggingface': import.meta.env.VITE_HF_TOKEN,
+                                                };
+                                                const keyValue = settings.providerKeys[provider];
+                                                const hasEnvVar = envVarMap[provider] && !keyValue;
+                                                const isCustom = provider === ExternalProvider.Other;
+                                                const isOllama = provider === ExternalProvider.Ollama;
 
-                                            return (
-                                                <div key={provider} className={`flex flex-col gap-2 py-1.5 px-2 bg-slate-950/70 rounded border ${isOllama ? 'border-emerald-800/50' : 'border-slate-800/70'} hover:border-slate-700/70`}>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="w-28 flex-shrink-0">
-                                                            <span className="text-xs font-semibold text-slate-100">{info.name}</span>
-                                                            {hasEnvVar && (
-                                                                <span className="text-emerald-400 text-[8px] ml-1">✓</span>
+                                                return (
+                                                    <div key={provider} className={`flex flex-col gap-2 py-1.5 px-2 bg-slate-950/70 rounded border ${isOllama ? 'border-emerald-800/50' : 'border-slate-800/70'} hover:border-slate-700/70`}>
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-28 flex-shrink-0">
+                                                                <span className="text-xs font-semibold text-slate-100">{info.name}</span>
+                                                                {hasEnvVar && (
+                                                                    <span className="text-emerald-400 text-[8px] ml-1">✓</span>
+                                                                )}
+                                                                {isOllama && (
+                                                                    <span className={`text-[8px] ml-1 ${ollamaStatus === OllamaStatus.Online ? 'text-emerald-400' : ollamaStatus === OllamaStatus.Offline ? 'text-red-400' : 'text-yellow-400'}`}>
+                                                                        {ollamaStatus === OllamaStatus.Online ? '● Online' : ollamaStatus === OllamaStatus.Offline ? '● Offline' : '● ...'}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {!isOllama && (
+                                                                <div className="relative w-48 shrink-0">
+                                                                    <input
+                                                                        type={showKeys[provider] ? 'text' : 'password'}
+                                                                        value={keyValue || ''}
+                                                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => { updateProviderKey(provider, e.target.value); }}
+                                                                        placeholder={hasEnvVar ? '(env)' : 'API Key'}
+                                                                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-sky-500 outline-none pr-6"
+                                                                    />
+                                                                    <button
+                                                                        onClick={() => toggleShowKey(provider)}
+                                                                        className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                                                                    >
+                                                                        {showKeys[provider] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                                                    </button>
+                                                                </div>
                                                             )}
+                                                            {/* Ollama: Show model dropdown instead of API key */}
                                                             {isOllama && (
-                                                                <span className={`text-[8px] ml-1 ${ollamaStatus === OllamaStatus.Online ? 'text-emerald-400' : ollamaStatus === OllamaStatus.Offline ? 'text-red-400' : 'text-yellow-400'}`}>
-                                                                    {ollamaStatus === OllamaStatus.Online ? '● Online' : ollamaStatus === OllamaStatus.Offline ? '● Offline' : '● ...'}
-                                                                </span>
+                                                                <div className="flex-1 flex items-center gap-2">
+                                                                    <Server className="w-3.5 h-3.5 text-emerald-500" />
+                                                                    <span className="text-[10px] text-slate-300">No API key needed</span>
+                                                                </div>
+                                                            )}
+                                                            {/* Default Model - Show dropdown for Ollama */}
+                                                            {isOllama ? (
+                                                                <div className="flex items-center gap-1">
+                                                                    <select
+                                                                        value={settings.providerDefaultModels?.[provider] || ''}
+                                                                        onChange={(e) => updateDefaultModel(provider, e.target.value)}
+                                                                        className="w-36 bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-emerald-500 outline-none"
+                                                                        disabled={ollamaStatus !== OllamaStatus.Online || ollamaModels.length === 0}
+                                                                    >
+                                                                        <option value="">
+                                                                            {ollamaStatus === OllamaStatus.Checking ? 'Loading...' :
+                                                                                ollamaStatus === OllamaStatus.Offline ? 'Ollama offline' :
+                                                                                    ollamaModels.length === 0 ? 'No models' : 'Select model'}
+                                                                        </option>
+                                                                        {ollamaModels.map(model => (
+                                                                            <option key={model.name} value={model.name}>
+                                                                                {model.name} ({formatOllamaModelSize(model.size)})
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                    <button
+                                                                        onClick={refreshOllamaModels}
+                                                                        disabled={ollamaLoading}
+                                                                        className="p-1 text-slate-300 hover:text-emerald-400 disabled:opacity-50"
+                                                                        title="Refresh Ollama models"
+                                                                    >
+                                                                        <RefreshCw className={`w-3 h-3 ${ollamaLoading ? 'animate-spin' : ''}`} />
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <ModelSelector
+                                                                    provider={provider as ModelListProvider}
+                                                                    value={settings.providerDefaultModels?.[provider] || ''}
+                                                                    onChange={(model) => updateDefaultModel(provider, model)}
+                                                                    apiKey={settings.providerKeys?.[provider] || ''}
+                                                                    customBaseUrl={provider === ExternalProvider.Other ? settings.customEndpointUrl : undefined}
+                                                                    placeholder="Default Model"
+                                                                    className="flex-1 min-w-[220px]"
+                                                                />
                                                             )}
                                                         </div>
-                                                        {!isOllama && (
-                                                            <div className="relative w-48 shrink-0">
+                                                        {isCustom && (
+                                                            <div className="mt-2">
                                                                 <input
-                                                                    type={showKeys[provider] ? 'text' : 'password'}
-                                                                    value={keyValue || ''}
-                                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                                                        if (provider === ProviderType.Gemini) {
-                                                                            updateSetting('geminiApiKey', e.target.value);
-                                                                        } else {
-                                                                            updateProviderKey(provider, e.target.value);
-                                                                        }
-                                                                    }}
-                                                                    placeholder={hasEnvVar ? '(env)' : 'API Key'}
-                                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-sky-500 outline-none pr-6"
+                                                                    type="text"
+                                                                    value={settings.customEndpointUrl || ''}
+                                                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
+                                                                    placeholder="Base URL"
+                                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-sky-500 outline-none font-mono"
                                                                 />
-                                                                <button
-                                                                    onClick={() => toggleShowKey(provider)}
-                                                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
-                                                                >
-                                                                    {showKeys[provider] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                                                                </button>
                                                             </div>
                                                         )}
-                                                        {/* Ollama: Show model dropdown instead of API key */}
-                                                        {isOllama && (
-                                                            <div className="flex-1 flex items-center gap-2">
-                                                                <Server className="w-3.5 h-3.5 text-emerald-500" />
-                                                                <span className="text-[10px] text-slate-300">No API key needed</span>
+                                                        {/* Ollama: Show loaded models list */}
+                                                        {isOllama && ollamaStatus === OllamaStatus.Online && ollamaModels.length > 0 && (
+                                                            <div className="flex flex-wrap gap-1 pl-28">
+                                                                {ollamaModels.slice(0, 6).map(model => {
+                                                                    // Ollama model names are typically in the form "family:size" (e.g., "llama2:7b").
+                                                                    // If no colon is present, fall back to showing the full model name.
+                                                                    const displayName = model.name.includes(':')
+                                                                        ? model.name.split(':', 1)[0]
+                                                                        : model.name;
+
+                                                                    return (
+                                                                        <button
+                                                                            key={model.name}
+                                                                            onClick={() => updateDefaultModel('ollama', model.name)}
+                                                                            className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${settings.providerDefaultModels?.['ollama'] === model.name
+                                                                                ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
+                                                                                : 'bg-slate-900/60 border-slate-700/70 text-slate-300 hover:border-emerald-600 hover:text-emerald-400'
+                                                                                }`}
+                                                                        >
+                                                                            {displayName}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                                {ollamaModels.length > 6 && (
+                                                                    <span className="text-[9px] text-slate-400 px-2 py-0.5">+{ollamaModels.length - 6} more</span>
+                                                                )}
                                                             </div>
                                                         )}
-                                                        {/* Default Model - Show dropdown for Ollama */}
-                                                        {isOllama ? (
-                                                            <div className="flex items-center gap-1">
-                                                                <select
-                                                                    value={settings.providerDefaultModels?.[provider] || ''}
-                                                                    onChange={(e) => updateDefaultModel(provider, e.target.value)}
-                                                                    className="w-36 bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-emerald-500 outline-none"
-                                                                    disabled={ollamaStatus !== OllamaStatus.Online || ollamaModels.length === 0}
-                                                                >
-                                                                    <option value="">
-                                                                        {ollamaStatus === OllamaStatus.Checking ? 'Loading...' :
-                                                                            ollamaStatus === OllamaStatus.Offline ? 'Ollama offline' :
-                                                                                ollamaModels.length === 0 ? 'No models' : 'Select model'}
-                                                                    </option>
-                                                                    {ollamaModels.map(model => (
-                                                                        <option key={model.name} value={model.name}>
-                                                                            {model.name} ({formatOllamaModelSize(model.size)})
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                                <button
-                                                                    onClick={refreshOllamaModels}
-                                                                    disabled={ollamaLoading}
-                                                                    className="p-1 text-slate-300 hover:text-emerald-400 disabled:opacity-50"
-                                                                    title="Refresh Ollama models"
-                                                                >
-                                                                    <RefreshCw className={`w-3 h-3 ${ollamaLoading ? 'animate-spin' : ''}`} />
-                                                                </button>
+                                                        {isOllama && ollamaStatus === OllamaStatus.Offline && (
+                                                            <div className="text-[9px] text-red-400/80 pl-28">
+                                                                Start Ollama with: <code className="bg-slate-900/60 px-1 rounded">ollama serve</code>
                                                             </div>
-                                                        ) : (
-                                                            <ModelSelector
-                                                                provider={provider as ModelListProvider}
-                                                                value={settings.providerDefaultModels?.[provider] || ''}
-                                                                onChange={(model) => updateDefaultModel(provider, model)}
-                                                                apiKey={provider === ProviderType.Gemini
-                                                                    ? (settings.geminiApiKey || '')
-                                                                    : (settings.providerKeys?.[provider] || '')}
-                                                                customBaseUrl={provider === ExternalProvider.Other ? settings.customEndpointUrl : undefined}
-                                                                placeholder="Default Model"
-                                                                className="flex-1 min-w-[220px]"
-                                                            />
                                                         )}
                                                     </div>
-                                                    {isCustom && (
-                                                        <div className="mt-2">
-                                                            <input
-                                                                type="text"
-                                                                value={settings.customEndpointUrl || ''}
-                                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSetting('customEndpointUrl', e.target.value)}
-                                                                placeholder="Base URL"
-                                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-200 focus:border-sky-500 outline-none font-mono"
-                                                            />
-                                                        </div>
-                                                    )}
-                                                    {/* Ollama: Show loaded models list */}
-                                                    {isOllama && ollamaStatus === OllamaStatus.Online && ollamaModels.length > 0 && (
-                                                        <div className="flex flex-wrap gap-1 pl-28">
-                                                            {ollamaModels.slice(0, 6).map(model => {
-                                                                // Ollama model names are typically in the form "family:size" (e.g., "llama2:7b").
-                                                                // If no colon is present, fall back to showing the full model name.
-                                                                const displayName = model.name.includes(':')
-                                                                    ? model.name.split(':', 1)[0]
-                                                                    : model.name;
-
-                                                                return (
-                                                                    <button
-                                                                        key={model.name}
-                                                                        onClick={() => updateDefaultModel('ollama', model.name)}
-                                                                        className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${settings.providerDefaultModels?.['ollama'] === model.name
-                                                                            ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
-                                                                            : 'bg-slate-900/60 border-slate-700/70 text-slate-300 hover:border-emerald-600 hover:text-emerald-400'
-                                                                            }`}
-                                                                    >
-                                                                        {displayName}
-                                                                    </button>
-                                                                );
-                                                            })}
-                                                            {ollamaModels.length > 6 && (
-                                                                <span className="text-[9px] text-slate-400 px-2 py-0.5">+{ollamaModels.length - 6} more</span>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                    {isOllama && ollamaStatus === OllamaStatus.Offline && (
-                                                        <div className="text-[9px] text-red-400/80 pl-28">
-                                                            Start Ollama with: <code className="bg-slate-900/60 px-1 rounded">ollama serve</code>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+                                                );
+                                            })}
+                                        </div>
                                     </div>
-                                </div>
-                            )}
+                                )}
 
-                            {/* Default Models Sub-tab */}
-                            {apiSubTab === ApiSubTab.Defaults && (
-                                <div className="space-y-4">
-                                    <p className="text-xs text-slate-400">
-                                        Configure default provider and model for each workflow step.
-                                    </p>
+                                {/* Default Models Sub-tab */}
+                                {apiSubTab === ApiSubTab.Defaults && (
+                                    <div className="space-y-4">
+                                        <p className="text-xs text-slate-400">
+                                            Configure default provider and model for each workflow step.
+                                        </p>
 
-                                    {/* General Purpose Model Section */}
-                                    <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
-                                        <button
-                                            onClick={() => toggleSection('generalPurpose')}
-                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                <Bot className="w-4 h-4 text-emerald-400" />
-                                                <span className="text-sm font-bold text-white">General purpose model</span>
-                                            </div>
-                                            {expandedSections['generalPurpose'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
-                                        </button>
-                                        {expandedSections['generalPurpose'] && (
-                                            <div className="p-3 pt-0 space-y-3">
-                                                <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Default Model</label>
-                                                    <div className="flex gap-2 flex-wrap">
-                                                        <select
-                                                            value={settings.generalPurposeModel?.provider === ProviderType.External
-                                                                ? settings.generalPurposeModel?.externalProvider || ProviderType.Gemini
-                                                                : settings.generalPurposeModel?.provider || ProviderType.Gemini}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-                                                                const selectedProvider = e.target.value;
-                                                                const isExternal = selectedProvider !== ProviderType.Gemini;
-                                                                updateSetting('generalPurposeModel', {
-                                                                    ...settings.generalPurposeModel,
-                                                                    ...EMPTY_STEP_CONFIG,
-                                                                    provider: isExternal ? ProviderType.External : ProviderType.Gemini,
-                                                                    externalProvider: isExternal ? selectedProvider as ExternalProvider : ExternalProvider.Other,
-                                                                    model: settings.generalPurposeModel?.model || ''
-                                                                });
-                                                            }}
-                                                            className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                                        >
-                                                            {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
-                                                            ))}
-                                                        </select>
-                                                        {/* API Type dropdown for external providers */}
-                                                        {settings.generalPurposeModel?.provider === ProviderType.External && (
+                                        {/* General Purpose Model Section */}
+                                        <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
+                                            <button
+                                                onClick={() => toggleSection('generalPurpose')}
+                                                className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <Bot className="w-4 h-4 text-emerald-400" />
+                                                    <span className="text-sm font-bold text-white">General purpose model</span>
+                                                </div>
+                                                {expandedSections['generalPurpose'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
+                                            </button>
+                                            {expandedSections['generalPurpose'] && (
+                                                <div className="p-3 pt-0 space-y-3">
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Default Model</label>
+                                                        <div className="flex gap-2 flex-wrap">
                                                             <select
-                                                                value={settings.generalPurposeModel?.apiType || ApiType.Chat}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateSetting('generalPurposeModel', {
+                                                                value={settings.generalPurposeModel?.externalProvider}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                                                                    const selectedProvider = e.target.value;
+                                                                    updateSetting('generalPurposeModel', {
+                                                                        ...settings.generalPurposeModel,
+                                                                        ...EMPTY_STEP_CONFIG,
+                                                                        provider: ProviderType.External,
+                                                                        externalProvider: selectedProvider as ExternalProvider,
+                                                                        model: settings.generalPurposeModel?.model || ''
+                                                                    });
+                                                                }}
+                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                                            >
+                                                                {allProviders.map(p => (
+                                                                    <option key={p} value={p}>{PROVIDERS[p]?.name || p}</option>
+                                                                ))}
+                                                            </select>
+                                                            {/* API Type dropdown for external providers */}
+                                                            {settings.generalPurposeModel?.provider === ProviderType.External && (
+                                                                <select
+                                                                    value={settings.generalPurposeModel?.apiType || ApiType.Chat}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateSetting('generalPurposeModel', {
+                                                                        ...settings.generalPurposeModel,
+                                                                        ...EMPTY_STEP_CONFIG,
+                                                                        apiType: e.target.value as ApiType,
+                                                                        provider: settings.generalPurposeModel?.provider || ProviderType.External,
+                                                                        externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
+                                                                        model: settings.generalPurposeModel?.model || ''
+                                                                    })}
+                                                                    className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                                                    title="API Type: chat=completions, responses=responses API"
+                                                                >
+                                                                    <option value="chat">Chat</option>
+                                                                    <option value="responses">Responses</option>
+                                                                </select>
+                                                            )}
+                                                            <ModelSelector
+                                                                provider={settings.generalPurposeModel?.externalProvider}
+                                                                value={settings.generalPurposeModel?.model || ''}
+                                                                onChange={(model) => updateSetting('generalPurposeModel', {
                                                                     ...settings.generalPurposeModel,
                                                                     ...EMPTY_STEP_CONFIG,
-                                                                    apiType: e.target.value as ApiType,
+                                                                    model,
                                                                     provider: settings.generalPurposeModel?.provider || ProviderType.External,
-                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
-                                                                    model: settings.generalPurposeModel?.model || ''
+                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other
                                                                 })}
-                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                                                title="API Type: chat=completions, responses=responses API"
-                                                            >
-                                                                <option value="chat">Chat</option>
-                                                                <option value="responses">Responses</option>
-                                                            </select>
-                                                        )}
-                                                        <ModelSelector
-                                                                provider={(settings.generalPurposeModel?.provider === ProviderType.External
-                                                                    ? settings.generalPurposeModel?.externalProvider
-                                                                    : ProviderType.Gemini) as ModelListProvider}
-                                                            value={settings.generalPurposeModel?.model || ''}
-                                                            onChange={(model) => updateSetting('generalPurposeModel', {
-                                                                ...settings.generalPurposeModel,
-                                                                ...EMPTY_STEP_CONFIG,
-                                                                model,
-                                                                provider: settings.generalPurposeModel?.provider || ProviderType.Gemini,
-                                                                externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other
-                                                            })}
-                                                                apiKey={settings.generalPurposeModel?.provider === ProviderType.External
-                                                                    ? (settings.providerKeys?.[settings.generalPurposeModel?.externalProvider || ''] || '')
-                                                                    : (settings.geminiApiKey || '')}
+                                                                apiKey={settings.providerKeys?.[settings.generalPurposeModel?.externalProvider || '']}
                                                                 customBaseUrl={settings.generalPurposeModel?.externalProvider === ExternalProvider.Other
                                                                     ? settings.customEndpointUrl
                                                                     : undefined}
-                                                            placeholder="Model ID"
-                                                            className="flex-1 min-w-[120px]"
-                                                        />
+                                                                placeholder="Model ID"
+                                                                className="flex-1 min-w-[120px]"
+                                                            />
+                                                        </div>
+                                                        <p className="text-[10px] text-slate-400">Used for general tasks that don't require specialized prompts (e.g., optimization)</p>
+                                                        <div className="mt-2">
+                                                            <GenerationParamsInput
+                                                                params={settings.generalPurposeModel?.generationParams}
+                                                                onChange={(newParams) => {
+                                                                    updateSetting('generalPurposeModel', {
+                                                                        ...settings.generalPurposeModel,
+                                                                        ...EMPTY_STEP_CONFIG,
+                                                                        generationParams: newParams,
+                                                                        provider: settings.generalPurposeModel?.provider || ProviderType.External,
+                                                                        externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
+                                                                        model: settings.generalPurposeModel?.model || ''
+                                                                    });
+                                                                }}
+                                                            />
+                                                        </div>
                                                     </div>
-                                                    <p className="text-[10px] text-slate-400">Used for general tasks that don't require specialized prompts (e.g., optimization)</p>
-                                                    <div className="mt-2">
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Generator Section */}
+                                        <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
+                                            <button
+                                                onClick={() => toggleSection('generator')}
+                                                className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <Zap className="w-4 h-4 text-amber-400" />
+                                                    <span className="text-sm font-bold text-white">Generator</span>
+                                                </div>
+                                                {expandedSections['generator'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
+                                            </button>
+                                            {expandedSections['generator'] && (
+                                                <div className="p-3 pt-0 space-y-3">
+                                                    {/* Regular Mode */}
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Regular Mode</label>
+                                                        <div className="flex gap-2 flex-wrap">
+                                                            <select
+                                                                value={settings.workflowDefaults?.generator.regular.provider}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'provider', e.target.value)}
+                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                                            >
+                                                                {allProviders.map(p => (
+                                                                    <option key={p} value={p}>{PROVIDERS[p]?.name || p}</option>
+                                                                ))}
+                                                            </select>
+                                                            {/* API Type dropdown for external providers */}
+                                                            {settings.workflowDefaults?.generator.regular.provider === ProviderType.External && (
+                                                                <select
+                                                                    value={settings.workflowDefaults?.generator.regular.apiType || ApiType.Chat}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'apiType', e.target.value)}
+                                                                    className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                                                    title="API Type: chat=completions, responses=responses API"
+                                                                >
+                                                                    <option value="chat">Chat</option>
+                                                                    <option value="responses">Responses</option>
+                                                                </select>
+                                                            )}
+                                                            <ModelSelector
+                                                                provider={(settings.workflowDefaults?.generator.regular.externalProvider) as ModelListProvider}
+                                                                value={settings.workflowDefaults?.generator.regular.model || ''}
+                                                                onChange={(model) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'model', model)}
+                                                                apiKey={settings.providerKeys?.[settings.workflowDefaults?.generator.regular.externalProvider || '']}
+                                                                customBaseUrl={settings.workflowDefaults?.generator.regular.externalProvider === ExternalProvider.Other
+                                                                    ? settings.customEndpointUrl
+                                                                    : undefined}
+                                                                placeholder="Model ID"
+                                                                className="flex-1 min-w-[120px]"
+                                                            />
+                                                        </div>
                                                         <GenerationParamsInput
-                                                            params={settings.generalPurposeModel?.generationParams}
-                                                            onChange={(newParams) => {
-                                                                updateSetting('generalPurposeModel', {
-                                                                    ...settings.generalPurposeModel,
-                                                                    ...EMPTY_STEP_CONFIG,
-                                                                    generationParams: newParams,
-                                                                    provider: settings.generalPurposeModel?.provider || ProviderType.Gemini,
-                                                                    externalProvider: settings.generalPurposeModel?.externalProvider || ExternalProvider.Other,
-                                                                    model: settings.generalPurposeModel?.model || ''
-                                                                });
-                                                            }}
+                                                            params={settings.workflowDefaults?.generator.regular.generationParams}
+                                                            onChange={(newParams) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'generationParams', newParams)}
                                                         />
                                                     </div>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
 
-                                    {/* Generator Section */}
-                                    <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
-                                        <button
-                                            onClick={() => toggleSection('generator')}
-                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                <Zap className="w-4 h-4 text-amber-400" />
-                                                <span className="text-sm font-bold text-white">Generator</span>
-                                            </div>
-                                            {expandedSections['generator'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
-                                        </button>
-                                        {expandedSections['generator'] && (
-                                            <div className="p-3 pt-0 space-y-3">
-                                                {/* Regular Mode */}
-                                                <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Regular Mode</label>
-                                                    <div className="flex gap-2 flex-wrap">
-                                                        <select
-                                                            value={settings.workflowDefaults?.generator.regular.provider || ProviderType.Gemini}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'provider', e.target.value)}
-                                                            className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                                        >
-                                                            {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
-                                                            ))}
-                                                        </select>
-                                                        {/* API Type dropdown for external providers */}
-                                                        {settings.workflowDefaults?.generator.regular.provider === ProviderType.External && (
-                                                            <select
-                                                                value={settings.workflowDefaults?.generator.regular.apiType || ApiType.Chat}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'apiType', e.target.value)}
-                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                                                title="API Type: chat=completions, responses=responses API"
-                                                            >
-                                                                <option value="chat">Chat</option>
-                                                                <option value="responses">Responses</option>
-                                                            </select>
-                                                        )}
-                                                        <ModelSelector
-                                                            provider={(settings.workflowDefaults?.generator.regular.provider === ProviderType.External
-                                                                ? settings.workflowDefaults?.generator.regular.externalProvider
-                                                                : ProviderType.Gemini) as ModelListProvider}
-                                                            value={settings.workflowDefaults?.generator.regular.model || ''}
-                                                            onChange={(model) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'model', model)}
-                                                            apiKey={settings.workflowDefaults?.generator.regular.provider === ProviderType.External
-                                                                ? (settings.providerKeys?.[settings.workflowDefaults?.generator.regular.externalProvider || ''] || '')
-                                                                : (settings.geminiApiKey || '')}
-                                                            customBaseUrl={settings.workflowDefaults?.generator.regular.externalProvider === ExternalProvider.Other
-                                                                ? settings.customEndpointUrl
-                                                                : undefined}
-                                                            placeholder="Model ID"
-                                                            className="flex-1 min-w-[120px]"
-                                                        />
-                                                    </div>
-                                                    <GenerationParamsInput
-                                                        params={settings.workflowDefaults?.generator.regular.generationParams}
-                                                        onChange={(newParams) => updateWorkflowDefault('generator', EngineMode.Regular, null, 'generationParams', newParams)}
-                                                    />
-                                                </div>
-
-                                                {/* Deep Mode Steps */}
-                                                <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Deep Mode Steps</label>
-                                                    {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
-                                                        <div key={step} className="space-y-2 p-2 bg-slate-950/60 rounded border border-slate-800/70">
-                                                            <div className="flex items-center gap-2 flex-wrap">
-                                                                <span className="w-20 text-[10px] text-slate-400 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
-                                                                <select
-                                                                    value={settings.workflowDefaults?.generator.deep[step]?.provider || ProviderType.Gemini}
-                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'provider', e.target.value)}
-                                                                    className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
-                                                                >
-                                                                    {allProviders.map(p => (
-                                                                        <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
-                                                                    ))}
-                                                                </select>
-                                                                {/* API Type dropdown for external providers */}
-                                                                {settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External && (
+                                                    {/* Deep Mode Steps */}
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Deep Mode Steps</label>
+                                                        {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
+                                                            <div key={step} className="space-y-2 p-2 bg-slate-950/60 rounded border border-slate-800/70">
+                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                    <span className="w-20 text-[10px] text-slate-400 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
                                                                     <select
-                                                                        value={settings.workflowDefaults?.generator.deep[step]?.apiType || ApiType.Chat}
-                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'apiType', e.target.value)}
+                                                                        value={settings.workflowDefaults?.generator.deep[step]?.provider}
+                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'provider', e.target.value)}
                                                                         className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
-                                                                        title="API Type: chat=completions, responses=responses API"
                                                                     >
-                                                                        <option value="chat">Chat</option>
-                                                                        <option value="responses">Responses</option>
+                                                                        {allProviders.map(p => (
+                                                                            <option key={p} value={p}>{PROVIDERS[p]?.name || p}</option>
+                                                                        ))}
                                                                     </select>
-                                                                )}
-                                                                <ModelSelector
-                                                                    provider={(settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External
-                                                                        ? settings.workflowDefaults?.generator.deep[step]?.externalProvider
-                                                                        : ProviderType.Gemini) as ModelListProvider}
-                                                                    value={settings.workflowDefaults?.generator.deep[step]?.model || ''}
-                                                                    onChange={(model) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'model', model)}
-                                                                    apiKey={settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External
-                                                                        ? (settings.providerKeys?.[settings.workflowDefaults?.generator.deep[step]?.externalProvider || ''] || '')
-                                                                        : (settings.geminiApiKey || '')}
-                                                                    customBaseUrl={settings.workflowDefaults?.generator.deep[step]?.externalProvider === ExternalProvider.Other
-                                                                        ? settings.customEndpointUrl
-                                                                        : undefined}
-                                                                    placeholder="Model"
-                                                                    className="flex-1 min-w-[100px]"
+                                                                    {/* API Type dropdown for external providers */}
+                                                                    {settings.workflowDefaults?.generator.deep[step]?.provider === ProviderType.External && (
+                                                                        <select
+                                                                            value={settings.workflowDefaults?.generator.deep[step]?.apiType || ApiType.Chat}
+                                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'apiType', e.target.value)}
+                                                                            className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
+                                                                            title="API Type: chat=completions, responses=responses API"
+                                                                        >
+                                                                            <option value="chat">Chat</option>
+                                                                            <option value="responses">Responses</option>
+                                                                        </select>
+                                                                    )}
+                                                                    <ModelSelector
+                                                                        provider={(settings.workflowDefaults?.generator.deep[step]?.externalProvider) as ModelListProvider}
+                                                                        value={settings.workflowDefaults?.generator.deep[step]?.model || ''}
+                                                                        onChange={(model) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'model', model)}
+                                                                        apiKey={(settings.providerKeys?.[settings.workflowDefaults?.generator.deep[step]?.externalProvider || ''] || '')}
+                                                                        customBaseUrl={settings.workflowDefaults?.generator.deep[step]?.externalProvider === ExternalProvider.Other
+                                                                            ? settings.customEndpointUrl
+                                                                            : undefined}
+                                                                        placeholder="Model"
+                                                                        className="flex-1 min-w-[100px]"
+                                                                    />
+                                                                </div>
+                                                                <GenerationParamsInput
+                                                                    params={settings.workflowDefaults?.generator.deep[step]?.generationParams}
+                                                                    onChange={(newParams) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'generationParams', newParams)}
+                                                                    label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
                                                                 />
                                                             </div>
-                                                            <GenerationParamsInput
-                                                                params={settings.workflowDefaults?.generator.deep[step]?.generationParams}
-                                                                onChange={(newParams) => updateWorkflowDefault('generator', EngineMode.Deep, step, 'generationParams', newParams)}
-                                                                label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Converter Section */}
+                                        <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
+                                            <button
+                                                onClick={() => toggleSection('converter')}
+                                                className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <Zap className="w-4 h-4 text-cyan-400" />
+                                                    <span className="text-sm font-bold text-white">Converter</span>
+                                                </div>
+                                                {expandedSections['converter'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
+                                            </button>
+                                            {expandedSections['converter'] && (
+                                                <div className="p-3 pt-0 space-y-3">
+                                                    {/* Regular Mode */}
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Regular Mode</label>
+                                                        <div className="flex gap-2 flex-wrap">
+                                                            <select
+                                                                value={settings.workflowDefaults?.converter.regular.provider}
+                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'provider', e.target.value)}
+                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                                            >
+                                                                {allProviders.map(p => (
+                                                                    <option key={p} value={p}>{PROVIDERS[p]?.name || p}</option>
+                                                                ))}
+                                                            </select>
+                                                            {/* API Type dropdown for external providers */}
+                                                            {settings.workflowDefaults?.converter.regular.provider === ProviderType.External && (
+                                                                <select
+                                                                    value={settings.workflowDefaults?.converter.regular.apiType || ApiType.Chat}
+                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'apiType', e.target.value)}
+                                                                    className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                                                    title="API Type: chat=completions, responses=responses API"
+                                                                >
+                                                                    <option value="chat">Chat</option>
+                                                                    <option value="responses">Responses</option>
+                                                                </select>
+                                                            )}
+                                                            <ModelSelector
+                                                                provider={(settings.workflowDefaults?.converter.regular.externalProvider) as ModelListProvider}
+                                                                value={settings.workflowDefaults?.converter.regular.model || ''}
+                                                                onChange={(model) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'model', model)}
+                                                                apiKey={(settings.providerKeys?.[settings.workflowDefaults?.converter.regular.externalProvider || ''] || '')}
+                                                                customBaseUrl={settings.workflowDefaults?.converter.regular.externalProvider === ExternalProvider.Other
+                                                                    ? settings.customEndpointUrl
+                                                                    : undefined}
+                                                                placeholder="Model ID"
+                                                                className="flex-1 min-w-[120px]"
                                                             />
                                                         </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* Converter Section */}
-                                    <div className="bg-slate-950/70 rounded-lg border border-slate-800/70">
-                                        <button
-                                            onClick={() => toggleSection('converter')}
-                                            className="w-full flex items-center justify-between p-3 hover:bg-slate-900/60 rounded-t-lg"
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                <Zap className="w-4 h-4 text-cyan-400" />
-                                                <span className="text-sm font-bold text-white">Converter</span>
-                                            </div>
-                                            {expandedSections['converter'] ? <ChevronDown className="w-4 h-4 text-slate-300" /> : <ChevronRight className="w-4 h-4 text-slate-300" />}
-                                        </button>
-                                        {expandedSections['converter'] && (
-                                            <div className="p-3 pt-0 space-y-3">
-                                                {/* Regular Mode */}
-                                                <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Regular Mode</label>
-                                                    <div className="flex gap-2 flex-wrap">
-                                                        <select
-                                                            value={settings.workflowDefaults?.converter.regular.provider || ProviderType.Gemini}
-                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'provider', e.target.value)}
-                                                            className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                                        >
-                                                            {allProviders.map(p => (
-                                                                <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
-                                                            ))}
-                                                        </select>
-                                                        {/* API Type dropdown for external providers */}
-                                                        {settings.workflowDefaults?.converter.regular.provider === ProviderType.External && (
-                                                            <select
-                                                                value={settings.workflowDefaults?.converter.regular.apiType || ApiType.Chat}
-                                                                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'apiType', e.target.value)}
-                                                                className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                                                title="API Type: chat=completions, responses=responses API"
-                                                            >
-                                                                <option value="chat">Chat</option>
-                                                                <option value="responses">Responses</option>
-                                                            </select>
-                                                        )}
-                                                        <ModelSelector
-                                                            provider={(settings.workflowDefaults?.converter.regular.provider === ProviderType.External
-                                                                ? settings.workflowDefaults?.converter.regular.externalProvider
-                                                                : ProviderType.Gemini) as ModelListProvider}
-                                                            value={settings.workflowDefaults?.converter.regular.model || ''}
-                                                            onChange={(model) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'model', model)}
-                                                            apiKey={settings.workflowDefaults?.converter.regular.provider === ProviderType.External
-                                                                ? (settings.providerKeys?.[settings.workflowDefaults?.converter.regular.externalProvider || ''] || '')
-                                                                : (settings.geminiApiKey || '')}
-                                                            customBaseUrl={settings.workflowDefaults?.converter.regular.externalProvider === ExternalProvider.Other
-                                                                ? settings.customEndpointUrl
-                                                                : undefined}
-                                                            placeholder="Model ID"
-                                                            className="flex-1 min-w-[120px]"
+                                                        <GenerationParamsInput
+                                                            params={settings.workflowDefaults?.converter.regular.generationParams}
+                                                            onChange={(newParams) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'generationParams', newParams)}
                                                         />
                                                     </div>
-                                                    <GenerationParamsInput
-                                                        params={settings.workflowDefaults?.converter.regular.generationParams}
-                                                        onChange={(newParams) => updateWorkflowDefault('converter', EngineMode.Regular, null, 'generationParams', newParams)}
-                                                    />
-                                                </div>
 
-                                                {/* Deep Mode Steps */}
-                                                <div className="space-y-2">
-                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Deep Mode Steps</label>
-                                                    {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
-                                                        <div key={step} className="space-y-2 p-2 bg-slate-950/60 rounded border border-slate-800/70">
-                                                            <div className="flex items-center gap-2 flex-wrap">
-                                                                <span className="w-20 text-[10px] text-slate-400 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
-                                                                <select
-                                                                    value={settings.workflowDefaults?.converter.deep[step]?.provider || ProviderType.Gemini}
-                                                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'provider', e.target.value)}
-                                                                    className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
-                                                                >
-                                                                    {allProviders.map(p => (
-                                                                        <option key={p} value={p}>{p === ProviderType.Gemini ? 'Gemini' : (PROVIDERS[p]?.name || p)}</option>
-                                                                    ))}
-                                                                </select>
-                                                                {/* API Type dropdown for external providers */}
-                                                                {settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External && (
+                                                    {/* Deep Mode Steps */}
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Deep Mode Steps</label>
+                                                        {(['meta', 'retrieval', 'derivation', 'writer', 'rewriter', 'userAgent'] as const).map(step => (
+                                                            <div key={step} className="space-y-2 p-2 bg-slate-950/60 rounded border border-slate-800/70">
+                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                    <span className="w-20 text-[10px] text-slate-400 capitalize">{step === 'userAgent' ? 'User Agent' : step}</span>
                                                                     <select
-                                                                        value={settings.workflowDefaults?.converter.deep[step]?.apiType || ApiType.Chat}
-                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'apiType', e.target.value)}
+                                                                        value={settings.workflowDefaults?.converter.deep[step]?.provider}
+                                                                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'provider', e.target.value)}
                                                                         className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
-                                                                        title="API Type: chat=completions, responses=responses API"
                                                                     >
-                                                                        <option value="chat">Chat</option>
-                                                                        <option value="responses">Responses</option>
+                                                                        {allProviders.map(p => (
+                                                                            <option key={p} value={p}>{PROVIDERS[p]?.name || p}</option>
+                                                                        ))}
                                                                     </select>
-                                                                )}
-                                                                <ModelSelector
-                                                                    provider={(settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External
-                                                                        ? settings.workflowDefaults?.converter.deep[step]?.externalProvider
-                                                                        : ProviderType.Gemini) as ModelListProvider}
-                                                                    value={settings.workflowDefaults?.converter.deep[step]?.model || ''}
-                                                                    onChange={(model) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'model', model)}
-                                                                    apiKey={settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External
-                                                                        ? (settings.providerKeys?.[settings.workflowDefaults?.converter.deep[step]?.externalProvider || ''] || '')
-                                                                        : (settings.geminiApiKey || '')}
-                                                                    customBaseUrl={settings.workflowDefaults?.converter.deep[step]?.externalProvider === ExternalProvider.Other
-                                                                        ? settings.customEndpointUrl
-                                                                        : undefined}
-                                                                    placeholder="Model"
-                                                                    className="flex-1 min-w-[100px]"
+                                                                    {/* API Type dropdown for external providers */}
+                                                                    {settings.workflowDefaults?.converter.deep[step]?.provider === ProviderType.External && (
+                                                                        <select
+                                                                            value={settings.workflowDefaults?.converter.deep[step]?.apiType || ApiType.Chat}
+                                                                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'apiType', e.target.value)}
+                                                                            className="bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-[10px] text-slate-100 focus:border-sky-500 outline-none"
+                                                                            title="API Type: chat=completions, responses=responses API"
+                                                                        >
+                                                                            <option value="chat">Chat</option>
+                                                                            <option value="responses">Responses</option>
+                                                                        </select>
+                                                                    )}
+                                                                    <ModelSelector
+                                                                        provider={(settings.workflowDefaults?.converter.deep[step]?.externalProvider) as ModelListProvider}
+                                                                        value={settings.workflowDefaults?.converter.deep[step]?.model || ''}
+                                                                        onChange={(model) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'model', model)}
+                                                                        apiKey={settings.providerKeys?.[settings.workflowDefaults?.converter.deep[step]?.externalProvider || '']}
+                                                                        customBaseUrl={settings.workflowDefaults?.converter.deep[step]?.externalProvider === ExternalProvider.Other
+                                                                            ? settings.customEndpointUrl
+                                                                            : undefined}
+                                                                        placeholder="Model"
+                                                                        className="flex-1 min-w-[100px]"
+                                                                    />
+                                                                </div>
+                                                                <GenerationParamsInput
+                                                                    params={settings.workflowDefaults?.converter.deep[step]?.generationParams}
+                                                                    onChange={(newParams) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'generationParams', newParams)}
+                                                                    label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
                                                                 />
                                                             </div>
-                                                            <GenerationParamsInput
-                                                                params={settings.workflowDefaults?.converter.deep[step]?.generationParams}
-                                                                onChange={(newParams) => updateWorkflowDefault('converter', EngineMode.Deep, step, 'generationParams', newParams)}
-                                                                label={`${step === 'userAgent' ? 'User Agent' : step} Parameters`}
-                                                            />
-                                                        </div>
-                                                    ))}
+                                                        ))}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        )}
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
-                            )}
-                        </div>
+                                )}
+                            </div>
                         </CollapsibleSection>
                     )}
 
                     {activeTab === SettingsPanelTab.Generation && (
-                        <CollapsibleSection
-                            title="Generation Defaults"
-                            icon={<Sliders className="w-3.5 h-3.5 text-sky-400" />}
-                            summary="Timeouts and default params"
-                            defaultExpanded={false}
-                        >
-                        <div className="space-y-6">
-                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
-                                <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
-                                    <Timer className="w-4 h-4 text-sky-400" />
-                                    Generation Timeout
-                                </h3>
-                                <p className="text-xs text-slate-400 mb-3">
-                                    Stop streaming if a response does not arrive within this window.
-                                </p>
-                                <div className="flex items-center gap-3">
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        step="1"
-                                        value={settings.generationTimeoutSeconds ?? 300}
-                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                                            const nextValue = e.target.value ? Math.max(1, parseInt(e.target.value)) : 300;
-                                            updateSetting('generationTimeoutSeconds', nextValue);
-                                        }}
-                                        className="w-28 bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                    />
-                                    <span className="text-xs text-slate-400">seconds</span>
+                        <>
+                            <CollapsibleSection
+                                title="Generation Defaults"
+                                icon={<Sliders className="w-3.5 h-3.5 text-sky-400" />}
+                                summary="Timeouts and default params"
+                                defaultExpanded={true}
+                            >
+                                <div className="space-y-6">
+                                    <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                        <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                                            <Timer className="w-4 h-4 text-sky-400" />
+                                            Generation Timeout
+                                        </h3>
+                                        <p className="text-xs text-slate-400 mb-3">
+                                            Stop streaming if a response does not arrive within this window.
+                                        </p>
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                step="1"
+                                                value={settings.generationTimeoutSeconds ?? 300}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                                    const nextValue = e.target.value ? Math.max(1, parseInt(e.target.value)) : 300;
+                                                    updateSetting('generationTimeoutSeconds', nextValue);
+                                                }}
+                                                className="w-28 bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                            />
+                                            <span className="text-xs text-slate-400">seconds</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                        <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                            <Sliders className="w-4 h-4 text-blue-400" />
+                                            Default Generation Parameters
+                                        </h3>
+                                        <p className="text-xs text-slate-400 mb-4">
+                                            Configure default parameters for LLM generation. These can be overridden per-request in the chat interface.
+                                        </p>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                                <label htmlFor="temperature" className="text-[10px] text-slate-300 font-bold uppercase">
+                                                    Temperature: {((settings.defaultGenerationParams?.temperature ?? 0.8)).toFixed(2)}
+                                                </label>
+                                                <input
+                                                    id="temperature"
+                                                    type="range"
+                                                    min="0"
+                                                    max="2"
+                                                    step="0.01"
+                                                    value={settings.defaultGenerationParams?.temperature ?? 0.8}
+                                                    onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                        ...(settings.defaultGenerationParams || {}),
+                                                        temperature: parseFloat(e.target.value)
+                                                    })}
+                                                    aria-valuetext={`Temperature: ${((settings.defaultGenerationParams?.temperature ?? 0.8)).toFixed(2)}`}
+                                                    className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                />
+                                                <p className="text-[9px] text-slate-400">Lower = more focused, Higher = more creative</p>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                                <label htmlFor="topP" className="text-[10px] text-slate-300 font-bold uppercase">
+                                                    Top P: {((settings.defaultGenerationParams?.topP ?? 0.9)).toFixed(2)}
+                                                </label>
+                                                <input
+                                                    id="topP"
+                                                    type="range"
+                                                    min="0"
+                                                    max="1"
+                                                    step="0.01"
+                                                    value={settings.defaultGenerationParams?.topP ?? 0.9}
+                                                    onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                        ...(settings.defaultGenerationParams || {}),
+                                                        topP: parseFloat(e.target.value)
+                                                    })}
+                                                    aria-valuetext={`Top P: ${((settings.defaultGenerationParams?.topP ?? 0.9)).toFixed(2)}`}
+                                                    className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                />
+                                                <p className="text-[9px] text-slate-400">Nucleus sampling threshold (0-1)</p>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                                <label htmlFor="topK" className="text-[10px] text-slate-300 font-bold uppercase">
+                                                    Top K
+                                                </label>
+                                                <input
+                                                    id="topK"
+                                                    type="number"
+                                                    min="1"
+                                                    max="1000"
+                                                    step="1"
+                                                    value={settings.defaultGenerationParams?.topK ?? ''}
+                                                    onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                        ...(settings.defaultGenerationParams || {}),
+                                                        topK: e.target.value ? parseInt(e.target.value) : undefined
+                                                    })}
+                                                    placeholder="Leave empty for default"
+                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-blue-500 outline-none"
+                                                />
+                                                <p className="text-[9px] text-slate-400">Sample from top K tokens (optional)</p>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                                <label htmlFor="presencePenalty" className="text-[10px] text-slate-300 font-bold uppercase">
+                                                    Presence Penalty: {((settings.defaultGenerationParams?.presencePenalty ?? 0)).toFixed(2)}
+                                                </label>
+                                                <input
+                                                    id="presencePenalty"
+                                                    type="range"
+                                                    min="-2"
+                                                    max="2"
+                                                    step="0.01"
+                                                    value={settings.defaultGenerationParams?.presencePenalty ?? 0}
+                                                    onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                        ...(settings.defaultGenerationParams || {}),
+                                                        presencePenalty: parseFloat(e.target.value)
+                                                    })}
+                                                    aria-valuetext={`Presence Penalty: ${((settings.defaultGenerationParams?.presencePenalty ?? 0)).toFixed(2)}`}
+                                                    className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                />
+                                                <p className="text-[9px] text-slate-400">Penalize new topics (-2 to 2)</p>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                                <label htmlFor="frequencyPenalty" className="text-[10px] text-slate-300 font-bold uppercase">
+                                                    Frequency Penalty: {((settings.defaultGenerationParams?.frequencyPenalty ?? 0)).toFixed(2)}
+                                                </label>
+                                                <input
+                                                    id="frequencyPenalty"
+                                                    type="range"
+                                                    min="-2"
+                                                    max="2"
+                                                    step="0.01"
+                                                    value={settings.defaultGenerationParams?.frequencyPenalty ?? 0}
+                                                    onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                        ...(settings.defaultGenerationParams || {}),
+                                                        frequencyPenalty: parseFloat(e.target.value)
+                                                    })}
+                                                    aria-valuetext={`Frequency Penalty: ${((settings.defaultGenerationParams?.frequencyPenalty ?? 0)).toFixed(2)}`}
+                                                    className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                />
+                                                <p className="text-[9px] text-slate-400">Penalize repetition (-2 to 2)</p>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                                <label htmlFor="maxTokens" className="text-[10px] text-slate-300 font-bold uppercase">
+                                                    Max Tokens
+                                                </label>
+                                                <input
+                                                    id="maxTokens"
+                                                    type="number"
+                                                    min="1"
+                                                    max="128000"
+                                                    step="1"
+                                                    value={settings.defaultGenerationParams?.maxTokens ?? ''}
+                                                    onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                        ...(settings.defaultGenerationParams || {}),
+                                                        maxTokens: e.target.value ? parseInt(e.target.value) : undefined
+                                                    })}
+                                                    placeholder="Leave empty for default"
+                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-blue-500 outline-none"
+                                                />
+                                                <p className="text-[9px] text-slate-400">Maximum tokens per response (optional)</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Force Structured Output Toggle */}
+                                        <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800/70">
+                                            <div className="flex items-center gap-2">
+                                                <label htmlFor="forceStructuredOutput" className="text-xs text-slate-200">Force Structured Output</label>
+                                                <span className="text-[9px] text-slate-400" title="When enabled, requests JSON response format from the model">
+                                                    (JSON mode)
+                                                </span>
+                                            </div>
+                                            <label className="relative inline-flex items-center cursor-pointer">
+                                                <input
+                                                    id="forceStructuredOutput"
+                                                    type="checkbox"
+                                                    checked={settings.defaultGenerationParams?.forceStructuredOutput ?? true}
+                                                    onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                        ...(settings.defaultGenerationParams || {}),
+                                                        forceStructuredOutput: e.target.checked,
+                                                        ...(e.target.checked ? { splitFieldRequests: false } : {})
+                                                    })}
+                                                    className="sr-only peer"
+                                                />
+                                                <div className="w-9 h-5 bg-slate-800/70 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </label>
+                                        </div>
+
+                                        {/* Split Field Requests Toggle */}
+                                        <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800/70">
+                                            <div className="flex flex-col gap-0.5">
+                                                <div className="flex items-center gap-2">
+                                                    <label htmlFor="splitFieldRequests" className="text-xs text-slate-200">Split Requests Per Field</label>
+                                                </div>
+                                                <span className="text-[9px] text-slate-400">
+                                                    Separate plain-text requests per field (reasoning first, then answer). Disables structured output.
+                                                </span>
+                                            </div>
+                                            <label className="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
+                                                <input
+                                                    id="splitFieldRequests"
+                                                    type="checkbox"
+                                                    checked={settings.defaultGenerationParams?.splitFieldRequests ?? false}
+                                                    onChange={(e) => updateSetting('defaultGenerationParams', {
+                                                        ...(settings.defaultGenerationParams || {}),
+                                                        splitFieldRequests: e.target.checked,
+                                                        ...(e.target.checked ? { forceStructuredOutput: false } : {})
+                                                    })}
+                                                    className="sr-only peer"
+                                                />
+                                                <div className="w-9 h-5 bg-slate-800/70 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </label>
+                                        </div>
+
+                                        <div className="mt-4 pt-4 border-t border-slate-800/70">
+                                            <button
+                                                onClick={() => updateSetting('defaultGenerationParams', {
+                                                    temperature: 0.8,
+                                                    topP: 0.9,
+                                                    topK: undefined,
+                                                    presencePenalty: undefined,
+                                                    frequencyPenalty: undefined,
+                                                    maxTokens: undefined,
+                                                    forceStructuredOutput: true,
+                                                    splitFieldRequests: false
+                                                })}
+                                                className="text-[10px] text-blue-400 hover:text-blue-300 underline"
+                                            >
+                                                Reset to defaults
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
+                            </CollapsibleSection>
 
-                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
-                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                    <Sliders className="w-4 h-4 text-blue-400" />
-                                    Default Generation Parameters
-                                </h3>
-                                <p className="text-xs text-slate-400 mb-4">
-                                    Configure default parameters for LLM generation. These can be overridden per-request in the chat interface.
-                                </p>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1">
-                                        <label htmlFor="temperature" className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Temperature: {((settings.defaultGenerationParams?.temperature ?? 0.8)).toFixed(2)}
-                                        </label>
-                                        <input
-                                            id="temperature"
-                                            type="range"
-                                            min="0"
-                                            max="2"
-                                            step="0.01"
-                                            value={settings.defaultGenerationParams?.temperature ?? 0.8}
-                                            onChange={(e) => updateSetting('defaultGenerationParams', {
-                                                ...(settings.defaultGenerationParams || {}),
-                                                temperature: parseFloat(e.target.value)
-                                            })}
-                                            aria-valuetext={`Temperature: ${((settings.defaultGenerationParams?.temperature ?? 0.8)).toFixed(2)}`}
-                                            className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                        />
-                                        <p className="text-[9px] text-slate-400">Lower = more focused, Higher = more creative</p>
-                                    </div>
+                            <CollapsibleSection
+                                title="Context Management"
+                                icon={<Layers className="w-3.5 h-3.5 text-amber-400" />}
+                                summary="Auto-compact long conversations"
+                                defaultExpanded={true}
+                            >
+                                <div className="space-y-6">
+                                    <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div>
+                                                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                    <Layers className="w-4 h-4 text-amber-400" />
+                                                    Enable Context Compaction
+                                                </h3>
+                                                <p className="text-xs text-slate-400 mt-1">
+                                                    Automatically manage context window to prevent overflow in long conversations.
+                                                </p>
+                                            </div>
+                                            <label className="relative inline-flex items-center cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={settings.contextManagement?.enabled ?? true}
+                                                    onChange={(e) => updateSetting('contextManagement', {
+                                                        ...(settings.contextManagement || {}),
+                                                        enabled: e.target.checked
+                                                    })}
+                                                    className="sr-only peer"
+                                                />
+                                                <div className="w-9 h-5 bg-slate-800/70 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-amber-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                                            </label>
+                                        </div>
 
-                                    <div className="space-y-1">
-                                        <label htmlFor="topP" className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Top P: {((settings.defaultGenerationParams?.topP ?? 0.9)).toFixed(2)}
-                                        </label>
-                                        <input
-                                            id="topP"
-                                            type="range"
-                                            min="0"
-                                            max="1"
-                                            step="0.01"
-                                            value={settings.defaultGenerationParams?.topP ?? 0.9}
-                                            onChange={(e) => updateSetting('defaultGenerationParams', {
-                                                ...(settings.defaultGenerationParams || {}),
-                                                topP: parseFloat(e.target.value)
-                                            })}
-                                            aria-valuetext={`Top P: ${((settings.defaultGenerationParams?.topP ?? 0.9)).toFixed(2)}`}
-                                            className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                        />
-                                        <p className="text-[9px] text-slate-400">Nucleus sampling threshold (0-1)</p>
-                                    </div>
+                                        {settings.contextManagement?.enabled !== false && (
+                                            <div className="space-y-4 pt-4 border-t border-slate-800/70">
+                                                {/* Compaction Strategy */}
+                                                <div className="space-y-2">
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">
+                                                        Compaction Strategy
+                                                    </label>
+                                                    <select
+                                                        value={settings.contextManagement?.strategy ?? 'truncate-middle'}
+                                                        onChange={(e) => updateSetting('contextManagement', {
+                                                            ...(settings.contextManagement || {}),
+                                                            strategy: e.target.value as 'none' | 'truncate-old' | 'truncate-middle' | 'summarize'
+                                                        })}
+                                                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-amber-500 outline-none"
+                                                    >
+                                                        <option value="none">None (disabled)</option>
+                                                        <option value="truncate-old">Truncate Old - Remove oldest messages</option>
+                                                        <option value="truncate-middle">Truncate Middle - Keep first + recent (Recommended)</option>
+                                                        <option value="summarize">Summarize - Use LLM to summarize older messages</option>
+                                                    </select>
+                                                    <p className="text-[9px] text-slate-500">
+                                                        {settings.contextManagement?.strategy === 'summarize'
+                                                            ? 'Uses an additional LLM call to create a summary of older messages before compacting.'
+                                                            : settings.contextManagement?.strategy === 'truncate-middle'
+                                                                ? 'Removes messages from the middle while preserving the first (system context) and recent messages.'
+                                                                : settings.contextManagement?.strategy === 'truncate-old'
+                                                                    ? 'Simply removes the oldest messages when context limit is reached.'
+                                                                    : 'No automatic compaction. Conversations may fail if context limit is exceeded.'}
+                                                    </p>
+                                                </div>
 
-                                    <div className="space-y-1">
-                                        <label htmlFor="topK" className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Top K
-                                        </label>
-                                        <input
-                                            id="topK"
-                                            type="number"
-                                            min="1"
-                                            max="1000"
-                                            step="1"
-                                            value={settings.defaultGenerationParams?.topK ?? ''}
-                                            onChange={(e) => updateSetting('defaultGenerationParams', {
-                                                ...(settings.defaultGenerationParams || {}),
-                                                topK: e.target.value ? parseInt(e.target.value) : undefined
-                                            })}
-                                            placeholder="Leave empty for default"
-                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-blue-500 outline-none"
-                                        />
-                                        <p className="text-[9px] text-slate-400">Sample from top K tokens (optional)</p>
-                                    </div>
+                                                {/* Trigger Threshold */}
+                                                <div className="space-y-2">
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">
+                                                        Trigger Threshold: {((settings.contextManagement?.triggerThreshold ?? 0.85) * 100).toFixed(0)}%
+                                                    </label>
+                                                    <input
+                                                        type="range"
+                                                        min="0.5"
+                                                        max="0.95"
+                                                        step="0.05"
+                                                        value={settings.contextManagement?.triggerThreshold ?? 0.85}
+                                                        onChange={(e) => updateSetting('contextManagement', {
+                                                            ...(settings.contextManagement || {}),
+                                                            triggerThreshold: parseFloat(e.target.value)
+                                                        })}
+                                                        className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                                                    />
+                                                    <p className="text-[9px] text-slate-500">
+                                                        Compaction triggers when context usage exceeds this percentage of the model's limit.
+                                                    </p>
+                                                </div>
 
-                                    <div className="space-y-1">
-                                        <label htmlFor="presencePenalty" className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Presence Penalty: {((settings.defaultGenerationParams?.presencePenalty ?? 0)).toFixed(2)}
-                                        </label>
-                                        <input
-                                            id="presencePenalty"
-                                            type="range"
-                                            min="-2"
-                                            max="2"
-                                            step="0.01"
-                                            value={settings.defaultGenerationParams?.presencePenalty ?? 0}
-                                            onChange={(e) => updateSetting('defaultGenerationParams', {
-                                                ...(settings.defaultGenerationParams || {}),
-                                                presencePenalty: parseFloat(e.target.value)
-                                            })}
-                                            aria-valuetext={`Presence Penalty: ${((settings.defaultGenerationParams?.presencePenalty ?? 0)).toFixed(2)}`}
-                                            className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                        />
-                                        <p className="text-[9px] text-slate-400">Penalize new topics (-2 to 2)</p>
-                                    </div>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    {/* Response Reserve */}
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
+                                                            Response Reserve
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="1000"
+                                                            max="16000"
+                                                            step="500"
+                                                            value={settings.contextManagement?.responseReserve ?? 4096}
+                                                            onChange={(e) => updateSetting('contextManagement', {
+                                                                ...(settings.contextManagement || {}),
+                                                                responseReserve: parseInt(e.target.value) || 4096
+                                                            })}
+                                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-amber-500 outline-none"
+                                                        />
+                                                        <p className="text-[9px] text-slate-500">Tokens reserved for model response</p>
+                                                    </div>
 
-                                    <div className="space-y-1">
-                                        <label htmlFor="frequencyPenalty" className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Frequency Penalty: {((settings.defaultGenerationParams?.frequencyPenalty ?? 0)).toFixed(2)}
-                                        </label>
-                                        <input
-                                            id="frequencyPenalty"
-                                            type="range"
-                                            min="-2"
-                                            max="2"
-                                            step="0.01"
-                                            value={settings.defaultGenerationParams?.frequencyPenalty ?? 0}
-                                            onChange={(e) => updateSetting('defaultGenerationParams', {
-                                                ...(settings.defaultGenerationParams || {}),
-                                                frequencyPenalty: parseFloat(e.target.value)
-                                            })}
-                                            aria-valuetext={`Frequency Penalty: ${((settings.defaultGenerationParams?.frequencyPenalty ?? 0)).toFixed(2)}`}
-                                            className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                        />
-                                        <p className="text-[9px] text-slate-400">Penalize repetition (-2 to 2)</p>
-                                    </div>
+                                                    {/* Keep Recent Messages */}
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
+                                                            Keep Recent Messages
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            min="2"
+                                                            max="50"
+                                                            step="1"
+                                                            value={settings.contextManagement?.keepRecentMessages ?? 10}
+                                                            onChange={(e) => updateSetting('contextManagement', {
+                                                                ...(settings.contextManagement || {}),
+                                                                keepRecentMessages: parseInt(e.target.value) || 10
+                                                            })}
+                                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-amber-500 outline-none"
+                                                        />
+                                                        <p className="text-[9px] text-slate-500">Always preserve this many recent messages</p>
+                                                    </div>
+                                                </div>
 
-                                    <div className="space-y-1">
-                                        <label htmlFor="maxTokens" className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Max Tokens
-                                        </label>
-                                        <input
-                                            id="maxTokens"
-                                            type="number"
-                                            min="1"
-                                            max="128000"
-                                            step="1"
-                                            value={settings.defaultGenerationParams?.maxTokens ?? ''}
-                                            onChange={(e) => updateSetting('defaultGenerationParams', {
-                                                ...(settings.defaultGenerationParams || {}),
-                                                maxTokens: e.target.value ? parseInt(e.target.value) : undefined
-                                            })}
-                                            placeholder="Leave empty for default"
-                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-slate-100 focus:border-blue-500 outline-none"
-                                        />
-                                        <p className="text-[9px] text-slate-400">Maximum tokens per response (optional)</p>
+                                                <div className="mt-4 pt-4 border-t border-slate-800/70">
+                                                    <button
+                                                        onClick={() => updateSetting('contextManagement', {
+                                                            enabled: true,
+                                                            strategy: 'truncate-middle',
+                                                            triggerThreshold: 0.85,
+                                                            responseReserve: 4096,
+                                                            keepRecentMessages: 10
+                                                        })}
+                                                        className="text-[10px] text-amber-400 hover:text-amber-300 underline"
+                                                    >
+                                                        Reset to defaults
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-
-                                {/* Force Structured Output Toggle */}
-                                <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-800/70">
-                                    <div className="flex items-center gap-2">
-                                        <label htmlFor="forceStructuredOutput" className="text-xs text-slate-200">Force Structured Output</label>
-                                        <span className="text-[9px] text-slate-400" title="When enabled, requests JSON response format from the model">
-                                            (JSON mode)
-                                        </span>
-                                    </div>
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input
-                                            id="forceStructuredOutput"
-                                            type="checkbox"
-                                            checked={settings.defaultGenerationParams?.forceStructuredOutput ?? true}
-                                            onChange={(e) => updateSetting('defaultGenerationParams', {
-                                                ...(settings.defaultGenerationParams || {}),
-                                                forceStructuredOutput: e.target.checked
-                                            })}
-                                            className="sr-only peer"
-                                        />
-                                        <div className="w-9 h-5 bg-slate-800/70 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                                    </label>
-                                </div>
-
-                                <div className="mt-4 pt-4 border-t border-slate-800/70">
-                                    <button
-                                        onClick={() => updateSetting('defaultGenerationParams', {
-                                            temperature: 0.8,
-                                            topP: 0.9,
-                                            topK: undefined,
-                                            presencePenalty: undefined,
-                                            frequencyPenalty: undefined,
-                                            maxTokens: undefined,
-                                            forceStructuredOutput: true
-                                        })}
-                                        className="text-[10px] text-blue-400 hover:text-blue-300 underline"
-                                    >
-                                        Reset to defaults
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                        </CollapsibleSection>
+                            </CollapsibleSection>
+                        </>
                     )}
 
                     {activeTab === SettingsPanelTab.HuggingFace && (
@@ -974,264 +1162,377 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             title="HuggingFace"
                             icon={<Cloud className="w-3.5 h-3.5 text-sky-400" />}
                             summary="Token and default repo"
-                            defaultExpanded={false}
+                            defaultExpanded={true}
                         >
-                        <div className="space-y-6">
-                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
-                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                    <Cloud className="w-4 h-4 text-sky-400" />
-                                    HuggingFace Settings
-                                </h3>
-                                <p className="text-xs text-slate-400 mb-4">
-                                    Configure your HuggingFace token for uploading datasets to the Hub.
-                                </p>
-                                <div className="space-y-4">
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
-                                            HuggingFace Token
-                                            {import.meta.env.VITE_HF_TOKEN && !settings.huggingFaceToken && (
-                                                <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
-                                            )}
-                                        </label>
-                                        <div className="relative">
+                            <div className="space-y-6">
+                                <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                    <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                        <Cloud className="w-4 h-4 text-sky-400" />
+                                        HuggingFace Settings
+                                    </h3>
+                                    <p className="text-xs text-slate-400 mb-4">
+                                        Configure your HuggingFace token for uploading datasets to the Hub.
+                                    </p>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-slate-300 font-bold uppercase">
+                                                HuggingFace Token
+                                                {import.meta.env.VITE_HF_TOKEN && !settings.huggingFaceToken && (
+                                                    <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
+                                                )}
+                                            </label>
+                                            <div className="relative">
+                                                <input
+                                                    type={showKeys['hf'] ? 'text' : 'password'}
+                                                    value={settings.huggingFaceToken || ''}
+                                                    onChange={(e) => updateSetting('huggingFaceToken', e.target.value)}
+                                                    placeholder={import.meta.env.VITE_HF_TOKEN ? '●●●●●●●● (env configured)' : 'hf_...'}
+                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none pr-10"
+                                                />
+                                                <button
+                                                    onClick={() => toggleShowKey('hf')}
+                                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                                                >
+                                                    {showKeys['hf'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-slate-300 font-bold uppercase">Default Repository</label>
                                             <input
-                                                type={showKeys['hf'] ? 'text' : 'password'}
-                                                value={settings.huggingFaceToken || ''}
-                                                onChange={(e) => updateSetting('huggingFaceToken', e.target.value)}
-                                                placeholder={import.meta.env.VITE_HF_TOKEN ? '●●●●●●●● (env configured)' : 'hf_...'}
-                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none pr-10"
+                                                type="text"
+                                                value={settings.huggingFaceDefaultRepo || ''}
+                                                onChange={(e) => updateSetting('huggingFaceDefaultRepo', e.target.value)}
+                                                placeholder="username/dataset-name"
+                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                             />
-                                            <button
-                                                onClick={() => toggleShowKey('hf')}
-                                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
-                                            >
-                                                {showKeys['hf'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                            </button>
                                         </div>
                                     </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Default Repository</label>
-                                        <input
-                                            type="text"
-                                            value={settings.huggingFaceDefaultRepo || ''}
-                                            onChange={(e) => updateSetting('huggingFaceDefaultRepo', e.target.value)}
-                                            placeholder="username/dataset-name"
-                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                        />
-                                    </div>
+                                </div>
+
+                                <div className="bg-sky-500/10 border border-sky-500/20 rounded-lg p-4">
+                                    <p className="text-xs text-sky-200">
+                                        <strong>Get a token:</strong> Visit{' '}
+                                        <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="underline hover:text-sky-100">
+                                            huggingface.co/settings/tokens
+                                        </a>
+                                        {' '}and create a token with "write" access.
+                                    </p>
                                 </div>
                             </div>
-
-                            <div className="bg-sky-500/10 border border-sky-500/20 rounded-lg p-4">
-                                <p className="text-xs text-sky-200">
-                                    <strong>Get a token:</strong> Visit{' '}
-                                    <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="underline hover:text-sky-100">
-                                        huggingface.co/settings/tokens
-                                    </a>
-                                    {' '}and create a token with "write" access.
-                                </p>
-                            </div>
-                        </div>
                         </CollapsibleSection>
                     )}
 
-                    {activeTab === SettingsPanelTab.Firebase && (
+                    {activeTab === SettingsPanelTab.DatabaseProvider && (
                         <CollapsibleSection
-                            title="Firebase"
-                            icon={<Database className="w-3.5 h-3.5 text-sky-400" />}
-                            summary="Cloud storage config"
-                            defaultExpanded={false}
+                            title="Database Provider"
+                            icon={<Server className="w-3.5 h-3.5 text-sky-400" />}
+                            summary="Choose backend database"
+                            defaultExpanded={true}
                         >
-                        <div className="space-y-6">
-                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
-                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                    <Database className="w-4 h-4 text-orange-400" />
-                                    Firebase Configuration
-                                </h3>
-                                <p className="text-xs text-slate-400 mb-4">
-                                    Configure Firebase for cloud storage of sessions and logs. All fields are required to connect.
-                                </p>
-                                <div className="grid grid-cols-1 gap-3">
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
-                                            API Key
-                                            {import.meta.env.VITE_FIREBASE_API_KEY && !settings.firebaseApiKey && (
-                                                <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
-                                            )}
-                                        </label>
-                                        <div className="relative">
-                                            <input
-                                                type={showKeys['firebase'] ? 'text' : 'password'}
-                                                value={settings.firebaseApiKey || ''}
-                                                onChange={(e) => updateSetting('firebaseApiKey', e.target.value)}
-                                                placeholder={import.meta.env.VITE_FIREBASE_API_KEY ? '●●●●●●●● (env configured)' : 'AIza...'}
-                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none pr-10"
-                                            />
-                                            <button
-                                                onClick={() => toggleShowKey('firebase')}
-                                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
-                                            >
-                                                {showKeys['firebase'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Auth Domain
-                                            {import.meta.env.VITE_FIREBASE_AUTH_DOMAIN && !settings.firebaseAuthDomain && (
-                                                <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
-                                            )}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={settings.firebaseAuthDomain || ''}
-                                            onChange={(e) => updateSetting('firebaseAuthDomain', e.target.value)}
-                                            placeholder={import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'your-app.firebaseapp.com'}
-                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Project ID
-                                            {import.meta.env.VITE_FIREBASE_PROJECT_ID && !settings.firebaseProjectId && (
-                                                <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
-                                            )}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={settings.firebaseProjectId || ''}
-                                            onChange={(e) => updateSetting('firebaseProjectId', e.target.value)}
-                                            placeholder={import.meta.env.VITE_FIREBASE_PROJECT_ID || 'your-project-id'}
-                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Storage Bucket
-                                            {import.meta.env.VITE_FIREBASE_STORAGE_BUCKET && !settings.firebaseStorageBucket && (
-                                                <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
-                                            )}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={settings.firebaseStorageBucket || ''}
-                                            onChange={(e) => updateSetting('firebaseStorageBucket', e.target.value)}
-                                            placeholder={import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'your-app.appspot.com'}
-                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
-                                            Messaging Sender ID
-                                            {import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID && !settings.firebaseMessagingSenderId && (
-                                                <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
-                                            )}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={settings.firebaseMessagingSenderId || ''}
-                                            onChange={(e) => updateSetting('firebaseMessagingSenderId', e.target.value)}
-                                            placeholder={import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '123456789012'}
-                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
-                                        />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">
-                                            App ID
-                                            {import.meta.env.VITE_FIREBASE_APP_ID && !settings.firebaseAppId && (
-                                                <span className="text-emerald-400 ml-2 normal-case font-normal">(from .env)</span>
-                                            )}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            value={settings.firebaseAppId || ''}
-                                            onChange={(e) => updateSetting('firebaseAppId', e.target.value)}
-                                            placeholder={import.meta.env.VITE_FIREBASE_APP_ID || '1:123456789012:web:abc123'}
-                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-amber-500 outline-none"
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
-                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                    <Server className="w-4 h-4 text-sky-400" />
-                                    Backend Admin Credentials
-                                </h3>
-                                <p className="text-xs text-slate-400 mb-4">
-                                    Use a Firebase Service Account JSON for backend operations (recommended for Electron).
-                                </p>
-                                <div className="space-y-3">
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Backend URL</label>
-                                        <input
-                                            type="text"
-                                            value={backendUrlInput}
-                                            onChange={(e) => {
-                                                const value = e.target.value;
-                                                setBackendUrlInput(value);
-                                                backendClient.setBackendUrlOverride(value);
-                                            }}
-                                            placeholder={import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'}
-                                            className="w-full bg-slate-950 border border-slate-800/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
-                                        />
-                                        <div className="text-[10px] text-slate-500">
-                                            Leave blank to use the default environment value.
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] text-slate-300 font-bold uppercase">Service Account Path</label>
-                                        <div className="flex items-center gap-2">
+                            <div className="space-y-6">
+                                <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                    <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                        <Database className="w-4 h-4 text-sky-400" />
+                                        Database Provider
+                                    </h3>
+                                    <p className="text-xs text-slate-400 mb-4">
+                                        Choose which database the backend server uses for storing sessions, logs, and jobs.
+                                    </p>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-slate-300 font-bold uppercase">Backend URL</label>
                                             <input
                                                 type="text"
-                                                value={settings.backendServiceAccountPath || serviceAccountFileName || ''}
+                                                value={backendUrlInput}
                                                 onChange={(e) => {
-                                                    if (serviceAccountFileName) {
-                                                        setServiceAccountFileName(null);
-                                                    }
-                                                    updateSetting('backendServiceAccountPath', e.target.value);
+                                                    const value = e.target.value;
+                                                    setBackendUrlInput(value);
+                                                    backendClient.setBackendUrlOverride(value);
                                                 }}
-                                                placeholder="/absolute/path/to/service-account.json"
-                                                className="flex-1 bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                                placeholder={import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787'}
+                                                className="w-full bg-slate-950 border border-slate-800/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
                                             />
-                                            <label className="inline-flex items-center gap-2 px-3 py-2 rounded border border-slate-700/70 text-xs text-slate-200 hover:bg-slate-900/60 cursor-pointer">
-                                                <FolderOpen className="w-3.5 h-3.5" />
-                                                Choose
-                                                <input type="file" accept=".json" className="hidden" onChange={handleServiceAccountFile} />
-                                            </label>
+                                            <div className="text-[10px] text-slate-500">
+                                                Required for CockroachDB and backend operations. Leave blank to use the default environment value.
+                                            </div>
                                         </div>
-                                        {serviceAccountFileName && !settings.backendServiceAccountPath && (
-                                            <div className="text-[10px] text-slate-400">
-                                                Selected file: {serviceAccountFileName}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] text-slate-300 font-bold uppercase">Provider</label>
+                                            <select
+                                                value={settings.dbProvider || DbProvider.Firestore}
+                                                onChange={(e) => updateSetting('dbProvider', e.target.value as DbProvider)}
+                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                            >
+                                                <option value={DbProvider.Firestore}>Firebase Firestore</option>
+                                                <option value={DbProvider.CockroachDb}>CockroachDB</option>
+                                            </select>
+                                        </div>
+
+                                        {(settings.dbProvider === DbProvider.CockroachDb) && (
+                                            <>
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Connection String</label>
+                                                    <input
+                                                        type="text"
+                                                        value={settings.cockroachConnectionString || ''}
+                                                        onChange={(e) => updateSetting('cockroachConnectionString', e.target.value)}
+                                                        placeholder="postgresql://root@localhost:26257/synthlabs?sslmode=disable"
+                                                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none font-mono"
+                                                    />
+                                                    <div className="text-[10px] text-slate-500">
+                                                        PostgreSQL-compatible connection string for CockroachDB.
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">CA Certificate</label>
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="flex-1 bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-300 font-mono">
+                                                            {cockroachCaCertFileName || (hasCockroachCaCert ? 'Uploaded certificate' : 'No certificate selected')}
+                                                        </div>
+                                                        <label className="inline-flex items-center gap-2 px-3 py-2 rounded border border-slate-700/70 text-xs text-slate-200 hover:bg-slate-900/60 cursor-pointer">
+                                                            <FolderOpen className="w-3.5 h-3.5" />
+                                                            Choose
+                                                            <input type="file" accept=".crt,.pem,.cer" className="hidden" onChange={handleCockroachCaCertFile} />
+                                                        </label>
+                                                        {hasCockroachCaCert && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    updateSetting('cockroachCaCertPem', '');
+                                                                    setCockroachCaCertFileName(null);
+                                                                    setBackendApplyStatus(BackendApplyStatus.Idle);
+                                                                    setBackendApplyError('');
+                                                                }}
+                                                                className="px-3 py-2 rounded border border-slate-700/70 text-xs text-slate-300 hover:bg-slate-900/60"
+                                                            >
+                                                                Clear
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-500">
+                                                        Optional CA cert upload for CockroachDB TLS verification.
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+
+                                        <div className="flex items-center gap-3">
+                                            <button
+                                                onClick={async () => {
+                                                    try {
+                                                        setBackendApplyStatus(BackendApplyStatus.Pending);
+                                                        setBackendApplyError('');
+                                                        const provider = settings.dbProvider || DbProvider.Firestore;
+                                                        const result = await backendClient.testDbConnection(
+                                                            provider,
+                                                            provider === DbProvider.CockroachDb ? settings.cockroachConnectionString : undefined,
+                                                            provider === DbProvider.CockroachDb ? settings.cockroachCaCertPem : undefined
+                                                        );
+                                                        if (result.ok) {
+                                                            setBackendApplyStatus(BackendApplyStatus.Success);
+                                                            setBackendApplyError('Connection successful');
+                                                        } else {
+                                                            setBackendApplyStatus(BackendApplyStatus.Error);
+                                                            setBackendApplyError(result.error || 'Connection failed');
+                                                        }
+                                                    } catch (err: any) {
+                                                        setBackendApplyStatus(BackendApplyStatus.Error);
+                                                        setBackendApplyError(err?.message || 'Test failed');
+                                                    }
+                                                }}
+                                                className="inline-flex items-center gap-2 px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors border border-slate-700/70 disabled:opacity-50"
+                                                disabled={backendApplyStatus === BackendApplyStatus.Pending}
+                                            >
+                                                {backendApplyStatus === BackendApplyStatus.Pending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
+                                                Test Connection
+                                            </button>
+                                            <button
+                                                onClick={async () => {
+                                                    try {
+                                                        setBackendApplyStatus(BackendApplyStatus.Pending);
+                                                        setBackendApplyError('');
+                                                        const provider = settings.dbProvider || DbProvider.Firestore;
+                                                        await backendClient.switchDbProvider(
+                                                            provider,
+                                                            provider === DbProvider.CockroachDb ? settings.cockroachConnectionString : undefined,
+                                                            provider === DbProvider.CockroachDb ? settings.cockroachCaCertPem : undefined
+                                                        );
+                                                        setBackendApplyStatus(BackendApplyStatus.Success);
+                                                        setBackendApplyError('Provider switched');
+                                                        // Refresh frontend data from the new provider
+                                                        onSettingsChanged?.();
+                                                    } catch (err: any) {
+                                                        setBackendApplyStatus(BackendApplyStatus.Error);
+                                                        setBackendApplyError(err?.message || 'Switch failed');
+                                                    }
+                                                }}
+                                                className="inline-flex items-center gap-2 px-4 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                                                disabled={backendApplyStatus === BackendApplyStatus.Pending}
+                                            >
+                                                {backendApplyStatus === BackendApplyStatus.Pending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Server className="w-3.5 h-3.5" />}
+                                                Apply Provider
+                                            </button>
+                                        </div>
+                                        {backendApplyStatus === BackendApplyStatus.Success && (
+                                            <div className="flex items-center gap-2 text-xs text-emerald-400">
+                                                <Check className="w-3.5 h-3.5" />
+                                                {backendApplyError || 'Success'}
+                                            </div>
+                                        )}
+                                        {backendApplyStatus === BackendApplyStatus.Error && (
+                                            <div className="flex items-center gap-2 text-xs text-red-400">
+                                                <AlertTriangle className="w-3.5 h-3.5" />
+                                                {backendApplyError}
                                             </div>
                                         )}
                                     </div>
-                                    <div className="flex items-center gap-3">
-                                        <button
-                                            onClick={handleApplyBackendServiceAccount}
-                                            className="inline-flex items-center gap-2 px-4 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
-                                            disabled={backendApplyStatus === BackendApplyStatus.Pending}
-                                        >
-                                            {backendApplyStatus === BackendApplyStatus.Pending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Server className="w-3.5 h-3.5" />}
-                                            Apply to Backend
-                                        </button>
-                                        {backendApplyStatus === BackendApplyStatus.Success && (
-                                            <span className="text-xs text-emerald-400">Applied</span>
-                                        )}
-                                        {backendApplyStatus === BackendApplyStatus.Error && (
-                                            <span className="text-xs text-red-400">{backendApplyError}</span>
-                                        )}
-                                    </div>
                                 </div>
-                            </div>
 
-                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
-                                <p className="text-xs text-amber-200">
-                                    <strong>Note:</strong> Firebase configuration is saved when you click "Save Settings" and will be used to connect on next app load.
-                                    If you have values in <code>.env</code>, those will be used as defaults.
-                                </p>
+                                {(settings.dbProvider === DbProvider.Firestore) && (
+                                    <div className="space-y-6">
+                                        <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                            <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                                <Server className="w-4 h-4 text-sky-400" />
+                                                Backend Service Account
+                                            </h3>
+                                            <p className="text-xs text-slate-400 mb-4">
+                                                Provide a Firebase Service Account JSON so the backend can connect to Firestore.
+                                            </p>
+                                            <div className="space-y-3">
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Service Account Path</label>
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="text"
+                                                            value={settings.backendServiceAccountPath || serviceAccountFileName || ''}
+                                                            onChange={(e) => {
+                                                                if (serviceAccountFileName) {
+                                                                    setServiceAccountFileName(null);
+                                                                }
+                                                                updateSetting('backendServiceAccountPath', e.target.value);
+                                                            }}
+                                                            placeholder="/absolute/path/to/service-account.json"
+                                                            className="flex-1 bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-100 focus:border-sky-500 outline-none"
+                                                        />
+                                                        <label className="inline-flex items-center gap-2 px-3 py-2 rounded border border-slate-700/70 text-xs text-slate-200 hover:bg-slate-900/60 cursor-pointer">
+                                                            <FolderOpen className="w-3.5 h-3.5" />
+                                                            Choose
+                                                            <input type="file" accept=".json" className="hidden" onChange={handleServiceAccountFile} />
+                                                        </label>
+                                                    </div>
+                                                    {serviceAccountFileName && !settings.backendServiceAccountPath && (
+                                                        <div className="text-[10px] text-slate-400">
+                                                            Selected file: {serviceAccountFileName}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <button
+                                                        onClick={handleApplyBackendServiceAccount}
+                                                        className="inline-flex items-center gap-2 px-4 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                                                        disabled={backendApplyStatus === BackendApplyStatus.Pending}
+                                                    >
+                                                        {backendApplyStatus === BackendApplyStatus.Pending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Server className="w-3.5 h-3.5" />}
+                                                        Apply to Backend
+                                                    </button>
+                                                    {backendApplyStatus === BackendApplyStatus.Success && (
+                                                        <span className="text-xs text-emerald-400">Applied</span>
+                                                    )}
+                                                    {backendApplyStatus === BackendApplyStatus.Error && (
+                                                        <span className="text-xs text-red-400">{backendApplyError}</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
+                                            <p className="text-xs text-amber-200">
+                                                <strong>Note:</strong> Firebase Firestore is managed by the backend server via service account.
+                                                Upload or set the path to your service account JSON, then click "Apply to Backend".
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {(settings.dbProvider === DbProvider.CockroachDb) && (
+                                    <div className="space-y-4">
+                                        <div className="bg-sky-500/10 border border-sky-500/20 rounded-lg p-4">
+                                            <p className="text-xs text-sky-200">
+                                                <strong>Note:</strong> Local CockroachDB requires a running instance. Start one with:
+                                                <code className="block mt-2 bg-slate-950 rounded px-2 py-1 text-[10px] text-slate-300 font-mono">
+                                                    docker compose -f docker/docker-compose.yml up -d
+                                                </code>
+                                            </p>
+                                        </div>
+
+                                        {/* Migrate from Firebase */}
+                                        <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                            <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                                                <Database className="w-4 h-4 text-amber-400" />
+                                                Migrate from Firebase
+                                            </h3>
+                                            <p className="text-xs text-slate-400 mb-4">
+                                                Copy all sessions, logs, and jobs from Firebase Firestore into CockroachDB.
+                                                This operation is idempotent and safe to re-run.
+                                            </p>
+
+                                            {migrationStatus === 'idle' && (
+                                                <button
+                                                    onClick={handleMigrateFromFirebase}
+                                                    className="inline-flex items-center gap-2 px-4 py-2 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-colors"
+                                                >
+                                                    <Database className="w-3.5 h-3.5" />
+                                                    Start Migration
+                                                </button>
+                                            )}
+
+                                            {migrationStatus === 'starting' && (
+                                                <div className="flex items-center gap-2 text-xs text-slate-400">
+                                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                                    Starting migration job...
+                                                </div>
+                                            )}
+
+                                            {migrationStatus === 'started' && (
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center gap-2 text-xs text-emerald-400">
+                                                        <Check className="w-3.5 h-3.5" />
+                                                        Migration job started
+                                                    </div>
+                                                    <p className="text-[10px] text-slate-500">
+                                                        Job ID: <code className="text-slate-400">{migrationJobId}</code>
+                                                    </p>
+                                                    <p className="text-[10px] text-slate-500">
+                                                        Track progress in the Job Monitor panel.
+                                                    </p>
+                                                    <button
+                                                        onClick={() => { setMigrationStatus('idle'); setMigrationJobId(null); }}
+                                                        className="text-xs text-slate-500 hover:text-slate-300 underline transition-colors"
+                                                    >
+                                                        Dismiss
+                                                    </button>
+                                                </div>
+                                            )}
+
+                                            {migrationStatus === 'error' && (
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center gap-2 text-xs text-red-400">
+                                                        <AlertTriangle className="w-3.5 h-3.5" />
+                                                        {migrationError}
+                                                    </div>
+                                                    <button
+                                                        onClick={() => { setMigrationStatus('idle'); setMigrationError(''); }}
+                                                        className="text-xs text-slate-500 hover:text-slate-300 underline transition-colors"
+                                                    >
+                                                        Retry
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
-                        </div>
                         </CollapsibleSection>
                     )}
 
@@ -1240,49 +1541,49 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             title="Storage"
                             icon={<Cpu className="w-3.5 h-3.5 text-sky-400" />}
                             summary="Local data management"
-                            defaultExpanded={false}
+                            defaultExpanded={true}
                         >
-                        <div className="space-y-6">
-                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
-                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                    <Cpu className="w-4 h-4 text-cyan-400" />
-                                    Local Storage
-                                </h3>
-                                <p className="text-xs text-slate-400 mb-4">
-                                    Manage locally stored data including sessions, logs, and settings.
-                                </p>
+                            <div className="space-y-6">
+                                <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                    <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                        <Cpu className="w-4 h-4 text-cyan-400" />
+                                        Local Storage
+                                    </h3>
+                                    <p className="text-xs text-slate-400 mb-4">
+                                        Manage locally stored data including sessions, logs, and settings.
+                                    </p>
 
-                                <div className="bg-red-950/30 border border-red-500/20 rounded-lg p-4">
-                                    <div className="flex items-start gap-3">
-                                        <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-                                        <div className="flex-1">
-                                            <h4 className="text-sm font-bold text-red-400 mb-1">Clear All Data</h4>
-                                            <p className="text-xs text-slate-300 mb-3">
-                                                This will permanently delete all stored settings, API keys, session data, and logs from this browser. This action cannot be undone.
-                                            </p>
-                                            <button
-                                                onClick={handleClearAll}
-                                                className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-bold transition-colors ${confirmClear
-                                                    ? 'bg-red-600 hover:bg-red-500 text-white'
-                                                    : 'bg-red-950 hover:bg-red-900 text-red-400 border border-red-500/30'
-                                                    }`}
-                                            >
-                                                <Trash2 className="w-4 h-4" />
-                                                {confirmClear ? 'Click Again to Confirm' : 'Clear All Data'}
-                                            </button>
-                                            {confirmClear && (
+                                    <div className="bg-red-950/30 border border-red-500/20 rounded-lg p-4">
+                                        <div className="flex items-start gap-3">
+                                            <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                                            <div className="flex-1">
+                                                <h4 className="text-sm font-bold text-red-400 mb-1">Clear All Data</h4>
+                                                <p className="text-xs text-slate-300 mb-3">
+                                                    This will permanently delete all stored settings, API keys, session data, and logs from this browser. This action cannot be undone.
+                                                </p>
                                                 <button
-                                                    onClick={() => setConfirmClear(false)}
-                                                    className="ml-2 text-xs text-slate-400 hover:text-slate-200"
+                                                    onClick={handleClearAll}
+                                                    className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-bold transition-colors ${confirmClear
+                                                        ? 'bg-red-600 hover:bg-red-500 text-white'
+                                                        : 'bg-red-950 hover:bg-red-900 text-red-400 border border-red-500/30'
+                                                        }`}
                                                 >
-                                                    Cancel
+                                                    <Trash2 className="w-4 h-4" />
+                                                    {confirmClear ? 'Click Again to Confirm' : 'Clear All Data'}
                                                 </button>
-                                            )}
+                                                {confirmClear && (
+                                                    <button
+                                                        onClick={() => setConfirmClear(false)}
+                                                        className="ml-2 text-xs text-slate-400 hover:text-slate-200"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
                         </CollapsibleSection>
                     )}
 
@@ -1291,323 +1592,322 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                             title="Prompt Sets"
                             icon={<FileText className="w-3.5 h-3.5 text-sky-400" />}
                             summary="Active set and auto-routing"
-                            defaultExpanded={false}
+                            defaultExpanded={true}
                         >
-                        <div className="space-y-6">
-                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
-                                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                    <FileText className="w-4 h-4 text-emerald-400" />
-                                    Prompt Configuration
-                                </h3>
-                                <p className="text-xs text-slate-400 mb-4">
-                                    Select the prompt set to use for generating reasoning traces. Each set produces different reasoning formats.
-                                </p>
+                            <div className="space-y-6">
+                                <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                    <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                        <FileText className="w-4 h-4 text-emerald-400" />
+                                        Prompt Configuration
+                                    </h3>
+                                    <p className="text-xs text-slate-400 mb-4">
+                                        Select the prompt set to use for generating reasoning traces. Each set produces different reasoning formats.
+                                    </p>
 
-                                {/* Prompt set cards */}
-                                <div className="space-y-2">
-                                    {availablePromptSets.map(setId => {
-                                        const meta = promptMetadata[setId];
-                                        const isSelected = (settings.promptSet || 'default') === setId;
-                                        const completeness = PromptService.getSetCompleteness(setId);
+                                    {/* Prompt set cards */}
+                                    <div className="space-y-2">
+                                        {availablePromptSets.map(setId => {
+                                            const meta = promptMetadata[setId];
+                                            const isSelected = (settings.promptSet || 'default') === setId;
+                                            const completeness = PromptService.getSetCompleteness(setId);
 
-                                        return (
-                                            <button
-                                                key={setId}
-                                                onClick={() => updateSetting('promptSet', setId)}
-                                                className={`w-full text-left p-3 rounded-lg border transition-all ${isSelected
-                                                    ? 'bg-sky-500/10 border-sky-500/50 ring-1 ring-sky-500/30'
-                                                    : 'bg-slate-950/70 border-slate-700/70 hover:border-slate-600 hover:bg-slate-900/60'
-                                                    }`}
-                                            >
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className={`text-sm font-semibold ${isSelected ? 'text-sky-300' : 'text-slate-100'}`}>
-                                                                {meta?.name || setId}
-                                                            </span>
-                                                            {isSelected && (
-                                                                <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase bg-sky-500/20 text-sky-300 rounded">
-                                                                    Active
+                                            return (
+                                                <button
+                                                    key={setId}
+                                                    onClick={() => updateSetting('promptSet', setId)}
+                                                    className={`w-full text-left p-3 rounded-lg border transition-all ${isSelected
+                                                        ? 'bg-sky-500/10 border-sky-500/50 ring-1 ring-sky-500/30'
+                                                        : 'bg-slate-950/70 border-slate-700/70 hover:border-slate-600 hover:bg-slate-900/60'
+                                                        }`}
+                                                >
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className={`text-sm font-semibold ${isSelected ? 'text-sky-300' : 'text-slate-100'}`}>
+                                                                    {meta?.name || setId}
                                                                 </span>
-                                                            )}
-                                                            {/* Only show warning for user-created sets without meta.json */}
-                                                            {completeness.missing.length > 0 && setId !== 'default' && !PromptService.hasMetaFile(setId) && (
-                                                                <span className="px-1.5 py-0.5 text-[9px] font-medium bg-amber-500/20 text-amber-400 rounded" title={`Missing: ${completeness.missing.join(', ')}`}>
-                                                                    {completeness.present}/{completeness.total} prompts
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <p className="text-[11px] text-slate-300 mt-1 line-clamp-2">
-                                                            {meta?.description || `Prompt set: ${setId}`}
-                                                        </p>
-                                                        {meta?.symbols && meta.symbols.length > 0 && (
-                                                            <div className="flex items-center gap-1 mt-2">
-                                                                <span className="text-[9px] text-slate-400 uppercase">Symbols:</span>
-                                                                <span className="text-[11px] text-slate-300 font-mono">
-                                                                    {meta.symbols.slice(0, 8).join(' ')}
-                                                                    {meta.symbols.length > 8 && '...'}
-                                                                </span>
+                                                                {isSelected && (
+                                                                    <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase bg-sky-500/20 text-sky-300 rounded">
+                                                                        Active
+                                                                    </span>
+                                                                )}
+                                                                {/* Only show warning for user-created sets without meta.json */}
+                                                                {completeness.missing.length > 0 && setId !== 'default' && !PromptService.hasMetaFile(setId) && (
+                                                                    <span className="px-1.5 py-0.5 text-[9px] font-medium bg-amber-500/20 text-amber-400 rounded" title={`Missing: ${completeness.missing.join(', ')}`}>
+                                                                        {completeness.present}/{completeness.total} prompts
+                                                                    </span>
+                                                                )}
                                                             </div>
-                                                        )}
-                                                    </div>
-                                                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${isSelected
-                                                        ? 'border-sky-500 bg-sky-500'
-                                                        : 'border-slate-600'
-                                                        }`}>
-                                                        {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
-                                                    </div>
-                                                </div>
-                                                {meta?.features && meta.features.length > 0 && isSelected && (
-                                                    <div className="mt-3 pt-2 border-t border-slate-700/70">
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {meta.features.map((feature, i) => (
-                                                                <span key={i} className="px-1.5 py-0.5 text-[9px] bg-slate-900/60 text-slate-300 rounded">
-                                                                    {feature}
-                                                                </span>
-                                                            ))}
+                                                            <p className="text-[11px] text-slate-300 mt-1 line-clamp-2">
+                                                                {meta?.description || `Prompt set: ${setId}`}
+                                                            </p>
+                                                            {meta?.symbols && meta.symbols.length > 0 && (
+                                                                <div className="flex items-center gap-1 mt-2">
+                                                                    <span className="text-[9px] text-slate-400 uppercase">Symbols:</span>
+                                                                    <span className="text-[11px] text-slate-300 font-mono">
+                                                                        {meta.symbols.slice(0, 8).join(' ')}
+                                                                        {meta.symbols.length > 8 && '...'}
+                                                                    </span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${isSelected
+                                                            ? 'border-sky-500 bg-sky-500'
+                                                            : 'border-slate-600'
+                                                            }`}>
+                                                            {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
                                                         </div>
                                                     </div>
-                                                )}
-                                            </button>
-                                        );
-                                    })}
+                                                    {meta?.features && meta.features.length > 0 && isSelected && (
+                                                        <div className="mt-3 pt-2 border-t border-slate-700/70">
+                                                            <div className="flex flex-wrap gap-1">
+                                                                {meta.features.map((feature, i) => (
+                                                                    <span key={i} className="px-1.5 py-0.5 text-[9px] bg-slate-900/60 text-slate-300 rounded">
+                                                                        {feature}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <p className="text-[10px] text-slate-500 mt-4">
+                                        Custom prompt sets can be added by creating new folders in the <code className="text-slate-400">prompts/</code> directory with a <code className="text-slate-400">meta.json</code> file.
+                                    </p>
                                 </div>
 
-                                <p className="text-[10px] text-slate-500 mt-4">
-                                    Custom prompt sets can be added by creating new folders in the <code className="text-slate-400">prompts/</code> directory with a <code className="text-slate-400">meta.json</code> file.
-                                </p>
-                            </div>
+                                {/* Auto-routing section */}
+                                <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
+                                    <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                                        <Cpu className="w-4 h-4 text-blue-400" />
+                                        Auto-Routing (Experimental)
+                                    </h3>
 
-                            {/* Auto-routing section */}
-                            <div className="bg-slate-950/70 rounded-lg p-4 border border-slate-800/70">
-                                <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                                    <Cpu className="w-4 h-4 text-blue-400" />
-                                    Auto-Routing (Experimental)
-                                </h3>
+                                    <div className="space-y-3">
+                                        {/* Enable toggle */}
+                                        <label className="flex items-center justify-between cursor-pointer">
+                                            <div>
+                                                <span className="text-xs text-slate-200">Enable auto-routing</span>
+                                                <p className="text-[10px] text-slate-400">Automatically select prompt set based on query type</p>
+                                            </div>
+                                            <button
+                                                role="switch"
+                                                aria-checked={settings.autoRouteEnabled}
+                                                aria-label="Enable auto-routing"
+                                                onClick={() => updateSetting('autoRouteEnabled', !settings.autoRouteEnabled)}
+                                                className={`relative w-10 h-5 rounded-full transition-colors ${settings.autoRouteEnabled ? 'bg-blue-600' : 'bg-slate-800/70'
+                                                    }`}
+                                            >
+                                                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${settings.autoRouteEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                                                    }`} />
+                                            </button>
+                                        </label>
 
-                                <div className="space-y-3">
-                                    {/* Enable toggle */}
-                                    <label className="flex items-center justify-between cursor-pointer">
-                                        <div>
-                                            <span className="text-xs text-slate-200">Enable auto-routing</span>
-                                            <p className="text-[10px] text-slate-400">Automatically select prompt set based on query type</p>
-                                        </div>
-                                        <button
-                                            role="switch"
-                                            aria-checked={settings.autoRouteEnabled}
-                                            aria-label="Enable auto-routing"
-                                            onClick={() => updateSetting('autoRouteEnabled', !settings.autoRouteEnabled)}
-                                            className={`relative w-10 h-5 rounded-full transition-colors ${settings.autoRouteEnabled ? 'bg-blue-600' : 'bg-slate-800/70'
-                                                }`}
-                                        >
-                                            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${settings.autoRouteEnabled ? 'translate-x-5' : 'translate-x-0.5'
-                                                }`} />
-                                        </button>
-                                    </label>
-
-                                    {/* Method selector */}
-                                    {settings.autoRouteEnabled && (
-                                        <>
-                                            <div className="space-y-1">
-                                                <label className="text-[10px] text-slate-300 font-bold uppercase">Classification Method</label>
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={() => updateSetting('autoRouteMethod', 'heuristic')}
-                                                        className={`flex-1 px-3 py-2 rounded text-xs transition-colors ${settings.autoRouteMethod === 'heuristic'
-                                                            ? 'bg-blue-600 text-white'
-                                                            : 'bg-slate-900/60 text-slate-300 hover:bg-slate-800/70'
-                                                            }`}
-                                                    >
-                                                        <div className="font-semibold">Heuristic</div>
-                                                        <div className="text-[9px] opacity-70">Fast, free, keyword-based</div>
-                                                    </button>
-                                                    <button
-                                                        onClick={() => updateSetting('autoRouteMethod', 'llm')}
-                                                        className={`flex-1 px-3 py-2 rounded text-xs transition-colors ${settings.autoRouteMethod === 'llm'
-                                                            ? 'bg-blue-600 text-white'
-                                                            : 'bg-slate-900/60 text-slate-300 hover:bg-slate-800/70'
-                                                            }`}
-                                                    >
-                                                        <div className="font-semibold">LLM</div>
-                                                        <div className="text-[9px] opacity-70">Uses model, costs tokens</div>
-                                                    </button>
+                                        {/* Method selector */}
+                                        {settings.autoRouteEnabled && (
+                                            <>
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Classification Method</label>
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={() => updateSetting('autoRouteMethod', 'heuristic')}
+                                                            className={`flex-1 px-3 py-2 rounded text-xs transition-colors ${settings.autoRouteMethod === 'heuristic'
+                                                                ? 'bg-blue-600 text-white'
+                                                                : 'bg-slate-900/60 text-slate-300 hover:bg-slate-800/70'
+                                                                }`}
+                                                        >
+                                                            <div className="font-semibold">Heuristic</div>
+                                                            <div className="text-[9px] opacity-70">Fast, free, keyword-based</div>
+                                                        </button>
+                                                        <button
+                                                            onClick={() => updateSetting('autoRouteMethod', 'llm')}
+                                                            className={`flex-1 px-3 py-2 rounded text-xs transition-colors ${settings.autoRouteMethod === 'llm'
+                                                                ? 'bg-blue-600 text-white'
+                                                                : 'bg-slate-900/60 text-slate-300 hover:bg-slate-800/70'
+                                                                }`}
+                                                        >
+                                                            <div className="font-semibold">LLM</div>
+                                                            <div className="text-[9px] opacity-70">Uses model, costs tokens</div>
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                            </div>
 
-                                            {/* Confidence threshold - applies to both methods */}
-                                            <div className="space-y-1">
-                                                <label htmlFor="confidence-threshold" className="text-[10px] text-slate-300 font-bold uppercase">
-                                                    Confidence Threshold: {((settings.autoRouteConfidenceThreshold ?? 0.3) * 100).toFixed(0)}%
-                                                </label>
-                                                <input
-                                                    id="confidence-threshold"
-                                                    type="range"
-                                                    min="0"
-                                                    max="100"
-                                                    value={(settings.autoRouteConfidenceThreshold ?? 0.3) * 100}
-                                                    onChange={(e) => updateSetting('autoRouteConfidenceThreshold', parseInt(e.target.value) / 100)}
-                                                    aria-valuetext={`${((settings.autoRouteConfidenceThreshold ?? 0.3) * 100).toFixed(0)} percent`}
-                                                    className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                                />
-                                                <p className="text-[9px] text-slate-400">Routes to recommended prompt set when confidence exceeds this threshold</p>
-                                            </div>
+                                                {/* Confidence threshold - applies to both methods */}
+                                                <div className="space-y-1">
+                                                    <label htmlFor="confidence-threshold" className="text-[10px] text-slate-300 font-bold uppercase">
+                                                        Confidence Threshold: {((settings.autoRouteConfidenceThreshold ?? 0.3) * 100).toFixed(0)}%
+                                                    </label>
+                                                    <input
+                                                        id="confidence-threshold"
+                                                        type="range"
+                                                        min="0"
+                                                        max="100"
+                                                        value={(settings.autoRouteConfidenceThreshold ?? 0.3) * 100}
+                                                        onChange={(e) => updateSetting('autoRouteConfidenceThreshold', parseInt(e.target.value) / 100)}
+                                                        aria-valuetext={`${((settings.autoRouteConfidenceThreshold ?? 0.3) * 100).toFixed(0)} percent`}
+                                                        className="w-full h-2 bg-slate-900/60 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                    />
+                                                    <p className="text-[9px] text-slate-400">Routes to recommended prompt set when confidence exceeds this threshold</p>
+                                                </div>
 
-                                            {/* LLM-specific options */}
-                                            {settings.autoRouteMethod === 'llm' && (
-                                                <div className="space-y-3 p-3 bg-slate-950/70 rounded-lg border border-slate-800/70">
-                                                    <h4 className="text-[10px] text-slate-300 font-bold uppercase">LLM Classifier Configuration</h4>
+                                                {/* LLM-specific options */}
+                                                {settings.autoRouteMethod === 'llm' && (
+                                                    <div className="space-y-3 p-3 bg-slate-950/70 rounded-lg border border-slate-800/70">
+                                                        <h4 className="text-[10px] text-slate-300 font-bold uppercase">LLM Classifier Configuration</h4>
 
-                                                    {/* Provider selector */}
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        <div className="space-y-1">
-                                                            <label className="text-[10px] text-slate-400 font-bold uppercase">Provider</label>
-                                                            <select
-                                                                value={settings.autoRouteLlmProvider || ProviderType.Gemini}
-                                                                onChange={e => updateSetting('autoRouteLlmProvider', e.target.value as ProviderType)}
-                                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
-                                                            >
-                                                                <option value={ProviderType.Gemini}>Gemini</option>
-                                                                <option value={ProviderType.External}>External</option>
-                                                            </select>
-                                                        </div>
-                                                        {settings.autoRouteLlmProvider === ProviderType.External && (
+                                                        {/* Provider selector */}
+                                                        <div className="grid grid-cols-2 gap-3">
                                                             <div className="space-y-1">
-                                                                <label className="text-[10px] text-slate-400 font-bold uppercase">Service</label>
+                                                                <label className="text-[10px] text-slate-400 font-bold uppercase">Provider</label>
                                                                 <select
-                                                                    value={settings.autoRouteLlmExternalProvider || ''}
-                                                                    onChange={e => updateSetting('autoRouteLlmExternalProvider', e.target.value)}
+                                                                    value={settings.autoRouteLlmProvider}
+                                                                    onChange={e => updateSetting('autoRouteLlmProvider', e.target.value as ProviderType)}
                                                                     className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
                                                                 >
-                                                                    <option value="">Select provider...</option>
-                                                                    {AVAILABLE_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}
+                                                                    <option value={ProviderType.External}>External</option>
                                                                 </select>
                                                             </div>
-                                                        )}
-                                                    </div>
+                                                            {settings.autoRouteLlmProvider === ProviderType.External && (
+                                                                <div className="space-y-1">
+                                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Service</label>
+                                                                    <select
+                                                                        value={settings.autoRouteLlmExternalProvider || ''}
+                                                                        onChange={e => updateSetting('autoRouteLlmExternalProvider', e.target.value)}
+                                                                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
+                                                                    >
+                                                                        <option value="">Select provider...</option>
+                                                                        {AVAILABLE_PROVIDERS.map(ep => <option key={ep} value={ep}>{ep}</option>)}
+                                                                    </select>
+                                                                </div>
+                                                            )}
+                                                        </div>
 
-                                                    {/* External provider options */}
-                                                {settings.autoRouteLlmProvider === ProviderType.External && (
-                                                        <>
+                                                        {/* External provider options */}
+                                                        {settings.autoRouteLlmProvider === ProviderType.External && (
+                                                            <>
+                                                                <div className="space-y-1">
+                                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">API Key</label>
+                                                                    <input
+                                                                        type="password"
+                                                                        value={settings.autoRouteLlmApiKey || ''}
+                                                                        onChange={e => updateSetting('autoRouteLlmApiKey', e.target.value)}
+                                                                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
+                                                                        placeholder={settings.autoRouteLlmExternalProvider && SettingsService.getApiKey(settings.autoRouteLlmExternalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Model ID</label>
+                                                                    <input
+                                                                        type="text"
+                                                                        value={settings.autoRouteLlmModel || ''}
+                                                                        onChange={e => updateSetting('autoRouteLlmModel', e.target.value)}
+                                                                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
+                                                                        placeholder="e.g., gpt-4o-mini, claude-3-haiku"
+                                                                    />
+                                                                </div>
+                                                                {settings.autoRouteLlmExternalProvider === ExternalProvider.Other && (
+                                                                    <div className="space-y-1">
+                                                                        <label className="text-[10px] text-slate-400 font-bold uppercase">Base URL</label>
+                                                                        <input
+                                                                            type="text"
+                                                                            value={settings.autoRouteLlmCustomBaseUrl || ''}
+                                                                            onChange={e => updateSetting('autoRouteLlmCustomBaseUrl', e.target.value)}
+                                                                            className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
+                                                                            placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                            </>
+                                                        )}
+
+                                                        {/* Gemini model option */}
+                                                        {settings.autoRouteLlmProvider !== ProviderType.External && (
                                                             <div className="space-y-1">
-                                                                <label className="text-[10px] text-slate-400 font-bold uppercase">API Key</label>
-                                                                <input
-                                                                    type="password"
-                                                                    value={settings.autoRouteLlmApiKey || ''}
-                                                                    onChange={e => updateSetting('autoRouteLlmApiKey', e.target.value)}
-                                                                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
-                                                                    placeholder={settings.autoRouteLlmExternalProvider && SettingsService.getApiKey(settings.autoRouteLlmExternalProvider) ? "Using Global Key (Settings)" : "Enter API Key..."}
-                                                                />
-                                                            </div>
-                                                            <div className="space-y-1">
-                                                                <label className="text-[10px] text-slate-400 font-bold uppercase">Model ID</label>
+                                                                <label className="text-[10px] text-slate-400 font-bold uppercase">Model (optional)</label>
                                                                 <input
                                                                     type="text"
                                                                     value={settings.autoRouteLlmModel || ''}
                                                                     onChange={e => updateSetting('autoRouteLlmModel', e.target.value)}
                                                                     className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
-                                                                    placeholder="e.g., gpt-4o-mini, claude-3-haiku"
+                                                                    placeholder="Leave empty to use default"
                                                                 />
                                                             </div>
-                                                    {settings.autoRouteLlmExternalProvider === ExternalProvider.Other && (
-                                                                <div className="space-y-1">
-                                                                    <label className="text-[10px] text-slate-400 font-bold uppercase">Base URL</label>
-                                                                    <input
-                                                                        type="text"
-                                                                        value={settings.autoRouteLlmCustomBaseUrl || ''}
-                                                                        onChange={e => updateSetting('autoRouteLlmCustomBaseUrl', e.target.value)}
-                                                                        className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
-                                                                        placeholder={SettingsService.getCustomBaseUrl() || "https://api.example.com/v1"}
-                                                                    />
-                                                                </div>
-                                                            )}
-                                                        </>
-                                                    )}
+                                                        )}
 
-                                                    {/* Gemini model option */}
-                                                {settings.autoRouteLlmProvider !== ProviderType.External && (
-                                                        <div className="space-y-1">
-                                                            <label className="text-[10px] text-slate-400 font-bold uppercase">Model (optional)</label>
-                                                            <input
-                                                                type="text"
-                                                                value={settings.autoRouteLlmModel || ''}
-                                                                onChange={e => updateSetting('autoRouteLlmModel', e.target.value)}
-                                                                className="w-full bg-slate-950 border border-slate-700/70 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
-                                                                placeholder="Leave empty to use default"
-                                                            />
-                                                        </div>
-                                                    )}
+                                                        <p className="text-[9px] text-slate-400">Use a fast/cheap model for classification (e.g., gemini-1.5-flash, gpt-4o-mini)</p>
+                                                    </div>
+                                                )}
 
-                                                    <p className="text-[9px] text-slate-400">Use a fast/cheap model for classification (e.g., gemini-1.5-flash, gpt-4o-mini)</p>
-                                                </div>
-                                            )}
+                                                {/* Task → Prompt mapping (editable) */}
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] text-slate-300 font-bold uppercase">Task → Prompt Mapping</label>
+                                                    <p className="text-[9px] text-slate-400 mb-2">Customize which prompt set handles each task type</p>
+                                                    <div className="bg-slate-950/70 rounded p-2 space-y-1.5">
+                                                        {TaskClassifierService.getTaskTypes().map(task => {
+                                                            const effectiveMapping = TaskClassifierService.getEffectiveMapping(settings.taskPromptMapping);
+                                                            const currentValue = effectiveMapping[task as keyof typeof effectiveMapping];
+                                                            const defaultValue = TASK_PROMPT_MAPPING[task as keyof typeof TASK_PROMPT_MAPPING];
+                                                            const isCustomized = settings.taskPromptMapping?.[task] && settings.taskPromptMapping[task] !== defaultValue;
 
-                                            {/* Task → Prompt mapping (editable) */}
-                                            <div className="space-y-1">
-                                                <label className="text-[10px] text-slate-300 font-bold uppercase">Task → Prompt Mapping</label>
-                                                <p className="text-[9px] text-slate-400 mb-2">Customize which prompt set handles each task type</p>
-                                                <div className="bg-slate-950/70 rounded p-2 space-y-1.5">
-                                                    {TaskClassifierService.getTaskTypes().map(task => {
-                                                        const effectiveMapping = TaskClassifierService.getEffectiveMapping(settings.taskPromptMapping);
-                                                        const currentValue = effectiveMapping[task as keyof typeof effectiveMapping];
-                                                        const defaultValue = TASK_PROMPT_MAPPING[task as keyof typeof TASK_PROMPT_MAPPING];
-                                                        const isCustomized = settings.taskPromptMapping?.[task] && settings.taskPromptMapping[task] !== defaultValue;
-
-                                                        return (
-                                                            <div key={task} className="flex items-center gap-2">
-                                                                <span className="text-[10px] text-slate-300 font-mono w-24">{task}</span>
-                                                                <span className="text-slate-500">→</span>
-                                                                <select
-                                                                    aria-label={`Prompt set for ${task} tasks`}
-                                                                    value={currentValue}
-                                                                    onChange={(e) => {
-                                                                        const newMapping = { ...settings.taskPromptMapping };
-                                                                        if (e.target.value === defaultValue) {
-                                                                            delete newMapping[task];
-                                                                        } else {
-                                                                            newMapping[task] = e.target.value;
-                                                                        }
-                                                                        updateSetting('taskPromptMapping', Object.keys(newMapping).length > 0 ? newMapping : undefined);
-                                                                    }}
-                                                                    className={`flex-1 bg-slate-950 border rounded px-2 py-1 text-[10px] focus:outline-none ${isCustomized
-                                                                        ? 'border-blue-500/50 text-blue-300'
-                                                                        : 'border-slate-700/70 text-slate-200'
-                                                                        }`}
-                                                                >
-                                                                    {availablePromptSets.map(set => (
-                                                                        <option key={set} value={set}>
-                                                                            {set}{set === defaultValue ? ' (default)' : ''}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                                {isCustomized && (
-                                                                    <button
-                                                                        onClick={() => {
+                                                            return (
+                                                                <div key={task} className="flex items-center gap-2">
+                                                                    <span className="text-[10px] text-slate-300 font-mono w-24">{task}</span>
+                                                                    <span className="text-slate-500">→</span>
+                                                                    <select
+                                                                        aria-label={`Prompt set for ${task} tasks`}
+                                                                        value={currentValue}
+                                                                        onChange={(e) => {
                                                                             const newMapping = { ...settings.taskPromptMapping };
-                                                                            delete newMapping[task];
+                                                                            if (e.target.value === defaultValue) {
+                                                                                delete newMapping[task];
+                                                                            } else {
+                                                                                newMapping[task] = e.target.value;
+                                                                            }
                                                                             updateSetting('taskPromptMapping', Object.keys(newMapping).length > 0 ? newMapping : undefined);
                                                                         }}
-                                                                        className="text-slate-400 hover:text-slate-200 text-[10px]"
-                                                                        title="Reset to default"
-                                                                        aria-label={`Reset ${task} mapping to default`}
+                                                                        className={`flex-1 bg-slate-950 border rounded px-2 py-1 text-[10px] focus:outline-none ${isCustomized
+                                                                            ? 'border-blue-500/50 text-blue-300'
+                                                                            : 'border-slate-700/70 text-slate-200'
+                                                                            }`}
                                                                     >
-                                                                        ↺
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                    <div className="flex items-center gap-2 pt-1.5 border-t border-slate-800/70">
-                                                        <span className="text-[10px] text-slate-400 font-mono w-24">unknown</span>
-                                                        <span className="text-slate-500">→</span>
-                                                        <span className="text-[10px] text-slate-400 flex-1">{settings.promptSet || 'default'} (your default)</span>
+                                                                        {availablePromptSets.map(set => (
+                                                                            <option key={set} value={set}>
+                                                                                {set}{set === defaultValue ? ' (default)' : ''}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                    {isCustomized && (
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                const newMapping = { ...settings.taskPromptMapping };
+                                                                                delete newMapping[task];
+                                                                                updateSetting('taskPromptMapping', Object.keys(newMapping).length > 0 ? newMapping : undefined);
+                                                                            }}
+                                                                            className="text-slate-400 hover:text-slate-200 text-[10px]"
+                                                                            title="Reset to default"
+                                                                            aria-label={`Reset ${task} mapping to default`}
+                                                                        >
+                                                                            ↺
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                        <div className="flex items-center gap-2 pt-1.5 border-t border-slate-800/70">
+                                                            <span className="text-[10px] text-slate-400 font-mono w-24">unknown</span>
+                                                            <span className="text-slate-500">→</span>
+                                                            <span className="text-[10px] text-slate-400 flex-1">{settings.promptSet || 'default'} (your default)</span>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        </>
-                                    )}
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
                         </CollapsibleSection>
                     )}
                 </div>

@@ -35,8 +35,10 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     promptSchemaOutput: promptSchema?.output?.map(f => ({ name: f.name, optional: f.optional }))
   });
 
-  if (useNativeOutput) {
-    // Native mode: use system prompt as-is, no JSON output instructions
+  const splitFieldRequests = generationParams?.splitFieldRequests ?? false;
+
+  if (useNativeOutput || splitFieldRequests) {
+    // Native mode or split field mode: use system prompt as-is, no JSON output instructions
     enhancedSystemPrompt = config.systemPrompt || '';
   } else if (config.systemPrompt) {
     if (structuredOutput) {

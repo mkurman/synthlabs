@@ -91,6 +91,11 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'HuggingFace Inference',
     description: 'HF Inference API'
   },
+  'gemini': {
+    url: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    name: 'Google Gemini',
+    description: 'Gemini models via OpenAI-compatible API'
+  },
   'other': {
     url: '',
     name: 'Custom Endpoint',
@@ -258,3 +263,145 @@ export const DEFAULT_FALLBACK_MODELS: Partial<Record<ModelListProvider, Provider
         { id: 'custom-model', name: 'Custom Model', provider: ExternalProvider.Other },
     ],
 };
+
+// ============================================================================
+// Model Context Limits - For Context Management
+// ============================================================================
+
+/**
+ * Known context window sizes for popular models.
+ * Used for automatic context compaction.
+ * Format: partial model ID match -> context limit in tokens
+ */
+export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+    // OpenAI models
+    'gpt-4o': 128000,
+    'gpt-4o-mini': 128000,
+    'gpt-4-turbo': 128000,
+    'gpt-4-32k': 32768,
+    'gpt-4': 8192,
+    'gpt-3.5-turbo-16k': 16384,
+    'gpt-3.5-turbo': 4096,
+    'o1': 200000,
+    'o1-mini': 128000,
+    'o1-preview': 128000,
+    'o3-mini': 200000,
+
+    // Anthropic Claude models
+    'claude-opus-4': 200000,
+    'claude-sonnet-4': 200000,
+    'claude-3.7-sonnet': 200000,
+    'claude-3-5-sonnet': 200000,
+    'claude-3-5-haiku': 200000,
+    'claude-3-opus': 200000,
+    'claude-3-sonnet': 200000,
+    'claude-3-haiku': 200000,
+    'claude-2': 100000,
+
+    // Google Gemini models
+    'gemini-2.0-flash': 1000000,
+    'gemini-2.0-pro': 1000000,
+    'gemini-1.5-pro': 2000000,
+    'gemini-1.5-flash': 1000000,
+    'gemini-1.0-pro': 32768,
+
+    // Meta Llama models
+    'llama-3.3-70b': 128000,
+    'llama-3.1-405b': 128000,
+    'llama-3.1-70b': 128000,
+    'llama-3.1-8b': 128000,
+    'llama-3-70b': 8192,
+    'llama-3-8b': 8192,
+    'llama-2-70b': 4096,
+    'llama-2-13b': 4096,
+    'llama-2-7b': 4096,
+
+    // Mistral models
+    'mixtral-8x22b': 65536,
+    'mixtral-8x7b': 32768,
+    'mistral-large': 128000,
+    'mistral-medium': 32768,
+    'mistral-small': 32768,
+    'mistral-7b': 32768,
+    'mistral-nemo': 128000,
+
+    // Qwen models
+    'qwen2.5-72b': 131072,
+    'qwen2.5-32b': 131072,
+    'qwen2.5-14b': 131072,
+    'qwen2.5-7b': 131072,
+    'qwq-32b': 32768,
+    'qwen-max': 32768,
+    'qwen-plus': 131072,
+    'qwen-turbo': 131072,
+
+    // DeepSeek models
+    'deepseek-v3': 65536,
+    'deepseek-r1': 65536,
+    'deepseek-chat': 65536,
+    'deepseek-coder': 16384,
+
+    // Other models
+    'gemma-2-27b': 8192,
+    'gemma-2-9b': 8192,
+    'phi-4': 16384,
+    'phi-3': 128000,
+    'command-r-plus': 128000,
+    'command-r': 128000,
+};
+
+/**
+ * Default context limit when model is not found in the map.
+ */
+export const DEFAULT_CONTEXT_LIMIT = 8192;
+
+/**
+ * Get context limit for a model by matching partial model ID.
+ */
+export function getModelContextLimit(modelId: string): number {
+    if (!modelId) return DEFAULT_CONTEXT_LIMIT;
+
+    const normalizedId = modelId.toLowerCase();
+
+    // Try exact match first
+    if (MODEL_CONTEXT_LIMITS[normalizedId]) {
+        return MODEL_CONTEXT_LIMITS[normalizedId];
+    }
+
+    // Try partial match (model ID contains key)
+    for (const [key, limit] of Object.entries(MODEL_CONTEXT_LIMITS)) {
+        if (normalizedId.includes(key.toLowerCase())) {
+            return limit;
+        }
+    }
+
+    return DEFAULT_CONTEXT_LIMIT;
+}
+
+// ============================================================================
+// Context Compaction Strategies
+// ============================================================================
+
+export enum ContextCompactionStrategy {
+    /** Remove oldest messages first (keep recent context) */
+    TruncateOld = 'truncate-old',
+    /** Keep first message (system) + last N messages, remove middle */
+    TruncateMiddle = 'truncate-middle',
+    /** Summarize older messages using LLM (preserves key info) */
+    Summarize = 'summarize',
+    /** No compaction - let API handle truncation */
+    None = 'none',
+}
+
+export interface ContextCompactionConfig {
+    /** Strategy to use for compaction */
+    strategy: ContextCompactionStrategy;
+    /** Reserve this many tokens for the response */
+    responseReserve: number;
+    /** Buffer percentage below context limit to trigger compaction (0.8 = 80%) */
+    triggerThreshold: number;
+    /** For truncate-middle: how many recent messages to preserve */
+    keepRecentMessages: number;
+    /** For summarize: the prompt to use for summarization */
+    summarizePrompt: string;
+}

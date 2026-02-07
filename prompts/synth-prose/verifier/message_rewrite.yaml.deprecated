@@ -13,9 +13,6 @@ prompt: |
   - Use `### N. Title` section headers with domain-appropriate titles
   - Each section should contain a coherent reasoning step
   - Use symbols inline: ● fact | ◐ inference | ○ speculation | ✓ verified | → flow | ∴ conclusion | ※ constraint | ⚠ warning | ? unknown
-  
-  Return ONLY the rewritten message as {"response": "..."} JSON object.
-
 output:
   - name: response
     description: Rewritten message content

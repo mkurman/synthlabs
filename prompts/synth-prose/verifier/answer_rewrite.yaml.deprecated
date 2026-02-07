@@ -9,9 +9,6 @@ prompt: |
   - Appropriately concise or detailed for the question type
   
   Preserve the factual content and conclusions from the original.
-  
-  Return ONLY the rewritten answer as {"response": "..."} JSON object.
-
 output:
   - name: response
     description: Rewritten answer with improved clarity, accuracy, and formatting

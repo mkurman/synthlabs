@@ -1,4 +1,5 @@
 import type { SessionListFilters } from '../types';
+import { DbProvider } from '../interfaces/enums';
 
 // --- Constants ---
 const DEFAULT_BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
@@ -8,6 +9,22 @@ const isElectron = typeof navigator !== 'undefined' && /Electron/i.test(navigato
 const defaultPortStart = isElectron && import.meta.env.MODE === 'production' ? 8788 : 8787;
 const DEFAULT_PORT_START = Number(import.meta.env.VITE_BACKEND_PORT_START || defaultPortStart);
 const DEFAULT_PORT_RANGE = Number(import.meta.env.VITE_BACKEND_PORT_RANGE || 10);
+const MAX_REQUEST_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+interface RequestError extends Error {
+    status?: number;
+    body?: string;
+}
+
+const buildHttpError = async (response: Response): Promise<RequestError> => {
+    const text = await response.text();
+    const error = new Error(text || `Request failed: ${response.status}`) as RequestError;
+    error.status = response.status;
+    error.body = text;
+    return error;
+};
 
 let resolvedBackendUrl: string | null = null;
 let resolvingBackendUrl: Promise<string> | null = null;
@@ -145,7 +162,7 @@ const resolveBackendUrl = async (): Promise<string> => {
     return discoverBackendUrl();
 };
 
-const getBackendUrl = async (): Promise<string> => {
+export const getBackendUrl = async (): Promise<string> => {
     if (resolvedBackendUrl) return resolvedBackendUrl;
     if (!resolvingBackendUrl) {
         resolvingBackendUrl = resolveBackendUrl().finally(() => {
@@ -165,35 +182,43 @@ const buildUrl = async (path: string) => {
 };
 
 const requestJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
-    const url = await buildUrl(path);
-    try {
-        const response = await fetch(url, {
-            headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
-            ...init
-        });
-        if (!response.ok) {
-            const text = await response.text();
-            throw new Error(text || `Request failed: ${response.status}`);
-        }
-        return response.json() as Promise<T>;
-    } catch (error) {
-        resolvedBackendUrl = null;
-        const discovered = await resolveBackendUrl();
-        if (discovered) {
-            resolvedBackendUrl = discovered;
-            const retryUrl = `${normalizeBaseUrl(discovered)}${path}`;
-            const retryResponse = await fetch(retryUrl, {
+    const maxAttempts = MAX_REQUEST_RETRIES + 1;
+    let lastError: unknown;
+    let baseUrl = await getBackendUrl();
+    let didRediscover = false;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+            if (!baseUrl) {
+                throw new Error('Backend URL is not configured.');
+            }
+            const url = `${normalizeBaseUrl(baseUrl)}${path}`;
+            const response = await fetch(url, {
                 headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
                 ...init
             });
-            if (!retryResponse.ok) {
-                const text = await retryResponse.text();
-                throw new Error(text || `Request failed: ${retryResponse.status}`);
+            if (!response.ok) {
+                throw await buildHttpError(response);
             }
-            return retryResponse.json() as Promise<T>;
+            return response.json() as Promise<T>;
+        } catch (error) {
+            lastError = error;
+            if (!didRediscover) {
+                resolvedBackendUrl = null;
+                baseUrl = await resolveBackendUrl();
+                if (baseUrl) {
+                    resolvedBackendUrl = baseUrl;
+                }
+                didRediscover = true;
+            }
+            if (attempt >= maxAttempts - 1) {
+                throw lastError;
+            }
+            await sleep(RETRY_DELAY_MS);
         }
-        throw error;
     }
+
+    throw lastError || new Error('Request failed after retries.');
 };
 
 export const isBackendEnabled = () => Boolean(DEFAULT_BACKEND_URL || getStoredOverride());
@@ -264,13 +289,25 @@ export const deleteSessionWithLogs = async (id: string) => {
     return result;
 };
 
-export const fetchLogs = async (sessionUid?: string, limit = 100) => {
+export const fetchLogs = async (
+    sessionUid?: string,
+    limit = 100,
+    offset = 0,
+    forceRefresh = false
+) => {
     const query = new URLSearchParams();
     query.set('limit', String(limit));
+    if (offset > 0) {
+        query.set('offset', String(offset));
+    }
     if (sessionUid) {
         query.set('sessionUid', sessionUid);
     }
-    const result = await requestJson<{ logs: unknown[] }>(`/api/logs?${query.toString()}`);
+    if (forceRefresh) {
+        query.set('forceRefresh', '1');
+        query.set('_ts', String(Date.now()));
+    }
+    const result = await requestJson<{ logs: unknown[] }>(`/api/logs?${query.toString()}`, forceRefresh ? { cache: 'no-store' } : undefined);
     return result.logs;
 };
 
@@ -283,7 +320,8 @@ export interface LogsPageResult {
 export const fetchLogsPage = async (
     sessionUid?: string,
     limit = 500,
-    cursorCreatedAt?: string | number | null
+    cursorCreatedAt?: string | number | null,
+    forceRefresh = false
 ): Promise<LogsPageResult> => {
     const query = new URLSearchParams();
     query.set('limit', String(limit));
@@ -293,17 +331,21 @@ export const fetchLogsPage = async (
     if (cursorCreatedAt !== undefined && cursorCreatedAt !== null && `${cursorCreatedAt}`.length > 0) {
         query.set('cursorCreatedAt', String(cursorCreatedAt));
     }
-    return requestJson<LogsPageResult>(`/api/logs?${query.toString()}`);
+    if (forceRefresh) {
+        query.set('forceRefresh', '1');
+        query.set('_ts', String(Date.now()));
+    }
+    return requestJson<LogsPageResult>(`/api/logs?${query.toString()}`, forceRefresh ? { cache: 'no-store' } : undefined);
 };
 
-export const fetchAllLogs = async (sessionUid?: string): Promise<unknown[]> => {
+export const fetchAllLogs = async (sessionUid?: string, forceRefresh = false): Promise<unknown[]> => {
     const pageSize = 500;
     const maxPages = 100; // Safety cap: up to 50k logs per request chain
     let cursorCreatedAt: string | number | null | undefined = undefined;
     const allLogs: unknown[] = [];
 
     for (let page = 0; page < maxPages; page += 1) {
-        const { logs, hasMore, nextCursorCreatedAt } = await fetchLogsPage(sessionUid, pageSize, cursorCreatedAt);
+        const { logs, hasMore, nextCursorCreatedAt } = await fetchLogsPage(sessionUid, pageSize, cursorCreatedAt, forceRefresh);
         if (logs.length > 0) {
             allLogs.push(...logs);
         }
@@ -322,10 +364,11 @@ export const fetchLog = async (id: string) => {
 };
 
 export const updateLog = async (id: string, updates: Record<string, unknown>) => {
-    await requestJson<{ ok: boolean }>(`/api/logs/${id}`, {
+    const result = await requestJson<{ ok: boolean; log?: unknown }>(`/api/logs/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(updates)
     });
+    return result.log || null;
 };
 
 export const deleteLog = async (id: string) => {
@@ -444,4 +487,164 @@ export const setServiceAccountJson = async (json: string) => {
         method: 'POST',
         body: JSON.stringify({ json })
     });
+};
+
+export interface BackendJobData {
+    id: string;
+    type: string;
+    status: string;
+    progress?: Record<string, unknown>;
+    result?: Record<string, unknown> | null;
+    error?: string | null;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export const fetchJobs = async (params?: {
+    type?: string;
+    status?: string;
+    limit?: number;
+}): Promise<BackendJobData[]> => {
+    const query = new URLSearchParams();
+    if (params?.type) query.set('type', params.type);
+    if (params?.status) query.set('status', params.status);
+    if (params?.limit) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    const { jobs } = await requestJson<{ jobs: BackendJobData[] }>(`/api/jobs${qs ? `?${qs}` : ''}`);
+    return jobs;
+};
+
+export const cancelJob = async (jobId: string): Promise<void> => {
+    await requestJson(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+};
+
+export const rerunJob = async (jobId: string, encryptedApiKey: string): Promise<string> => {
+    const { jobId: newJobId } = await requestJson<{ jobId: string }>(`/api/jobs/${jobId}/rerun`, {
+        method: 'POST',
+        body: JSON.stringify({ apiKey: encryptedApiKey }),
+    });
+    return newJobId;
+};
+
+export const startAutoScore = async (params: {
+    sessionId: string;
+    provider: string;
+    model: string;
+    baseUrl: string;
+    apiKey: string;
+    limit?: number;
+    offset?: number;
+    sleepMs?: number;
+    concurrency?: number;
+    maxRetries?: number;
+    retryDelay?: number;
+    force?: boolean;
+    itemIds?: string[];
+}) => {
+    const { jobId } = await requestJson<{ jobId: string }>('/api/jobs/autoscore', {
+        method: 'POST',
+        body: JSON.stringify(params)
+    });
+    return jobId;
+};
+
+export const startRewrite = async (params: {
+    sessionId: string;
+    provider: string;
+    model: string;
+    baseUrl: string;
+    apiKey: string;
+    fields: string[];
+    limit?: number;
+    offset?: number;
+    sleepMs?: number;
+    concurrency?: number;
+    maxRetries?: number;
+    retryDelay?: number;
+    systemPrompt?: string;
+    fieldPrompts?: Record<string, string>;
+    itemIds?: string[];
+}) => {
+    const { jobId } = await requestJson<{ jobId: string }>('/api/jobs/rewrite', {
+        method: 'POST',
+        body: JSON.stringify(params)
+    });
+    return jobId;
+};
+
+export interface ScoreDistributionResult {
+    sessionId: string;
+    totalItems: number;
+    scoredItems: number;
+    unscoredItems: number;
+    scoreField: string;
+    message?: string;
+    statistics?: {
+        min: string;
+        max: string;
+        average: string;
+    };
+    distribution?: Record<string, number>;
+    thresholdPreview?: Record<string, number>;
+}
+
+export const getScoreDistribution = async (
+    sessionId: string,
+    scoreField: string = 'score'
+): Promise<ScoreDistributionResult> => {
+    return requestJson<ScoreDistributionResult>(
+        `/api/sessions/${sessionId}/score-distribution?scoreField=${encodeURIComponent(scoreField)}`
+    );
+};
+
+export const startRemoveItems = async (params: {
+    sessionId: string;
+    indices?: number[];
+    scoreThreshold?: number;
+    scoreField?: string;
+    dryRun?: boolean;
+}) => {
+    const { jobId } = await requestJson<{ jobId: string }>('/api/jobs/remove-items', {
+        method: 'POST',
+        body: JSON.stringify(params)
+    });
+    return jobId;
+};
+
+// ─── Database Provider Admin ────────────────────────────────
+
+export const getDbProvider = async (): Promise<string> => {
+    const result = await requestJson<{ provider: string }>('/api/admin/db-provider');
+    return result.provider;
+};
+
+export const switchDbProvider = async (
+    provider: DbProvider,
+    connectionString?: string,
+    caCertPem?: string
+): Promise<{ ok: boolean; provider?: string }> => {
+    return requestJson<{ ok: boolean; provider?: string }>('/api/admin/db-provider', {
+        method: 'POST',
+        body: JSON.stringify({ provider, connectionString, caCertPem })
+    });
+};
+
+export const testDbConnection = async (
+    provider: DbProvider,
+    connectionString?: string,
+    caCertPem?: string
+): Promise<{ ok: boolean; error?: string }> => {
+    return requestJson<{ ok: boolean; error?: string }>('/api/admin/test-db-connection', {
+        method: 'POST',
+        body: JSON.stringify({ provider, connectionString, caCertPem })
+    });
+};
+
+// ─── Migration ──────────────────────────────────────────────
+
+export const startMigrateFromFirebase = async (): Promise<string> => {
+    const { jobId } = await requestJson<{ jobId: string }>('/api/admin/migrate-from-firebase', {
+        method: 'POST',
+    });
+    return jobId;
 };

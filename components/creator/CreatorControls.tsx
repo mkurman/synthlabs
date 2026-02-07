@@ -66,6 +66,8 @@ export default function CreatorControls(props: CreatorControlsProps) {
                     unsavedCount={unsavedCount}
                     onSyncAll={onSyncAll}
                     showMiniDbPanel={showMiniDbPanel}
+                    isStreamingEnabled={props.isStreamingEnabled}
+                    onStreamingChange={props.onStreamingChange}
                 />
             </div>
 

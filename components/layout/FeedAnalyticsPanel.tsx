@@ -43,6 +43,8 @@ export interface FeedAnalyticsPanelProps {
     rewritingField?: { itemId: string; field: LogFeedRewriteTarget } | null;
     streamingContent?: string;
     onRewrite?: (itemId: string, field: LogFeedRewriteTarget) => void;
+    // Score change prop
+    onScoreChange?: (itemId: string, score: number) => void;
 }
 
 export default function FeedAnalyticsPanel({
@@ -80,7 +82,8 @@ export default function FeedAnalyticsPanel({
     onEditValueChange,
     rewritingField,
     streamingContent,
-    onRewrite
+    onRewrite,
+    onScoreChange
 }: FeedAnalyticsPanelProps) {
     return (
         <div className="lg:col-span-8 p-4 pb-8">
@@ -128,6 +131,7 @@ export default function FeedAnalyticsPanel({
                     rewritingField={rewritingField}
                     streamingContent={streamingContent}
                     onRewrite={onRewrite}
+                    onScoreChange={onScoreChange}
                 />
             ) : (
                 <AnalyticsDashboard logs={logs} />
