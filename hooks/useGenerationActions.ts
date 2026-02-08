@@ -12,7 +12,7 @@ import {
 import { SessionService } from '../services/sessionService';
 import type { CompleteGenerationConfig, RuntimePromptConfig } from '../interfaces';
 import type { SynthLogItem } from '../types';
-import type { Environment, DataSource, AppMode } from '../interfaces/enums';
+import type { Environment, DataSource, CreatorMode } from '../interfaces/enums';
 import type { HuggingFaceConfig } from '../types';
 
 interface UseGenerationActionsOptions {
@@ -29,14 +29,14 @@ interface UseGenerationActionsOptions {
     dataSourceMode: DataSource;
     hfConfig: HuggingFaceConfig;
     manualFileName: string;
-    appMode: AppMode;
+    appMode: CreatorMode;
     getSessionData: () => any;
     setSessionUid: (uid: string) => void;
     sessionUidRef: MutableRefObject<string>;
     setSessionName: (name: string | null) => void;
-    setVisibleLogs: (logs: SynthLogItem[]) => void;
-    setTotalLogCount: (count: number) => void;
-    setFilteredLogCount: (count: number) => void;
+    setVisibleLogs: (logs: SynthLogItem[] | ((prev: SynthLogItem[]) => SynthLogItem[])) => void;
+    setTotalLogCount: (count: number | ((prev: number) => number)) => void;
+    setFilteredLogCount: (count: number | ((prev: number) => number)) => void;
     setSparklineHistory: (values: number[]) => void;
     setDbStats: (stats: { total: number; session: number }) => void;
 }
@@ -116,11 +116,10 @@ export function useGenerationActions({
     const syncAllUnsavedToDb = useCallback(async () => {
         await syncAllUnsavedToDbOp(
             sessionUid,
-            isInvalidLog,
             refreshLogs,
             updateDbStats
         );
-    }, [isInvalidLog, refreshLogs, sessionUid, updateDbStats]);
+    }, [refreshLogs, sessionUid, updateDbStats]);
 
     const saveItemToDb = useCallback(async (id: string) => {
         setSavingToDbIds((prev: Set<string>) => new Set([...prev, id]));

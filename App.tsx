@@ -1,14 +1,13 @@
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 
 import {
     SynthLogItem, ProviderType, AppMode, ExternalProvider, ApiType,
     ProgressStats, HuggingFaceConfig, DetectedColumns, DEFAULT_HF_PREFETCH_CONFIG,
     EngineMode, DeepConfig, GenerationParams, UserAgentConfig,
-    StreamingConversationState
+    StreamingConversationState, SessionListFilters
 } from './types';
 import { EXTERNAL_PROVIDERS } from './constants';
 import { PromptService } from './services/promptService';
-import * as FirebaseService from './services/firebaseService';
 import { LogStorageService } from './services/logStorageService';
 import { SettingsService } from './services/settingsService';
 import { TaskType } from './interfaces/enums';
@@ -17,9 +16,11 @@ import { buildGenerationConfig as buildGenerationConfigService, GenerationServic
 import { DataTransformService } from './services/dataTransformService';
 import { SessionService } from './services/sessionService';
 import { FileService } from './services/fileService';
+import * as backendClient from './services/backendClient';
 import { useLogManagement } from './hooks/useLogManagement';
-import { DataSource, Environment, ProviderType as ProviderTypeEnum, ExternalProvider as ExternalProviderEnum, ApiType as ApiTypeEnum, AppView, ViewMode, DeepPhase, ResponderPhase, PromptCategory, PromptRole } from './interfaces/enums';
-import type { CompleteGenerationConfig } from './interfaces';
+import { DataSource, Environment, ProviderType as ProviderTypeEnum, ExternalProvider as ExternalProviderEnum, ApiType as ApiTypeEnum, AppView, ViewMode, DeepPhase, ResponderPhase, PromptCategory, PromptRole, FeedDisplayMode, ThemeMode } from './interfaces/enums';
+import type { CompleteGenerationConfig, SessionData } from './interfaces';
+import { SessionStatus, StorageMode } from './interfaces';
 import { toast } from './services/toastService';
 import { confirmService } from './services/confirmService';
 import { useHuggingFace } from './hooks/useHuggingFace';
@@ -35,7 +36,7 @@ import { useDeepConfigActions } from './hooks/useDeepConfigActions';
 import { useStreamingHandlers } from './hooks/useStreamingHandlers';
 import { useDbStats } from './hooks/useDbStats';
 import { usePromptLifecycle } from './hooks/usePromptLifecycle';
-import { useFirebaseConfigInit } from './hooks/useFirebaseConfigInit';
+
 import { useSettingsInit } from './hooks/useSettingsInit';
 import { usePromptOptimization } from './hooks/usePromptOptimization';
 import { usePauseRef } from './hooks/usePauseRef';
@@ -44,25 +45,193 @@ import { useSparklineHistory } from './hooks/useSparklineHistory';
 import { useRowContent } from './hooks/useRowContent';
 import { useSyncedRef } from './hooks/useSyncedRef';
 import { useFieldSelection } from './hooks/useFieldSelection';
+import { useLogFeedRewriter } from './hooks/useLogFeedRewriter';
 import AppOverlays from './components/layout/AppOverlays';
-import AppMainContent from './components/layout/AppMainContent';
-import AppHeader from './components/layout/AppHeader';
+import FeedAnalyticsPanel from './components/layout/FeedAnalyticsPanel';
+import VerifierPanel from './components/VerifierPanel';
 import { useAppViewProps } from './hooks/useAppViewProps';
+import { getInitialAppView, getInitialEnvironment, useAppRouting } from './hooks/useAppRouting';
+
+// New Layout Components
+import LayoutContainer from './components/LayoutContainer';
+import LeftSidebar from './components/LeftSidebar';
+import RightSidebar from './components/RightSidebar';
+import ModeNavbar from './components/ModeNavbar';
+import CreatorControls from './components/creator/CreatorControls';
+import { sessionLoadService, SessionSummary } from './services/sessionLoadService';
+
+// Session Management
+import { useSessionManager } from './hooks/useSessionManager';
+import { useSessionAutoSave } from './hooks/useSessionAutoSave';
+import { useSessionAnalytics } from './hooks/useSessionAnalytics';
+
+// Job Monitor
+import { useJobMonitor } from './hooks/useJobMonitor';
+import JobMonitorBadge from './components/JobMonitorBadge';
+import JobMonitorPanel from './components/panels/JobMonitorPanel';
+import JobDetailModal from './components/modals/JobDetailModal';
 
 export default function App() {
     // --- State: Modes ---
-    const [appView, setAppView] = useState<AppView>(AppView.Creator); // Top Level View
+    const [appView, setAppView] = useState<AppView>(getInitialAppView); // Top Level View
     const [appMode, setAppMode] = useState<AppMode>(AppMode.Generator);
     const [engineMode, setEngineMode] = useState<EngineMode>(EngineMode.Regular);
-    const [environment, setEnvironment] = useState<Environment>(Environment.Development);
+    const [environment, setEnvironment] = useState<Environment>(getInitialEnvironment);
+    const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+        const settings = SettingsService.getSettings();
+        return settings.theme ?? ThemeMode.Dark;
+    });
     const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.Feed);
+    const [feedDisplayMode, setFeedDisplayMode] = useState<FeedDisplayMode>(FeedDisplayMode.Default);
+    const [hasSessionStarted, setHasSessionStarted] = useState(false);
+
+    const applyThemeMode = useCallback((mode: ThemeMode) => {
+        const root = document.documentElement;
+        const isDark = mode === ThemeMode.Dark;
+        root.classList.toggle(ThemeMode.Dark, isDark);
+        root.classList.toggle(ThemeMode.Light, !isDark);
+        root.setAttribute('data-theme', mode);
+    }, []);
+
+    useEffect(() => {
+        applyThemeMode(themeMode);
+    }, [applyThemeMode, themeMode]);
+
+    useEffect(() => {
+        SettingsService.waitForSettingsInit().then(() => {
+            const settings = SettingsService.getSettings();
+            if (settings.theme && settings.theme !== themeMode) {
+                setThemeMode(settings.theme);
+            }
+        });
+    }, []);
+
+    const handleThemeModeChange = useCallback((mode: ThemeMode) => {
+        setThemeMode(mode);
+        SettingsService.updateSettings({ theme: mode });
+    }, []);
 
     // --- State: Session & DB ---
-    const [sessionUid, setSessionUid] = useState<string>(crypto.randomUUID());
+    const [sessionUid, setSessionUid] = useState<string>('');
     const sessionUidRef = useSyncedRef(sessionUid);
+    const forceStartFromBeginningRef = useRef(false);
+    const [pendingRouteSessionId, setPendingRouteSessionId] = useState<string | null>(null);
+    const loadingRouteSessionRef = useRef<string | null>(null);
+
+    // Memoize routing callbacks to prevent unnecessary re-renders
+    const handleSessionNavigate = useCallback((sessionId: string) => {
+        setPendingRouteSessionId(sessionId);
+    }, []);
+
+    const handleSessionRouteClear = useCallback(() => {
+        setPendingRouteSessionId(null);
+    }, []);
+
+    useAppRouting({
+        appView,
+        environment,
+        sessionUid,
+        includeSessionUid: hasSessionStarted,
+        setAppView,
+        setEnvironment,
+        onSessionNavigate: handleSessionNavigate,
+        onSessionRouteClear: handleSessionRouteClear
+    });
+
+    // --- State: Layout & Sessions ---
+    const [isLeftSidebarOpen, setLeftSidebarOpen] = useState(true);
+    const [isRightSidebarOpen, setRightSidebarOpen] = useState(true);
+    const [isVerifierAssistantOpen, setVerifierAssistantOpen] = useState(true);
+    const [sessionsList, setSessionsList] = useState<SessionData[]>([]);
+    const [sessionFilters, setSessionFilters] = useState<SessionListFilters>({
+        search: '',
+        onlyWithLogs: false,
+        minRows: null,
+        maxRows: null,
+        appMode: null,
+        engineMode: null,
+        model: ''
+    });
+    const [hasMoreSessions, setHasMoreSessions] = useState(false);
+    const [isLoadingMoreSessions, setIsLoadingMoreSessions] = useState(false);
+
+    const refreshSessionsList = useCallback(async () => {
+        sessionLoadService.clearCache();
+        const list = await sessionLoadService.loadSessionList(true, environment, sessionFilters);
+        setSessionsList(list);
+        setHasMoreSessions(sessionLoadService.hasMoreSessions());
+    }, [environment, sessionFilters]);
+
+    const handleSessionFiltersChange = useCallback((next: SessionListFilters) => {
+        setSessionFilters(next);
+    }, []);
+
+    const handleLoadMoreSessions = useCallback(async () => {
+        if (isLoadingMoreSessions) return;
+        setIsLoadingMoreSessions(true);
+        try {
+            const more = await sessionLoadService.loadMoreSessions(environment, sessionFilters);
+            if (more.length > 0) {
+                setSessionsList(prev => [...prev, ...more]);
+            }
+            setHasMoreSessions(sessionLoadService.hasMoreSessions());
+        } finally {
+            setIsLoadingMoreSessions(false);
+        }
+    }, [environment, isLoadingMoreSessions, sessionFilters]);
+
+    const maxSessionTextLength = Number(import.meta.env.VITE_SESSION_MAX_TEXT_LEN || 10000);
+    const sanitizeSessionForBackend = useCallback((session: SessionData): SessionData => {
+        const sanitized: SessionData = { ...session };
+        delete (sanitized as unknown as { logs?: unknown }).logs;
+        delete (sanitized as unknown as { items?: unknown }).items;
+        delete (sanitized as unknown as { rows?: unknown }).rows;
+        delete (sanitized as unknown as { data?: unknown }).data;
+        delete (sanitized as unknown as { messages?: unknown }).messages;
+        delete (sanitized as unknown as { visibleLogs?: unknown }).visibleLogs;
+
+        if (sanitized.config) {
+            const configCopy = { ...sanitized.config };
+            if (configCopy.converterInputText && configCopy.converterInputText.length > maxSessionTextLength) {
+                delete configCopy.converterInputText;
+            }
+            sanitized.config = configCopy;
+        }
+        if (sanitized.dataset) {
+            if (sanitized.dataset.type === DataSource.Manual) {
+                sanitized.dataset = {
+                    type: sanitized.dataset.type,
+                    path: sanitized.dataset.path
+                };
+            } else {
+                const datasetCopy: SessionData['dataset'] = {
+                    type: sanitized.dataset.type,
+                    hfConfig: sanitized.dataset.hfConfig ? {
+                        dataset: sanitized.dataset.hfConfig.dataset,
+                        config: sanitized.dataset.hfConfig.config,
+                        split: sanitized.dataset.hfConfig.split,
+                        columnName: sanitized.dataset.hfConfig.columnName,
+                        inputColumns: sanitized.dataset.hfConfig.inputColumns,
+                        outputColumns: sanitized.dataset.hfConfig.outputColumns,
+                        reasoningColumns: sanitized.dataset.hfConfig.reasoningColumns,
+                        mcqColumn: sanitized.dataset.hfConfig.mcqColumn,
+                        messageTurnIndex: sanitized.dataset.hfConfig.messageTurnIndex,
+                        maxMultiTurnTraces: sanitized.dataset.hfConfig.maxMultiTurnTraces
+                    } : undefined
+                };
+                sanitized.dataset = datasetCopy;
+            }
+        }
+        return sanitized;
+    }, [maxSessionTextLength]);
+
+    useEffect(() => {
+        refreshSessionsList();
+    }, [refreshSessionsList]);
 
     const [sessionName, setSessionName] = useState<string | null>(null);
     const sessionNameRef = useSyncedRef(sessionName);
+    const lastPersistedSessionNameRef = useRef<string | null>(null);
 
     const [dbStats, setDbStats] = useState<{ total: number, session: number }>({ total: 0, session: 0 });
     const [sparklineHistory, setSparklineHistory] = useState<number[]>([]);
@@ -75,47 +244,6 @@ export default function App() {
     const [externalApiKey, setExternalApiKey] = useState('');
     const [externalModel, setExternalModel] = useState('anthropic/claude-3.5-sonnet');
     const [customBaseUrl, setCustomBaseUrl] = useState('');
-    
-    // --- State: Ollama Integration ---
-    const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-    const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
-    const [ollamaLoading, setOllamaLoading] = useState(false);
-
-    // Fetch Ollama models
-    const refreshOllamaModels = useCallback(async () => {
-        setOllamaLoading(true);
-        setOllamaStatus('checking');
-        try {
-            const isOnline = await checkOllamaStatus();
-            if (isOnline) {
-                setOllamaStatus('online');
-                const models = await fetchOllamaModels();
-                setOllamaModels(models);
-                // If no (valid) model selected for Ollama and models available, select first one
-                if (
-                    models.length > 0 &&
-                    externalProvider === 'ollama' &&
-                    (!externalModel || externalModel.includes('/'))
-                ) {
-                    setExternalModel(models[0].name);
-                }
-            } else {
-                setOllamaStatus('offline');
-                setOllamaModels([]);
-            }
-        } catch {
-            setOllamaStatus('offline');
-            setOllamaModels([]);
-        }
-        setOllamaLoading(false);
-    }, [externalProvider, externalModel]);
-
-    // Auto-fetch Ollama models when Ollama provider is selected
-    useEffect(() => {
-        if (externalProvider === 'ollama') {
-            refreshOllamaModels();
-        }
-    }, [externalProvider]);
 
     const {
         ollamaModels,
@@ -178,7 +306,7 @@ export default function App() {
 
 
     // --- State: Data Source ---
-    const [dataSourceMode, setDataSourceMode] = useState<DataSource>(DataSource.Synthetic);
+    const [dataSourceMode, setDataSourceMode] = useState<DataSource>(DataSource.HuggingFace);
 
     // 1. Synthetic
     const [geminiTopic, setGeminiTopic] = useState('Advanced Quantum Mechanics');
@@ -208,7 +336,7 @@ export default function App() {
 
     // --- State: Cloud Session Management ---
     const [showCloudLoadModal, setShowCloudLoadModal] = useState(false);
-    const [cloudSessions, setCloudSessions] = useState<FirebaseService.SavedSession[]>([]);
+    const [cloudSessions, setCloudSessions] = useState<SessionData[]>([]);
     const [isCloudLoading, setIsCloudLoading] = useState(false);
 
     // --- State: Task Classification / Auto-routing ---
@@ -329,11 +457,11 @@ export default function App() {
         // This handles both initial setup and when user checks/unchecks fields
         const currentSelected = generationParams.selectedFields || [];
         const newSelected = fieldSelection.selectedFields;
-        
+
         // Only update if arrays are different
         const hasChanged = currentSelected.length !== newSelected.length ||
             !currentSelected.every((field, idx) => field === newSelected[idx]);
-        
+
         if (hasChanged) {
             setGenerationParams(prev => ({
                 ...prev,
@@ -354,12 +482,14 @@ export default function App() {
         logFilter,
         showLatestOnly,
         feedPageSize,
+        isLoading: isLoadingLogs,
         setLogFilter,
         setShowLatestOnly,
         setFeedPageSize,
         refreshLogs,
         handlePageChange,
         handleDeleteLog: handleDeleteLogFromLogs,
+        updateLog,
         isInvalidLog,
         getUnsavedCount,
         setVisibleLogs,
@@ -367,6 +497,253 @@ export default function App() {
         setFilteredLogCount,
         setLogsTrigger
     } = logManagement;
+
+    // Feed Rewriter Hook
+    const feedRewriter = useLogFeedRewriter({ onUpdateLog: updateLog });
+
+    const resetSessionState = useCallback(() => {
+        setSessionUid('');
+        setSessionName(null);
+        setHasSessionStarted(false);
+        setDbStats({ total: 0, session: 0 });
+        setVisibleLogs([]);
+        setTotalLogCount(0);
+        setFilteredLogCount(0);
+        setSparklineHistory([]);
+    }, [
+        setSessionUid,
+        setSessionName,
+        setHasSessionStarted,
+        setDbStats,
+        setVisibleLogs,
+        setTotalLogCount,
+        setFilteredLogCount,
+        setSparklineHistory
+    ]);
+
+    const handleAppViewChange = useCallback((mode: AppView) => {
+        if (mode === appView) {
+            return;
+        }
+        setAppView(mode);
+        resetSessionState();
+    }, [appView, resetSessionState]);
+
+    const previousEnvironmentRef = useRef(environment);
+    useEffect(() => {
+        if (previousEnvironmentRef.current !== environment) {
+            resetSessionState();
+            setSessionsList([]);
+            previousEnvironmentRef.current = environment;
+        }
+    }, [environment, resetSessionState]);
+
+    // Session Management
+    const sessionManager = useSessionManager({
+        environment,
+        onSessionChange: (session) => {
+            if (session) {
+                if (!sessionUid) {
+                    setSessionUid(session.sessionUid || session.id);
+                    setSessionName(session.name);
+                }
+            }
+        }
+    });
+
+    // Job Monitor — auto-refresh verifier data when jobs complete
+    const [jobCompletionCounter, setJobCompletionCounter] = useState(0);
+    const jobMonitor = useJobMonitor({
+        onJobCompleted: (_jobId, _type) => {
+            setJobCompletionCounter(prev => prev + 1);
+        }
+    });
+
+    // Live session data for auto-save
+    const currentFullSession = useMemo(() => {
+        const config = SessionService.buildSessionConfig({
+            appMode,
+            engineMode,
+            environment,
+            provider,
+            externalProvider,
+            externalApiKey,
+            externalModel,
+            customBaseUrl,
+            deepConfig,
+            userAgentConfig,
+            concurrency,
+            rowsToFetch,
+            skipRows,
+            sleepTime,
+            maxRetries,
+            retryDelay,
+            feedPageSize,
+            dataSourceMode,
+            hfConfig,
+            geminiTopic,
+            topicCategory,
+            systemPrompt,
+            converterPrompt,
+            conversationRewriteMode,
+            converterInputText,
+            generationParams
+        });
+        const sessionData = SessionService.getSessionData(config, sessionUid);
+        // Include totalLogCount so auto-save triggers when logs are added
+        return {
+            ...sessionData,
+            sessionUid,
+            id: sessionUid || sessionData.id,
+            name: sessionName || 'Untitled Session',
+            itemCount: totalLogCount
+        };
+    }, [
+        appMode, engineMode, environment, provider, externalProvider, externalApiKey, externalModel, customBaseUrl,
+        deepConfig, userAgentConfig, concurrency, rowsToFetch, skipRows, sleepTime, maxRetries, retryDelay,
+        feedPageSize, dataSourceMode, hfConfig, geminiTopic, topicCategory, systemPrompt, converterPrompt,
+        conversationRewriteMode, converterInputText, generationParams, sessionUid, sessionName, totalLogCount
+    ]);
+
+    // Memoized auto-save callback to prevent timeout cancellation from re-renders
+    const handleAutoSave = useCallback(async (savedSession: SessionData) => {
+        // Create full SessionData with consistent id (sessionUid is the storage key)
+        const fullSessionData: SessionData = {
+            ...savedSession,
+            id: sessionUid, // Use sessionUid as the storage key
+            sessionUid: sessionUid,
+            name: sessionName || savedSession.name || 'Untitled Session',
+            updatedAt: Date.now(),
+            createdAt: savedSession.createdAt || new Date().toISOString(),
+            itemCount: totalLogCount || savedSession.itemCount || 0,
+            analytics: savedSession.analytics || {
+                totalItems: 0,
+                completedItems: 0,
+                errorCount: 0,
+                totalTokens: 0,
+                totalCost: 0,
+                avgResponseTime: 0,
+                successRate: 0,
+                lastUpdated: Date.now()
+            },
+            dataset: savedSession.dataset || (hfConfig?.dataset ? {
+                type: dataSourceMode,
+                hfConfig: hfConfig
+            } : undefined),
+            storageMode: environment === Environment.Production ? StorageMode.Cloud : StorageMode.Local,
+            status: savedSession.status || SessionStatus.Idle,
+            version: savedSession.version || 2
+        };
+
+        // Handle cloud save or local save
+        if (environment === Environment.Production) {
+            // Prefer backend API if enabled
+            if (backendClient.isBackendEnabled() && sessionUid) {
+                try {
+                    const payload = sanitizeSessionForBackend(fullSessionData);
+                    await backendClient.updateSession(sessionUid, payload as unknown as Record<string, unknown>);
+                } catch (e) {
+                    console.error("Auto-save to backend failed", e);
+                }
+            } else if (SessionService.isCloudAvailable()) {
+                // Fall back to direct Firebase if backend not available
+                try {
+                    await SessionService.saveToCloud(fullSessionData, fullSessionData.name);
+                } catch (e) {
+                    console.error("Auto-save to cloud failed", e);
+                }
+            }
+        } else {
+            // Handle local save via IndexedDBUtils - save full SessionData directly
+            try {
+                const IndexedDBUtils = await import('./services/session/indexedDBUtils');
+                await IndexedDBUtils.saveSession(fullSessionData);
+            } catch (e) {
+                console.error("Auto-save to local DB failed", e);
+            }
+        }
+
+        // Refresh session list to show updated timestamp/name
+        try {
+            const list = await sessionLoadService.loadSessionList(true, environment, sessionFilters);
+            setSessionsList(list);
+        } catch (e) {
+            console.error("Failed to refresh session list", e);
+        }
+    }, [environment, sessionUid, sessionName, appMode, hfConfig, sessionFilters, totalLogCount]);
+
+    // Auto-save current session
+    useSessionAutoSave({
+        session: currentFullSession as any, // Cast to avoid legacy type conflict if any
+        enabled: hasSessionStarted,
+        debounceMs: 2000,
+        disableDefaultPersistence: true,
+        onSave: handleAutoSave
+    });
+
+    // Persist manual session name edits quickly (independent of full auto-save cycle)
+    useEffect(() => {
+        if (!hasSessionStarted || !sessionUid) {
+            return;
+        }
+
+        const normalizedName = (sessionName || '').trim() || 'Untitled Session';
+        const cacheKey = `${sessionUid}:${normalizedName}`;
+        if (lastPersistedSessionNameRef.current === cacheKey) {
+            return;
+        }
+
+        const timeout = setTimeout(async () => {
+            try {
+                if (environment === Environment.Production) {
+                    if (backendClient.isBackendEnabled()) {
+                        await backendClient.updateSession(sessionUid, {
+                            sessionUid,
+                            name: normalizedName,
+                            updatedAt: Date.now()
+                        });
+                    } else if (SessionService.isCloudAvailable()) {
+                        await SessionService.saveToCloud({
+                            ...currentFullSession,
+                            id: sessionUid,
+                            sessionUid,
+                            name: normalizedName,
+                            updatedAt: Date.now()
+                        } as SessionData, normalizedName);
+                    }
+                } else {
+                    const IndexedDBUtils = await import('./services/session/indexedDBUtils');
+                    const existingSession = await IndexedDBUtils.loadSession(sessionUid);
+                    if (!existingSession) {
+                        return;
+                    }
+                    await IndexedDBUtils.saveSession({
+                        ...existingSession,
+                        id: sessionUid,
+                        sessionUid,
+                        name: normalizedName,
+                        updatedAt: Date.now()
+                    });
+                }
+
+                lastPersistedSessionNameRef.current = cacheKey;
+                await refreshSessionsList();
+            } catch (e) {
+                console.error('Failed to persist session name change', e);
+            }
+        }, 350);
+
+        return () => clearTimeout(timeout);
+    }, [hasSessionStarted, sessionUid, sessionName, environment, currentFullSession, refreshSessionsList]);
+
+    // --- Session Analytics ---
+    useSessionAnalytics({
+        session: sessionManager.currentSession,
+        items: visibleLogs,
+        enabled: true,
+        cacheTTL: 5 * 60 * 1000, // 5 minutes
+        autoUpdate: true
+    });
 
     const invalidLogCount = useMemo(() => {
         return visibleLogs.filter((log: SynthLogItem) => isInvalidLog(log)).length;
@@ -420,8 +797,6 @@ export default function App() {
         sessionUid,
         setDbStats
     });
-
-    useFirebaseConfigInit({ updateDbStats });
 
     useSparklineHistory({
         isRunning,
@@ -501,7 +876,7 @@ export default function App() {
         return SessionService.getSessionData(sessionConfig, sessionUid);
     };
 
-    const sessionSetters = {
+    const sessionSetters = useMemo(() => ({
         setAppMode,
         setEngineMode,
         setEnvironment,
@@ -528,7 +903,11 @@ export default function App() {
         setConversationRewriteMode,
         setConverterInputText,
         setGenerationParams
-    };
+    }), []);
+
+    const handleSessionLoaded = useCallback(() => {
+        setHasSessionStarted(true);
+    }, []);
 
     const {
         handleSaveSession,
@@ -546,8 +925,74 @@ export default function App() {
         setCloudSessions,
         setDbStats,
         getSessionData,
-        setters: sessionSetters
+        setters: sessionSetters,
+        onSessionLoaded: handleSessionLoaded
     });
+
+    const resetStreamingState = useCallback(() => {
+        abortControllerRef.current?.abort();
+        streamingAbortControllersRef.current.forEach((controller, generationId) => {
+            haltedStreamingIdsRef.current.add(generationId);
+            controller.abort();
+        });
+        streamingAbortControllersRef.current.clear();
+        streamingConversationsRef.current.clear();
+        setIsPaused(false);
+        setIsRunning(false);
+        bumpStreamingConversations();
+    }, [bumpStreamingConversations]);
+
+    const handleSessionSelect = useCallback(async (
+        session: SessionData | any,
+        options?: { preserveEnvironment?: boolean }
+    ) => {
+        resetStreamingState();
+        await handleCloudSessionSelect(session, options);
+    }, [handleCloudSessionSelect, resetStreamingState]);
+
+    useEffect(() => {
+        if (!pendingRouteSessionId) {
+            return;
+        }
+
+        // Prevent duplicate loads for the same session
+        if (loadingRouteSessionRef.current === pendingRouteSessionId) {
+            return;
+        }
+        loadingRouteSessionRef.current = pendingRouteSessionId;
+
+        let isActive = true;
+        const resolveSessionFromRoute = async () => {
+            try {
+                const session = sessionsList.find(
+                    (item) => item.id === pendingRouteSessionId || item.sessionUid === pendingRouteSessionId
+                );
+                if (session) {
+                    await handleSessionSelect(session as any, { preserveEnvironment: true });
+                    return;
+                }
+
+                const loadedSession = await sessionLoadService.loadSessionDetails(pendingRouteSessionId);
+                if (loadedSession) {
+                    await handleSessionSelect(loadedSession as any, { preserveEnvironment: true });
+                    return;
+                }
+
+                toast.warning('Session not found for the current route.');
+            } finally {
+                if (isActive) {
+                    setPendingRouteSessionId(null);
+                    loadingRouteSessionRef.current = null;
+                }
+            }
+        };
+
+        resolveSessionFromRoute();
+
+        return () => {
+            isActive = false;
+        };
+    }, [handleSessionSelect, pendingRouteSessionId, sessionsList]);
 
     // --- Core Generation Logic ---
     // Build configuration for GenerationService
@@ -586,7 +1031,8 @@ export default function App() {
 
             // Generation params
             rowsToFetch,
-            skipRows,
+            skipRows: forceStartFromBeginningRef.current ? 0 : skipRows,
+            existingItemCount: totalLogCount,
             concurrency,
             sleepTime,
             maxRetries,
@@ -691,8 +1137,7 @@ export default function App() {
         startGeneration,
         stopGeneration,
         pauseGeneration,
-        resumeGeneration,
-        handleStart
+        resumeGeneration
     } = useGenerationControl({
         buildGenerationConfig,
         generationServiceRef,
@@ -709,6 +1154,25 @@ export default function App() {
         setShowOverwriteModal
     });
 
+    const handleStartGeneration = useCallback((append: boolean) => {
+        setHasSessionStarted(true);
+        startGeneration(append);
+        forceStartFromBeginningRef.current = false;
+    }, [startGeneration]);
+
+    const handleStartSession = useCallback(() => {
+        if (totalLogCount > 0) {
+            setShowOverwriteModal(true);
+            return;
+        }
+        handleStartGeneration(false);
+    }, [handleStartGeneration, setShowOverwriteModal, totalLogCount]);
+
+    const handleStartNewSession = useCallback(async () => {
+        setHasSessionStarted(false);
+        await startNewSession();
+    }, [startNewSession]);
+
     const { handleDeleteLog } = useLogActions({
         environment,
         visibleLogs,
@@ -717,6 +1181,14 @@ export default function App() {
         handleDeleteLogFromLogs,
         updateDbStats
     });
+
+    useEffect(() => {
+        if (hasSessionStarted) return;
+        const matchesExisting = sessionsList.some(session => session.id === sessionUid || session.sessionUid === sessionUid);
+        if (matchesExisting) {
+            setHasSessionStarted(true);
+        }
+    }, [hasSessionStarted, sessionUid, sessionsList]);
 
     const exportJsonl = async () => {
         await FileService.exportJsonl({
@@ -730,7 +1202,15 @@ export default function App() {
 
     useSettingsInit({ refreshPrompts });
 
-    const { sidebarProps, feedProps, verifierProps } = useAppViewProps({
+    // Handle score changes in Creator mode
+    const handleScoreChange = useCallback(async (itemId: string, score: number) => {
+        await updateLog(itemId, { score });
+    }, [updateLog]);
+
+    const {
+        sidebarProps,
+        feedProps
+    } = useAppViewProps({
         sessionName,
         environment,
         onLoadSession: handleLoadSession,
@@ -747,7 +1227,7 @@ export default function App() {
         error,
         isStreamingEnabled,
         onStreamingChange: setIsStreamingEnabled,
-        onStart: handleStart,
+        onStart: handleStartSession,
         onPause: pauseGeneration,
         onResume: resumeGeneration,
         onStop: stopGeneration,
@@ -755,13 +1235,13 @@ export default function App() {
         invalidLogCount,
         detectedTaskType,
         autoRoutedPromptSet,
-        showMiniDbPanel: environment === Environment.Production,
+        showMiniDbPanel: true,
         dbStats,
         sparklineHistory,
-        unsavedCount: getUnsavedCount(),
-        onSyncAll: syncAllUnsavedToDb,
+        unsavedCount: environment === Environment.Production ? getUnsavedCount() : 0,
+        onSyncAll: environment === Environment.Production ? syncAllUnsavedToDb : () => {},
         onRetryAllFailed: retryAllFailed,
-        onStartNewSession: startNewSession,
+        onStartNewSession: handleStartNewSession,
         engineMode,
         onEngineModeChange: setEngineMode,
         sessionPromptSet,
@@ -869,10 +1349,12 @@ export default function App() {
         hasInvalidLogs,
         showLatestOnly,
         feedPageSize,
+        feedDisplayMode,
         onViewModeChange: setViewMode,
         onLogFilterChange: setLogFilter,
         onShowLatestOnlyChange: setShowLatestOnly,
         onFeedPageSizeChange: setFeedPageSize,
+        onFeedDisplayModeChange: setFeedDisplayMode,
         visibleLogs,
         filteredLogCount,
         currentPage,
@@ -886,16 +1368,47 @@ export default function App() {
         savingIds: savingToDbIds,
         streamingConversations: streamingConversationsRef.current,
         streamingVersion: streamingConversationsVersion,
-        sessionUid
+        sessionUid,
+        isLoadingLogs,
+        // Feed editing props
+        editingField: feedRewriter.editingField,
+        editValue: feedRewriter.editValue,
+        onStartEditing: feedRewriter.startEditing,
+        onSaveEditing: feedRewriter.saveEditing,
+        onCancelEditing: feedRewriter.cancelEditing,
+        onEditValueChange: feedRewriter.setEditValue,
+        rewritingField: feedRewriter.rewritingField,
+        streamingContent: feedRewriter.streamingContent,
+        onRewrite: (itemId: string, field: any) => {
+            const log = visibleLogs.find(l => l.id === itemId);
+            if (log) {
+                const currentValue = field === 'query' ? log.query :
+                    field === 'reasoning' ? log.reasoning :
+                        log.answer;
+                feedRewriter.handleRewrite(itemId, field, currentValue || '');
+            }
+        },
+        onScoreChange: handleScoreChange
     });
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
+        <div className="h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
+            {jobMonitor.selectedJobId && (
+                <JobDetailModal
+                    job={jobMonitor.jobs.find(j => j.id === jobMonitor.selectedJobId)}
+                    onClose={() => jobMonitor.setSelectedJobId(null)}
+                    onDismiss={(id) => { jobMonitor.dismissJob(id); jobMonitor.setSelectedJobId(null); }}
+                    onStop={(id) => jobMonitor.stopJob(id)}
+                    onRerun={(id) => { jobMonitor.rerunJob(id); jobMonitor.setSelectedJobId(null); }}
+                    onResume={(id) => { jobMonitor.resumeJob(id); }}
+                />
+            )}
+
             <AppOverlays
                 showCloudLoadModal={showCloudLoadModal}
                 cloudSessions={cloudSessions}
                 isCloudLoading={isCloudLoading}
-                onCloudSelect={handleCloudSessionSelect}
+                onCloudSelect={handleSessionSelect}
                 onCloudDelete={handleCloudSessionDelete}
                 onCloudClose={() => setShowCloudLoadModal(false)}
                 showOverwriteModal={showOverwriteModal}
@@ -904,43 +1417,182 @@ export default function App() {
                     exportJsonl();
                     setTimeout(() => {
                         setShowOverwriteModal(false);
-                        startGeneration(true);
+                        handleStartGeneration(true);
                     }, 500);
                 }}
                 onOverwriteContinue={() => {
                     setShowOverwriteModal(false);
-                    startGeneration(true);
+                    handleStartGeneration(true);
                 }}
                 onOverwriteStartNew={() => {
                     setShowOverwriteModal(false);
-                    startGeneration(false);
+                    forceStartFromBeginningRef.current = true;
+                    handleStartGeneration(false);
                 }}
                 onOverwriteCancel={() => setShowOverwriteModal(false)}
                 showSettings={showSettings}
                 onSettingsClose={() => setShowSettings(false)}
                 onSettingsChanged={async () => {
                     refreshPrompts();
+                    await refreshSessionsList();
                     await refreshLogs();
                 }}
             />
 
-            <AppHeader
-                appView={appView}
-                environment={environment}
-                totalLogCount={totalLogCount}
-                onViewChange={setAppView}
-                onEnvironmentChange={setEnvironment}
-                onExport={exportJsonl}
-                onSettingsOpen={() => setShowSettings(true)}
+            <LayoutContainer
+                isLeftSidebarOpen={isLeftSidebarOpen}
+                isRightSidebarOpen={appView === AppView.Verifier ? isVerifierAssistantOpen : isRightSidebarOpen}
+                onLeftSidebarToggle={() => setLeftSidebarOpen(!isLeftSidebarOpen)}
+                onRightSidebarToggle={() => {
+                    if (appView === AppView.Verifier) {
+                        setVerifierAssistantOpen(prev => !prev);
+                    } else {
+                        setRightSidebarOpen(!isRightSidebarOpen);
+                    }
+                }}
+                leftSidebar={
+                    <LeftSidebar
+                        sessions={sessionsList}
+                        environment={environment}
+                        activeSessionId={sessionUid}
+                        onNewSession={() => {
+                            confirmService.confirm({
+                                title: 'Start new session?',
+                                message: 'This will clear the current session. Continue?',
+                                confirmLabel: 'Start New',
+                                cancelLabel: 'Cancel'
+                            }).then((confirmed) => {
+                                if (confirmed) handleStartNewSession();
+                            });
+                        }}
+                        onSessionSelect={async (id) => {
+                            const session = sessionsList.find(s => s.id === id);
+                            if (session) {
+                                // Both cloud and local sessions use the same handler now due to Service unification
+                                handleSessionSelect(session as any);
+                                setAppView(AppView.Creator);
+                            }
+                        }}
+                        onSessionRename={async (id, name) => {
+                            if (sessionManager && sessionManager.renameSession) {
+                                sessionManager.renameSession(id, name);
+                                await refreshSessionsList();
+                            }
+                        }}
+                        onSessionDelete={async (id) => {
+                            if (sessionManager && sessionManager.deleteSession) {
+                                await sessionManager.deleteSession(id);
+                                await refreshSessionsList();
+                            } else {
+                                await handleCloudSessionDelete(id, { stopPropagation: () => { } } as any);
+                                await refreshSessionsList();
+                            }
+                        }}
+                        onRefreshSessions={refreshSessionsList}
+                        onOpenSettings={() => setShowSettings(true)}
+                        currentEnvironment={environment}
+                        onEnvironmentChange={(env) => {
+                            setEnvironment(env);
+                        }}
+                        sessionFilters={sessionFilters}
+                        onSessionFiltersChange={handleSessionFiltersChange}
+                        onLoadMoreSessions={handleLoadMoreSessions}
+                        hasMoreSessions={hasMoreSessions}
+                        isLoadingMoreSessions={isLoadingMoreSessions}
+                        themeMode={themeMode}
+                        onThemeModeChange={handleThemeModeChange}
+                    />
+                }
+                mainContent={
+                    <div className="flex flex-col h-full w-full">
+                        <div className="flex-shrink-0 z-20">
+                            <ModeNavbar
+                                currentMode={appView as any}
+                                onModeChange={(mode: any) => handleAppViewChange(mode)}
+                                sessionName={sessionName}
+                                onSessionNameChange={setSessionName}
+                                isDirty={environment === Environment.Production && getUnsavedCount() > 0}
+                                jobMonitorBadge={
+                                    <div className="relative">
+                                        <JobMonitorBadge
+                                            activeCount={jobMonitor.activeCount}
+                                            totalCount={jobMonitor.jobs.length}
+                                            isOpen={jobMonitor.isPanelOpen}
+                                            onClick={() => jobMonitor.setIsPanelOpen(!jobMonitor.isPanelOpen)}
+                                        />
+                                        {jobMonitor.isPanelOpen && (
+                                            <JobMonitorPanel
+                                                jobs={jobMonitor.jobs}
+                                                onJobSelect={(id) => { jobMonitor.setSelectedJobId(id); jobMonitor.setIsPanelOpen(false); }}
+                                                onDismiss={jobMonitor.dismissJob}
+                                                onStop={jobMonitor.stopJob}
+                                                onClearCompleted={jobMonitor.clearCompleted}
+                                                onRefresh={jobMonitor.refreshJobs}
+                                                onClose={() => jobMonitor.setIsPanelOpen(false)}
+                                            />
+                                        )}
+                                    </div>
+                                }
+                            />
+                        </div>
+                        <div className="flex-1 min-h-0 relative">
+                            {appView === AppView.Verifier ? (
+                                <div className="h-full overflow-hidden">
+                                    <VerifierPanel
+                                        currentSessionUid={sessionUid}
+                                        modelConfig={{
+                                            provider,
+                                            externalProvider,
+                                            externalModel,
+                                            apiKey: externalApiKey,
+                                            externalApiKey
+                                        }}
+                                        chatOpen={isVerifierAssistantOpen}
+                                        onChatToggle={setVerifierAssistantOpen}
+                                        onSessionSelect={handleCloudSessionSelect}
+                                        onJobCreated={jobMonitor.trackJob}
+                                        refreshTrigger={jobCompletionCounter}
+                                    />
+                                </div>
+                            ) : (
+                                <div className="h-full overflow-y-auto">
+                                    <FeedAnalyticsPanel {...feedProps} />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                }
+                rightSidebar={
+                    appView === AppView.Verifier ? (
+                        <RightSidebar>
+                            {isVerifierAssistantOpen ? (
+                                <div id="verifier-assistant" className="h-full" />
+                            ) : (
+                                <div className="h-full flex items-center justify-center">
+                                    <button
+                                        onClick={() => setVerifierAssistantOpen(true)}
+                                        className="flex flex-col items-center gap-2 text-slate-300 hover:text-white transition-colors"
+                                        title="Open assistant"
+                                    >
+                                        <div className="w-8 h-24 rounded-full bg-slate-900/60 border border-slate-800/70 flex items-center justify-center">
+                                            <span className="text-[10px] font-bold rotate-90">AI</span>
+                                        </div>
+                                    </button>
+                                </div>
+                            )}
+                        </RightSidebar>
+                    ) : (
+                        <RightSidebar>
+                            <CreatorControls
+                                {...sidebarProps}
+                                setHfConfig={sidebarProps.onHfConfigChange}
+                                feedRewriterConfig={feedRewriter.rewriterConfig}
+                                onFeedRewriterConfigChange={feedRewriter.setRewriterConfig}
+                            />
+                        </RightSidebar>
+                    )
+                }
             />
-
-            <AppMainContent
-                appView={appView}
-                verifierProps={verifierProps}
-                sidebarProps={sidebarProps}
-                feedProps={feedProps}
-            />
-
         </div>
     );
 }

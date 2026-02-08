@@ -13,10 +13,11 @@ interface UseSessionManagementOptions {
     setError: (error: string | null) => void;
     setShowCloudLoadModal: (show: boolean) => void;
     setIsCloudLoading: (loading: boolean) => void;
-    setCloudSessions: Dispatch<SetStateAction<FirebaseService.SavedSession[]>>;
+    setCloudSessions: Dispatch<SetStateAction<SessionData[]>>;
     setDbStats: (stats: { total: number; session: number }) => void;
     getSessionData: () => SessionData;
     setters: SessionSetters;
+    onSessionLoaded?: () => void;
 }
 
 export function useSessionManagement({
@@ -28,14 +29,20 @@ export function useSessionManagement({
     setCloudSessions,
     setDbStats,
     getSessionData,
-    setters
+    setters,
+    onSessionLoaded
 }: UseSessionManagementOptions) {
-    const restoreSession = useCallback((session: Partial<SessionData>, savedSessionUid?: string) => {
+    const restoreSession = useCallback((
+        session: Partial<SessionData>,
+        savedSessionUid?: string,
+        options?: { preserveEnvironment?: boolean }
+    ) => {
         SessionService.restoreSession(
             session,
             savedSessionUid,
             setters,
-            { setSessionUid, setError }
+            { setSessionUid, setError },
+            options
         );
     }, [setError, setSessionUid, setters]);
 
@@ -51,12 +58,13 @@ export function useSessionManagement({
             const session = await SessionService.loadFromFile(file);
             restoreSession(session);
             setSessionName('Local File Session');
+            onSessionLoaded?.();
         } catch (err) {
             console.error('Failed to load session', err);
             setError('Failed to load session file. Invalid JSON.');
         }
         e.target.value = '';
-    }, [restoreSession, setError, setSessionName]);
+    }, [restoreSession, setError, setSessionName, onSessionLoaded]);
 
     const handleCloudSave = useCallback(async () => {
         if (!SessionService.isCloudAvailable()) {
@@ -113,21 +121,71 @@ export function useSessionManagement({
         }
     }, [setCloudSessions, setIsCloudLoading, setShowCloudLoadModal]);
 
-    const handleCloudSessionSelect = useCallback(async (session: FirebaseService.SavedSession) => {
-        setSessionName(session.name);
-        const savedSessionUid = (session as any).sessionUid;
-        restoreSession(session.config || {}, savedSessionUid);
-        setShowCloudLoadModal(false);
+    const handleCloudSessionSelect = useCallback(async (
+        session: SessionData | any,
+        options?: { preserveEnvironment?: boolean }
+    ) => {
+        setIsCloudLoading(true);
+        try {
+            let fullSession = session;
 
-        if (savedSessionUid && SessionService.isCloudAvailable()) {
-            try {
-                const stats = await FirebaseService.getDbStats(savedSessionUid);
-                setDbStats(stats);
-            } catch (e) {
-                logger.warn('Failed to fetch session stats on load', e);
+            // If config is missing (lightweight list item), fetch full details
+            if (!session.config) {
+                try {
+                    const loaded = await SessionService.loadFromCloud(session.id);
+                    if (loaded && loaded.sessionData) {
+                        fullSession = {
+                            ...session,
+                            ...loaded,
+                            config: loaded.sessionData.config || {},
+                            sessionUid: loaded.sessionUid || session.sessionUid
+                        };
+                    } else {
+                        // Fallback if sessionData is corrupt/missing
+                        fullSession = {
+                            ...session,
+                            ...loaded,
+                            config: {},
+                            sessionUid: loaded?.sessionUid || session.sessionUid
+                        };
+                        logger.warn("Session loaded but configuration data is missing or corrupt.");
+                    }
+                } catch (e) {
+                    logger.error("Failed to load full session details", e);
+                    await confirmService.alert({
+                        title: 'Load Failed',
+                        message: 'Could not load session details from cloud.',
+                        variant: 'danger'
+                    });
+                    setIsCloudLoading(false);
+                    return;
+                }
             }
+
+            setSessionName(fullSession.name);
+            const savedSessionUid = fullSession.sessionUid || (fullSession as any).sessionUid;
+
+            // Restore session state
+            restoreSession(
+                fullSession.config || fullSession.sessionData?.config || {},
+                savedSessionUid,
+                options
+            );
+            setShowCloudLoadModal(false);
+            onSessionLoaded?.();
+
+            if (savedSessionUid && SessionService.isCloudAvailable()) {
+                try {
+                    const stats = await FirebaseService.getDbStats(savedSessionUid);
+                    setDbStats(stats);
+                } catch (e) {
+                    logger.warn('Failed to fetch session stats on load', e);
+                }
+            }
+        } finally {
+            setIsCloudLoading(false);
         }
-    }, [restoreSession, setDbStats, setSessionName, setShowCloudLoadModal]);
+    }, [restoreSession, setDbStats, setSessionName, setShowCloudLoadModal, setIsCloudLoading, onSessionLoaded]);
 
     const handleCloudSessionDelete = useCallback(async (id: string, e: React.MouseEvent) => {
         e.stopPropagation();

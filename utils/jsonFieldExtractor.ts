@@ -73,10 +73,16 @@ export function extractJsonFields(rawJson: string): ExtractedFields {
 
     // Try to find "reasoning" field
     const reasoningKey = OutputFieldName.Reasoning;
+    const reasoningContentKey = OutputFieldName.ReasoningContent;
     const reasoningPatterns = [
         { regex: new RegExp(`"\\s*${reasoningKey}\\s*"\\s*:\\s*"`, 'i'), quote: '"' },
         { regex: new RegExp(`'\\s*${reasoningKey}\\s*'\\s*:\\s*'`, 'i'), quote: "'" },
         { regex: new RegExp(`${reasoningKey}\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`"\\s*${reasoningContentKey}\\s*"\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`'\\s*${reasoningContentKey}\\s*'\\s*:\\s*'`, 'i'), quote: "'" },
+        { regex: new RegExp(`${reasoningContentKey}\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`"\\s*reasoning_trace\\s*"\\s*:\\s*"`, 'i'), quote: '"' },
+        { regex: new RegExp(`'\\s*reasoning_trace\\s*'\\s*:\\s*'`, 'i'), quote: "'" },
     ];
 
     for (const { regex, quote } of reasoningPatterns) {

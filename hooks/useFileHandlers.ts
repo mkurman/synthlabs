@@ -2,12 +2,12 @@ import { useCallback } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 import { FileService } from '../services/fileService';
-import { AppMode } from '../interfaces/enums';
+import { CreatorMode } from '../interfaces/enums';
 import type { HuggingFaceConfig, DetectedColumns } from '../types';
 import type { ColumnDetectionResult } from '../interfaces/services/DataTransformConfig';
 
 interface UseFileHandlersOptions {
-    appMode: AppMode;
+    appMode: CreatorMode;
     systemPrompt: string;
     converterPrompt: string;
     setSystemPrompt: (prompt: string) => void;

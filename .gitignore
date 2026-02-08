@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+server-bundle
 *.local
 .env
 .history
@@ -33,3 +34,6 @@ pnpm-lock*
 .factory
 .github
 .opencode
+.firebase
+.backend-vault.json
+.backend-config.json

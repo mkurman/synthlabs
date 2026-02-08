@@ -5,7 +5,7 @@
  * Handles column detection, content extraction, and format conversions.
  */
 
-import { AppMode } from '../interfaces/enums';
+import { CreatorMode } from '../interfaces/enums';
 import { OutputFieldName } from '../interfaces/enums/OutputFieldName';
 import { RowContentConfig, ColumnDetectionResult } from '../interfaces/services/DataTransformConfig';
 
@@ -107,7 +107,7 @@ function formatMcqOptions(options: unknown): string {
     if (Array.isArray(options)) {
         const labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         return options
-            .map((opt: unknown, idx: number) => 
+            .map((opt: unknown, idx: number) =>
                 `${labels[idx] || idx + 1}: ${typeof opt === 'object' ? JSON.stringify(opt) : opt}`
             )
             .join('\n');
@@ -158,11 +158,11 @@ function getColumnContent(row: Record<string, unknown>, columnName: string, conf
     if (Array.isArray(value)) {
         const turnIndex = config.hfConfig.messageTurnIndex || 0;
         const firstItem = value[0];
-        const isChat = firstItem && typeof firstItem === 'object' && 
+        const isChat = firstItem && typeof firstItem === 'object' &&
             ('role' in (firstItem as object) || 'from' in (firstItem as object));
-        
+
         if (isChat) {
-            if (config.appMode === AppMode.Converter) {
+            if (config.appMode === CreatorMode.Converter) {
                 const userIndex = turnIndex * 2;
                 const assistantIndex = turnIndex * 2 + 1;
                 const userMsg = value[userIndex];
@@ -270,10 +270,10 @@ export function getRowContent(row: Record<string, unknown>, config: RowContentCo
     if (Array.isArray(autoContent)) {
         const turnIndex = hfConfig.messageTurnIndex || 0;
         const firstItem = autoContent[0];
-        const isChat = firstItem && typeof firstItem === 'object' && 
+        const isChat = firstItem && typeof firstItem === 'object' &&
             ('role' in (firstItem as object) || 'from' in (firstItem as object));
-        
-        if (appMode === AppMode.Converter) {
+
+        if (appMode === CreatorMode.Converter) {
             if (isChat) {
                 const userIndex = turnIndex * 2;
                 const assistantIndex = turnIndex * 2 + 1;
@@ -292,7 +292,7 @@ export function getRowContent(row: Record<string, unknown>, config: RowContentCo
             }
         }
     }
-    
+
     if (typeof autoContent === 'object') return JSON.stringify(autoContent);
     return String(autoContent);
 }

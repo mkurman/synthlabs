@@ -1,9 +1,0 @@
-# Prompt Schema
-prompt: |
-  You are rewriting the QUERY field of a dataset item. The query should be a clear, well-formed question or instruction.
-  Keep the semantic meaning but improve clarity, grammar, and formatting.
-  Return ONLY the rewritten query as {"response": "..."} JSON object.
-output:
-  - name: response
-    description: Rewritten query with improved clarity, grammar, and formatting
-    optional: false

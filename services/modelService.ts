@@ -298,31 +298,8 @@ const fetchModelsFromProvider = async (
 };
 
 // Filter and sort models for better UX
-const filterAndSortModels = (models: ProviderModel[], provider: ModelListProvider): ProviderModel[] => {
-    // For OpenRouter, filter to show only popular/recommended models
-    if (provider === ExternalProvider.OpenRouter) {
-        const preferredPrefixes = [
-            'anthropic/',
-            'openai/',
-            'google/',
-            'meta-llama/',
-            'mistralai/',
-            'qwen/',
-            'deepseek/',
-            'cohere/',
-        ];
-
-        // Filter to preferred providers and sort alphabetically
-        const filtered = models.filter(m =>
-            preferredPrefixes.some(prefix => m.id.toLowerCase().startsWith(prefix))
-        );
-
-        // If we have filtered results, use them; otherwise return all
-        const result = filtered.length > 0 ? filtered : models;
-        return result.sort((a, b) => a.id.localeCompare(b.id));
-    }
-
-    // For other providers, just sort alphabetically
+const filterAndSortModels = (models: ProviderModel[], _provider: ModelListProvider): ProviderModel[] => {
+    // Sort alphabetically for all providers
     return models.sort((a, b) => a.id.localeCompare(b.id));
 };
 

@@ -1,0 +1,15 @@
+# Prompt Schema
+prompt: |
+  You are rewriting the QUERY field of a dataset item.
+  
+  Improve the query to be:
+  - Clear and unambiguous
+  - Well-formed as a question
+  - Free of typos or grammatical errors
+  - Appropriately specific
+  
+  Do not change the fundamental meaning or intent of the query.
+output:
+  - name: response
+    description: Rewritten query with improved clarity, grammar, and formatting
+    optional: false

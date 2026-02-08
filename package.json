@@ -1,11 +1,13 @@
 {
   "name": "synthlabs-reasoning-generator",
   "private": true,
-  "version": "0.0.8",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+    "dev:client": "vite",
+    "dev:server": "node server/index.js",
     "build": "vite build",
     "preview": "vite preview",
     "bun:dev": "bun vite",
@@ -13,28 +15,31 @@
     "bun:preview": "bun vite preview",
     "bun:compile": "bun vite build && bun build --compile --minify server.ts --outfile synthlabs",
     "bun:compile:win": "bun vite build && bun build --compile --minify --target=bun-windows-x64 server.ts --outfile synthlabs.exe",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
-    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "vite build && electron-builder",
-    "electron:build:win": "vite build && electron-builder --win",
-    "electron:build:mac": "vite build && electron-builder --mac"
+    "electron:dev": "concurrently \"npm run dev:server\" \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "bundle:server": "node scripts/bundle-server.mjs",
+    "test:bundle": "node scripts/bundle-server.mjs && node -e \"require('./server-bundle/index.cjs').startServer()\"",
+    "electron:build": "vite build && npm run bundle:server && electron-builder",
+    "electron:build:win": "vite build && npm run bundle:server && electron-builder --win",
+    "electron:build:mac": "vite build && npm run bundle:server && electron-builder --mac"
   },
   "dependencies": {
     "@google/genai": "^1.33.0",
     "@huggingface/hub": "0.15.1",
-    "@tauri-apps/api": "^2.9.1",
-    "firebase": "^12.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.0.2",
     "hyparquet": "1.24.0",
     "hyparquet-writer": "^0.11.2",
     "json-repair-js": "^1.0.0",
     "lucide-react": "^0.561.0",
+    "pg": "^8.18.0",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3"
+    "react-dom": "^19.2.3",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.9.6",
     "@types/bun": "^1.2.4",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.14.0",
@@ -45,6 +50,7 @@
     "electron": "^40.0.0",
     "electron-builder": "^26.4.0",
     "electron-is-dev": "^3.0.1",
+    "esbuild": "^0.24.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "wait-on": "^8.0.5"
@@ -59,6 +65,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "server-bundle/**/*",
       "package.json"
     ],
     "mac": {

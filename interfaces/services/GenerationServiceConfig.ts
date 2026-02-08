@@ -57,8 +57,8 @@ export interface RetryItemConfig {
     refreshLogs: () => void;
     /** Update database stats */
     updateDbStats: () => void;
-    /** Firebase service */
-    firebaseService: {
+    /** Database service */
+    dbService: {
         saveLogToFirebase: (log: SynthLogItem) => Promise<void>;
     };
     /** Log storage service */
@@ -83,8 +83,8 @@ export interface RetrySaveConfig {
     refreshLogs: () => void;
     /** Update database stats */
     updateDbStats: () => void;
-    /** Firebase service */
-    firebaseService: {
+    /** Database service */
+    dbService: {
         saveLogToFirebase: (log: SynthLogItem) => Promise<void>;
     };
     /** Log storage service */
@@ -113,8 +113,8 @@ export interface RetryAllFailedConfig {
     generateSingleItem: (inputText: string, workerId: number, opts: any) => Promise<SynthLogItem | null>;
     /** Refresh logs view */
     refreshLogs: () => void;
-    /** Firebase service */
-    firebaseService: {
+    /** Database service */
+    dbService: {
         saveLogToFirebase: (log: SynthLogItem) => Promise<void>;
     };
     /** Log storage service */
@@ -140,9 +140,9 @@ export interface SyncUnsavedConfig {
         alert: (options: { title: string; message: string; variant: ConfirmVariant }) => Promise<void>;
         confirm: (options: { title: string; message: string; confirmLabel: string; cancelLabel: string; variant: ConfirmVariant }) => Promise<boolean>;
     };
-    /** Firebase service */
-    firebaseService: {
-        isFirebaseConfigured: () => boolean;
+    /** Database service */
+    dbService: {
+        isDbConfigured: () => boolean;
         saveLogToFirebase: (log: SynthLogItem) => Promise<void>;
     };
     /** Log storage service */
@@ -174,9 +174,9 @@ export interface SaveItemConfig {
     confirmService: {
         alert: (options: { title: string; message: string; variant: ConfirmVariant }) => Promise<void>;
     };
-    /** Firebase service */
-    firebaseService: {
-        isFirebaseConfigured: () => boolean;
+    /** Database service */
+    dbService: {
+        isDbConfigured: () => boolean;
         saveLogToFirebase: (log: SynthLogItem) => Promise<void>;
     };
     /** Log storage service */

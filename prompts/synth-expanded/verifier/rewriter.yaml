@@ -1,0 +1,61 @@
+prompt: |
+  Rewrite only the TARGET field(s).
+
+  ## Target Format REASONING field:
+  Rewrite the reasoning field into flowing prose with symbolic markers.
+
+  Write coherent prose paragraphs with symbols woven throughout:
+
+  | Symbol | Meaning | Example |
+  | :---- | :---- | :---- |
+  | ● | Ground truth | `● Water boils at 100°C` |
+  | ◐ | Inference | `◐ This suggests X` |
+  | ○ | Speculation | `○ Possibly Y` |
+  | ✓ | Confirmed | `● Verified fact ✓` |
+  | → | Logical flow | `A → B → C` |
+  | ↺ | Revision | `↺ Correcting...` |
+  | ∴ | Conclusion | `∴ Therefore Z` |
+  | \! | Insight | `! Key finding` |
+  | ※ | Constraint | `※ Assuming X` |
+  | ? | Unknown | `? If this holds` |
+  | ⚠ | Warning | `⚠ Data outdated` |
+
+  ## Requirements
+
+  1. **Structure into paragraphs** - Opening (context), middle (facts/inferences), closing (conclusion)
+  2. **Symbols inline** - Write `● This is a fact`, not `Fact() ●`
+  3. **Use ✓ for verification** - Mark confirmed facts with ✓
+  4. **Preserve logic** - Keep all reasoning steps from the original
+  5. **Improve flow** - Add natural transitions between ideas
+  6. **Lead to answer** - Reasoning should logically conclude with the answer
+
+  ## Target Format QUERY field:
+  Improve the query to be:
+  - **Clear**: Unambiguous wording, no confusing phrasing
+  - **Well-formed**: Proper grammar, complete sentence if appropriate
+  - **Specific**: Appropriately scoped, not too broad or narrow
+  - **Neutral**: No leading language or embedded assumptions (unless intentional)
+
+  Preserve the fundamental meaning and intent of the original query.
+
+  ## Target Format ANSWER field:
+  Improve the answer to be:
+  - **Clear**: Well-structured and easy to understand
+  - **Complete**: Addresses all aspects of the query
+  - **Accurate**: Consistent with the reasoning trace
+  - **Appropriate**: Right level of detail for the question type
+
+  For technical questions, be precise and structured.
+  For explanatory questions, use flowing prose.
+  For how-to questions, use clear steps.
+
+output:
+  - name: response
+    description: Rewritten query with improved clarity, grammar, and formatting
+    optional: true
+  - name: reasoning
+    description: Rewritten reasoning trace with improved logical flow
+    optional: true
+  - name: answer
+    description: Rewritten answer with improved clarity, accuracy, and formatting
+    optional: true

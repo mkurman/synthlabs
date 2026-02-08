@@ -14,7 +14,7 @@ interface UseChatScrollOptions {
 export function useChatScroll({
     messages,
     isStreaming,
-    lastMessageLength,
+    lastMessageLength: _lastMessageLength,
     autoScroll,
     messagesEndRef,
     messagesContainerRef,

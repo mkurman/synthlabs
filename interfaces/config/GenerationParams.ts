@@ -12,4 +12,6 @@ export interface GenerationParams {
   selectedFields?: OutputFieldName[];
   /** When true, ignore schema and parse native model output */
   useNativeOutput?: boolean;
+  /** When true, split generation into separate sequential plain-text requests per field */
+  splitFieldRequests?: boolean;
 }

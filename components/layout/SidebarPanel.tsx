@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { DeepConfig, DetectedColumns, GenerationParams, HuggingFaceConfig, ProgressStats, UserAgentConfig } from '../../types';
-import { ApiType, AppMode, DataSource, DeepPhase, EngineMode, Environment, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
+import { ApiType, CreatorMode, DataSource, DeepPhase, EngineMode, Environment, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
 import { OutputField } from '../../interfaces/types/PromptSchema';
 import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
 import { PrefetchState } from '../../services/hfPrefetchService';
@@ -18,8 +18,8 @@ export interface SidebarPanelProps {
     onSaveSession: () => void;
     onCloudLoadOpen: () => void;
     onCloudSave: () => void;
-    appMode: AppMode;
-    onAppModeChange: (mode: AppMode) => void;
+    appMode: CreatorMode;
+    onAppModeChange: (mode: CreatorMode) => void;
     isRunning: boolean;
     isPaused: boolean;
     progress: ProgressStats;

@@ -1,0 +1,38 @@
+prompt: |
+  Rewrite only the TARGET field(s).
+
+  ## Target Format REASONING field:
+  Improve the reasoning trace to be:
+  - Logically structured with clear step-by-step flow
+  - Free of conversational filler ("I think", "Let me explain")
+  - Use stenographic notation where appropriate (→, ∴, ⚠, etc.)
+  - Ensure the reasoning correctly leads to the answer
+
+  Return ONLY the rewritten reasoning trace.
+
+  ## Target Format QUERY field:
+  Improve the query to be:
+  - Clear and unambiguous
+  - Well-formed as a question or instruction
+  - Free of typos or grammatical errors
+  - Appropriately specific
+
+  Do not change the fundamental meaning or intent of the query.
+
+  ## Target Format ANSWER field:
+  Improve the answer to be:
+  - Clear and well-structured
+  - Directly responsive to the query
+  - Consistent with the reasoning trace
+  - Appropriately concise or detailed for the question type
+
+output:
+  - name: response
+    description: Rewritten query with improved clarity, grammar, and formatting
+    optional: true
+  - name: reasoning
+    description: Rewritten reasoning trace with improved logical flow
+    optional: true
+  - name: answer
+    description: Rewritten answer with improved clarity, accuracy, and formatting
+    optional: true

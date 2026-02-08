@@ -1,9 +1,9 @@
-import { AppMode, ProviderType, ExternalProvider } from '../interfaces/enums';
+import { CreatorMode, ProviderType, ExternalProvider } from '../interfaces/enums';
 import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 
 export interface OptimizePromptOptions {
-    appMode: AppMode;
+    appMode: CreatorMode;
     systemPrompt: string;
     converterPrompt: string;
     setSystemPrompt: (prompt: string) => void;
@@ -23,7 +23,7 @@ export async function optimizePrompt({
 }: OptimizePromptOptions): Promise<void> {
     setIsOptimizing(true);
     try {
-        const activePrompt = appMode === AppMode.Generator ? systemPrompt : converterPrompt;
+        const activePrompt = appMode === CreatorMode.Generator ? systemPrompt : converterPrompt;
         const settings = SettingsService.getSettings();
         const generalPurposeModel = settings.generalPurposeModel;
 
@@ -75,17 +75,17 @@ export async function optimizePrompt({
             }
         }
 
-            if (!config) {
-                console.error('[Optimize] No config built! generalPurposeModel:', generalPurposeModel);
+        if (!config) {
+            console.error('[Optimize] No config built! generalPurposeModel:', generalPurposeModel);
             throw new Error(generalPurposeModel?.provider === ProviderType.External
                 ? 'General purpose model is incomplete. Please set: Provider, Model, and API Key in Settings → API Keys.'
                 : 'No model configured. Please set a model in Settings → Default Models → General purpose model.');
-            }
+        }
 
         config.structuredOutput = false;
 
         const refined = await GeminiService.optimizeSystemPrompt(activePrompt, config);
-        if (appMode === AppMode.Generator) setSystemPrompt(refined);
+        if (appMode === CreatorMode.Generator) setSystemPrompt(refined);
         else setConverterPrompt(refined);
     } catch (e) {
         setError(`Prompt optimization failed: ${e instanceof Error ? e.message : String(e)}`);

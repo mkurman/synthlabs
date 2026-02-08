@@ -8,17 +8,17 @@
 import { logger } from '../utils/logger';
 import * as FirebaseService from './firebaseService';
 import { PromptService } from './promptService';
-import { 
-    SessionData, 
-    SessionConfig, 
-    NewSessionConfig, 
+import {
+    SessionData,
+    SessionConfig,
+    NewSessionConfig,
     SessionSetters,
-    CloudSessionResult 
+    CloudSessionResult
 } from '../interfaces/services/SessionConfig';
-import { 
-    AppMode, 
-    Environment, 
-    ProviderType, 
+import {
+    CreatorMode,
+    Environment,
+    ProviderType,
     ExternalProvider,
     DataSource,
     DeepPhase,
@@ -26,6 +26,8 @@ import {
     PromptRole
 } from '../interfaces/enums';
 import { DeepConfig } from '../types';
+import { SessionStatus } from '../interfaces';
+import { StorageMode } from '../interfaces/enums/StorageMode';
 
 // Current session format version
 const SESSION_VERSION = 2;
@@ -64,6 +66,12 @@ export const SessionService = {
      */
     getSessionData(config: SessionConfig, sessionUid: string): SessionData {
         return {
+            id: this.generateLocalUid(),
+            status: SessionStatus.Idle,
+            storageMode: config.environment === Environment.Production ? StorageMode.Cloud : StorageMode.Local,
+            name: this.generateSessionName(config.appMode),
+            updatedAt: Date.now(),
+            itemCount: 0,
             version: SESSION_VERSION,
             createdAt: new Date().toISOString(),
             sessionUid: sessionUid,
@@ -82,10 +90,11 @@ export const SessionService = {
      * @returns void
      */
     restoreSession(
-        session: Partial<SessionData>, 
+        session: Partial<SessionData>,
         savedSessionUid: string | undefined,
         setters: SessionSetters,
-        callbacks: { setSessionUid?: (uid: string) => void; setError?: (error: string | null) => void }
+        callbacks: { setSessionUid?: (uid: string) => void; setError?: (error: string | null) => void },
+        options?: { preserveEnvironment?: boolean }
     ): void {
         try {
             // Restore sessionUid if provided (for cloud sessions)
@@ -99,23 +108,25 @@ export const SessionService = {
                 // Restore each configuration field if present
                 if (c.appMode !== undefined) setters.setAppMode(c.appMode);
                 if (c.engineMode !== undefined) setters.setEngineMode(c.engineMode);
-                if (c.environment !== undefined) setters.setEnvironment(c.environment);
+                if (!options?.preserveEnvironment && c.environment !== undefined) {
+                    setters.setEnvironment(c.environment);
+                }
                 if (c.provider !== undefined) setters.setProvider(c.provider);
                 if (c.externalProvider !== undefined) setters.setExternalProvider(c.externalProvider);
                 if (c.externalApiKey !== undefined) setters.setExternalApiKey(c.externalApiKey);
                 if (c.externalModel !== undefined) setters.setExternalModel(c.externalModel);
                 if (c.customBaseUrl !== undefined) setters.setCustomBaseUrl(c.customBaseUrl);
-                
+
                 if (c.deepConfig) {
                     // Backfill missing rewriter phase for older sessions
                     const mergedDeepConfig = this.backfillRewriterPhase(c.deepConfig);
                     setters.setDeepConfig(mergedDeepConfig);
                 }
-                
+
                 if (c.userAgentConfig !== undefined) {
                     setters.setUserAgentConfig(c.userAgentConfig);
                 }
-                
+
                 if (c.concurrency !== undefined) setters.setConcurrency(c.concurrency);
                 if (c.rowsToFetch !== undefined) setters.setRowsToFetch(c.rowsToFetch);
                 if (c.skipRows !== undefined) setters.setSkipRows(c.skipRows);
@@ -156,14 +167,14 @@ export const SessionService = {
      */
     backfillRewriterPhase(deepConfig: DeepConfig): DeepConfig {
         const mergedDeepConfig = { ...deepConfig };
-        
+
         if (!mergedDeepConfig.phases.rewriter) {
             mergedDeepConfig.phases.rewriter = {
                 ...DEFAULT_REWRITER_CONFIG,
                 systemPrompt: PromptService.getPrompt(PromptCategory.Converter, PromptRole.Rewriter)
             };
         }
-        
+
         return mergedDeepConfig;
     },
 
@@ -177,7 +188,7 @@ export const SessionService = {
         const blob = new Blob([JSON.stringify(sessionData, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        
+
         a.href = url;
         a.download = filename || `synth_session_${new Date().toISOString()}.json`;
         document.body.appendChild(a);
@@ -195,7 +206,7 @@ export const SessionService = {
     async loadFromFile(file: File): Promise<SessionData> {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            
+
             reader.onload = (event) => {
                 try {
                     if (typeof event.target?.result === 'string') {
@@ -208,11 +219,11 @@ export const SessionService = {
                     reject(new Error('Invalid JSON format'));
                 }
             };
-            
+
             reader.onerror = () => {
                 reject(new Error('Failed to read file'));
             };
-            
+
             reader.readAsText(file);
         });
     },
@@ -228,7 +239,7 @@ export const SessionService = {
         if (!FirebaseService.isFirebaseConfigured()) {
             throw new Error('Firebase not configured');
         }
-        
+
         await FirebaseService.saveSessionToFirebase(sessionData, name);
     },
 
@@ -243,24 +254,13 @@ export const SessionService = {
             throw new Error('Firebase not configured');
         }
 
-        const sessions = await FirebaseService.getSessionsFromFirebase();
-        const session = sessions.find(s => s.id === sessionId);
-        
-        if (!session) {
+        const result = await FirebaseService.loadFromCloud(sessionId);
+
+        if (!result) {
             throw new Error('Session not found');
         }
 
-        return {
-            id: session.id,
-            name: session.name,
-            sessionData: {
-                version: SESSION_VERSION,
-                createdAt: session.createdAt,
-                sessionUid: session.sessionUid || '',
-                config: session.config
-            },
-            sessionUid: session.sessionUid || ''
-        };
+        return result;
     },
 
     /**
@@ -273,7 +273,7 @@ export const SessionService = {
         if (!FirebaseService.isFirebaseConfigured()) {
             throw new Error('Firebase not configured');
         }
-        
+
         await FirebaseService.deleteSessionFromFirebase(sessionId);
     },
 
@@ -282,12 +282,13 @@ export const SessionService = {
      * 
      * @returns Promise resolving to array of SavedSession
      */
-    async listCloudSessions(): Promise<FirebaseService.SavedSession[]> {
+    async listCloudSessions(): Promise<SessionData[]> {
         if (!FirebaseService.isFirebaseConfigured()) {
             throw new Error('Firebase not configured');
         }
-        
-        return await FirebaseService.getSessionsFromFirebase();
+
+        const { sessions } = await FirebaseService.getSessionsFromFirebase();
+        return sessions;
     },
 
     /**
@@ -355,8 +356,8 @@ export const SessionService = {
      * @param appMode - Current application mode
      * @returns Generated session name
      */
-    generateSessionName(appMode: AppMode): string {
-        const modeLabel = appMode === AppMode.Generator ? 'Generation' : 'Conversion';
+    generateSessionName(appMode: CreatorMode): string {
+        const modeLabel = appMode === CreatorMode.Generator ? 'Generation' : 'Conversion';
         return `${modeLabel} - ${new Date().toLocaleString()}`;
     },
 
@@ -366,9 +367,6 @@ export const SessionService = {
      * @returns UUID string
      */
     generateLocalUid(): string {
-        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-            return crypto.randomUUID();
-        }
         return Math.random().toString(36).substring(2) + Date.now().toString(36);
     }
 };

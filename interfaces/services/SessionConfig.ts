@@ -4,94 +4,140 @@
  * Provides type definitions for session data, configuration, and operations.
  */
 
-import { 
-    AppMode, 
-    EngineMode, 
-    Environment, 
-    ProviderType, 
+import {
+    CreatorMode,
+    EngineMode,
+    Environment,
+    ProviderType,
     ExternalProvider,
-    DataSource 
+    DataSource
 } from '../enums';
-import { 
-    HuggingFaceConfig, 
-    DeepConfig, 
+import {
+    HuggingFaceConfig,
+    DeepConfig,
     UserAgentConfig,
-    GenerationParams 
+    GenerationParams
 } from '../../types';
+import { SessionStatus } from '../enums/SessionStatus';
+import { SessionVerificationStatus } from '../enums/SessionVerificationStatus';
+import { StorageMode } from '../enums/StorageMode';
 
 /**
  * Session data structure for serialization.
  * Contains all session configuration that can be saved/loaded.
  */
 export interface SessionData {
+    id: string;
+    sessionUid: string;
+    name: string;
+    updatedAt: number; // timestamp
+    itemCount: number;
+    analytics?: SessionAnalytics;
+    dataset?: SessionDataSource;
+    status: SessionStatus;
+    storageMode: StorageMode;
     /** Session format version for migration support */
     version: number;
+    /** Verification status for the session */
+    verificationStatus?: SessionVerificationStatus;
     /** ISO timestamp when session was created */
     createdAt: string;
     /** Unique session identifier for tracking logs */
-    sessionUid: string;
+    logCount?: number; // backward compatibility
+    isAutoRecovered?: boolean // backward compatibility
+    source?: string; // backward compatibility
+    timestamp?: number; // backward compatibility
     /** Session configuration */
     config: SessionConfig;
 }
 
+export interface SessionSummary {
+    id: string;
+    name: string;
+    timestamp: string; // ISO string
+    source: DataSource;
+    logCount: number;
+    isCloud: boolean;
+    sessionUid: string;
+}
+
+
+export interface SessionDataSource {
+    type: DataSource;
+    path?: string;
+    hfConfig?: HuggingFaceConfig;
+}
 /**
  * Session configuration containing all user settings and parameters.
  * This is the core data structure that gets saved/loaded.
  */
 export interface SessionConfig {
     /** Application mode: Generator or Converter */
-    appMode: AppMode;
+    appMode: CreatorMode;
     /** Engine mode: Regular or Deep reasoning */
     engineMode: EngineMode;
     /** Environment: Development or Production */
     environment: Environment;
     /** Provider type: Gemini or External */
-    provider: ProviderType;
+    provider?: ProviderType;
     /** External provider identifier */
-    externalProvider: ExternalProvider;
+    externalProvider?: ExternalProvider;
     /** External API key (may be empty) */
-    externalApiKey: string;
+    externalApiKey?: string;
     /** External model identifier */
-    externalModel: string;
+    externalModel?: string;
     /** Custom base URL for external provider */
-    customBaseUrl: string;
+    customBaseUrl?: string;
     /** Deep mode phase configuration */
-    deepConfig: DeepConfig;
+    deepConfig?: DeepConfig;
     /** User agent configuration for multi-turn conversations */
-    userAgentConfig: UserAgentConfig;
+    userAgentConfig?: UserAgentConfig;
     /** Number of concurrent generation workers */
-    concurrency: number;
+    concurrency?: number;
     /** Number of rows to fetch from dataset */
-    rowsToFetch: number;
+    rowsToFetch?: number;
     /** Number of rows to skip */
-    skipRows: number;
+    skipRows?: number;
     /** Sleep time between generations (ms) */
-    sleepTime: number;
+    sleepTime?: number;
     /** Maximum retry attempts */
-    maxRetries: number;
+    maxRetries?: number;
     /** Delay between retries (ms) */
-    retryDelay: number;
+    retryDelay?: number;
     /** Number of logs per page in feed */
-    feedPageSize: number;
+    feedPageSize?: number;
     /** Data source mode */
-    dataSourceMode: DataSource;
+    dataSourceMode?: DataSource;
     /** HuggingFace dataset configuration */
-    hfConfig: HuggingFaceConfig;
+    hfConfig?: HuggingFaceConfig;
     /** Topic for synthetic generation */
-    geminiTopic: string;
+    geminiTopic?: string;
     /** Topic category for synthetic generation */
-    topicCategory: string;
+    topicCategory?: string;
     /** System prompt for generator mode */
-    systemPrompt: string;
+    systemPrompt?: string;
     /** System prompt for converter mode */
-    converterPrompt: string;
+    converterPrompt?: string;
     /** Whether to use conversation rewrite mode */
-    conversationRewriteMode: boolean;
+    conversationRewriteMode?: boolean;
     /** Converter input text (manual file content) */
-    converterInputText: string;
+    converterInputText?: string;
     /** Generation parameters (temperature, etc.) */
-    generationParams: GenerationParams;
+    generationParams?: GenerationParams;
 }
+
+// Session Management Interfaces
+export interface SessionAnalytics {
+    totalItems: number;
+    completedItems: number;
+    errorCount: number;
+    totalTokens: number;
+    totalCost: number;
+    avgResponseTime: number;
+    successRate: number;
+    lastUpdated: number; // timestamp
+}
+
 
 /**
  * Configuration for starting a new session.
@@ -106,7 +152,7 @@ export interface NewSessionConfig {
     /** Current environment */
     environment: Environment;
     /** Application mode */
-    appMode: AppMode;
+    appMode: CreatorMode;
 }
 
 /**
@@ -136,7 +182,7 @@ export interface SessionCallbacks {
  * Each setter corresponds to a field in SessionConfig.
  */
 export interface SessionSetters {
-    setAppMode: (mode: AppMode) => void;
+    setAppMode: (mode: CreatorMode) => void;
     setEngineMode: (mode: EngineMode) => void;
     setEnvironment: (env: Environment) => void;
     setProvider: (provider: ProviderType) => void;

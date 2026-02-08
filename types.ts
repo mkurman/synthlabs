@@ -1,9 +1,10 @@
 import type { StreamingPhase } from './interfaces/enums/StreamingPhase';
+import type { CreatorMode, EngineMode } from './interfaces/enums';
 
 // Enums
 export { LogItemStatus } from './interfaces/enums';
 export { DataSource } from './interfaces/enums';
-export { AppMode } from './interfaces/enums';
+export { CreatorMode as AppMode } from './interfaces/enums';
 export { EngineMode } from './interfaces/enums';
 export { Environment } from './interfaces/enums';
 export { ProviderType } from './interfaces/enums';
@@ -20,7 +21,7 @@ export { ResponderPhase } from './interfaces/enums';
 export { ChatRole } from './interfaces/enums';
 
 // Models
-export type { ChatMessage } from './interfaces/models/ChatMessage';
+export type { ChatMessage, ChatUsageSummary } from './interfaces/models/ChatMessage';
 export type { SynthLogItem } from './interfaces/models/SynthLogItem';
 export type { VerifierItem } from './interfaces/models/VerifierItem';
 export type { ProviderModel } from './interfaces/models/ProviderModel';
@@ -103,13 +104,14 @@ export interface ProgressStats {
   activeWorkers: number;
 }
 
-export interface FirebaseConfig {
-  apiKey: string;
-  authDomain: string;
-  projectId: string;
-  storageBucket: string;
-  messagingSenderId: string;
-  appId: string;
+export interface SessionListFilters {
+  search: string;
+  onlyWithLogs: boolean;
+  minRows: number | null;
+  maxRows: number | null;
+  appMode: CreatorMode | null;
+  engineMode: EngineMode | null;
+  model: string;
 }
 
 export type StreamPhase = 'writer' | 'rewriter' | 'user_followup' | 'regular';
@@ -118,6 +120,7 @@ export interface UsageData {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  reasoning_tokens?: number;
   cost: number;
 }
 
@@ -126,7 +129,7 @@ export type StreamChunkCallback = (
   accumulated: string,
   phase?: StreamPhase,
   usage?: UsageData
-) => void;
+) => void | false;
 
 export type StreamingConversationPhase = StreamingPhase;
 
@@ -168,8 +171,29 @@ export interface AutoscoreConfig {
   generationParams?: import('./interfaces/config/GenerationParams').GenerationParams;
 }
 
+export interface AutoscoreToolParams {
+  indices?: number[];
+  scores?: number[];
+}
+
+export interface AutoscoreToolResult {
+  scored: number;
+  skipped: number;
+  errors: number;
+}
+
+export interface SessionListToolParams {
+  minRows?: number;
+  maxRows?: number;
+  limit?: number;
+}
+
 export interface ElectronAPI {
   getAppVersion: () => Promise<string>;
+  openNewWindow: () => Promise<void>;
+  saveFirebaseCredentials: (jsonContent: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  getFirebaseStatus: () => Promise<{ configured: boolean; path: string | null }>;
+  getBackendPort: () => Promise<number | null>;
   platform: string;
 }
 
@@ -177,4 +201,12 @@ declare global {
   interface Window {
     electronAPI?: ElectronAPI;
   }
+}
+
+export interface PaginatedItems<T> {
+  items: T[];
+  totalCount: number;
+  currentPage: number;
+  pageSize: number;
+  hasMore: boolean;
 }

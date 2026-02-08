@@ -4,11 +4,10 @@ import { logger } from '../../utils/logger';
 export async function processStreamResponse(
   response: Response,
   provider: ExternalProvider,
-  onChunk: (chunk: string, accumulated: string, usage?: any) => void,
+  onChunk: (chunk: string, accumulated: string, usage?: any) => void | false,
   signal?: AbortSignal,
   apiType: ApiType = ApiType.Chat
 ): Promise<string> {
-  console.log('🔴 externalApiService: processStreamResponse STARTED', { apiType });
   const reader = response.body?.getReader();
   if (!reader) throw new Error('No response body for streaming');
 
@@ -21,6 +20,8 @@ export async function processStreamResponse(
   const isResponsesApi = apiType === ApiType.Responses;
   let chunkCount = 0;
 
+  let streamError: Error | null = null;
+
   try {
     while (true) {
       chunkCount++;
@@ -29,7 +30,17 @@ export async function processStreamResponse(
         throw new DOMException('Aborted', 'AbortError');
       }
 
-      const { done, value } = await reader.read();
+      let done: boolean;
+      let value: Uint8Array | undefined;
+      try {
+        ({ done, value } = await reader.read());
+      } catch (readErr: any) {
+        // Network disconnect or server closed connection mid-stream
+        // Preserve whatever we've accumulated so far instead of losing it
+        logger.warn('Stream read error (server may have disconnected):', readErr.message);
+        streamError = readErr;
+        break;
+      }
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -54,14 +65,12 @@ export async function processStreamResponse(
         if (dataStart !== -1) {
           try {
             const json = JSON.parse(trimmed.slice(dataStart));
-            console.log('externalApiService: Parsed JSON chunk, has usage:', !!json.usage);
 
             let chunk = '';
             let isReasoningChunk = false;
 
             if (json.usage) {
               usageData = json.usage;
-              console.log('externalApiService: Captured usage data:', usageData);
             }
 
             if (provider === ExternalProvider.Anthropic) {
@@ -130,19 +139,27 @@ export async function processStreamResponse(
             if (isReasoningChunk && !isReasoning) {
               const startTag = '<think>';
               accumulated += startTag;
-              onChunk(startTag, accumulated, usageData);
+              if (onChunk(startTag, accumulated, usageData) === false) {
+                reader.cancel();
+                return accumulated;
+              }
               isReasoning = true;
             } else if (!isReasoningChunk && isReasoning && chunk) {
               const endTag = '</think>';
               accumulated += endTag;
-              onChunk(endTag, accumulated, usageData);
+              if (onChunk(endTag, accumulated, usageData) === false) {
+                reader.cancel();
+                return accumulated;
+              }
               isReasoning = false;
             }
 
             if (chunk || usageData) {
               if (chunk) accumulated += chunk;
-              console.log('externalApiService: calling onChunk with chunk length:', chunk?.length || 0, 'usage:', usageData);
-              onChunk(chunk, accumulated, usageData);
+              if (onChunk(chunk, accumulated, usageData) === false) {
+                reader.cancel();
+                return accumulated;
+              }
             }
           } catch (e) {
             logger.warn('Failed to parse SSE chunk:', trimmed);
@@ -152,6 +169,40 @@ export async function processStreamResponse(
     }
   } finally {
     reader.releaseLock();
+  }
+
+  // Process any remaining data left in the buffer (e.g. last line without trailing newline)
+  if (buffer.trim()) {
+    const trimmed = buffer.trim();
+    if (trimmed !== 'data: [DONE]') {
+      const dataStart = trimmed.startsWith('data: ') ? 6 : -1;
+      if (dataStart !== -1) {
+        try {
+          const json = JSON.parse(trimmed.slice(dataStart));
+          let chunk = '';
+          if (provider === ExternalProvider.Anthropic) {
+            chunk = json.delta?.text || json.content?.[0]?.text || '';
+          } else if (isResponsesApi) {
+            const item = json.item || json.delta;
+            chunk = item?.content ? (typeof item.content === 'string' ? item.content : '') : '';
+          } else {
+            const delta = json.choices?.[0]?.delta;
+            chunk = delta?.content || delta?.reasoning_content || delta?.reasoning || '';
+          }
+          if (chunk) {
+            accumulated += chunk;
+            onChunk(chunk, accumulated, usageData);
+          }
+        } catch (e) {
+          logger.warn('Failed to parse remaining buffer:', trimmed);
+        }
+      }
+    }
+  }
+
+  // If we got a stream error but have no accumulated content, re-throw so it gets retried
+  if (streamError && !accumulated.trim()) {
+    throw streamError;
   }
 
   if (isReasoning) {
@@ -177,6 +228,5 @@ export async function processStreamResponse(
     }
   }
 
-  console.log('🔴 externalApiService: Stream finished, total chunks:', chunkCount, 'final usage:', usageData);
   return accumulated;
 }

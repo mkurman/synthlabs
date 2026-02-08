@@ -6,7 +6,7 @@
 
 import { EXTERNAL_PROVIDERS, PROVIDERS } from '../constants';
 import { GenerationParams } from '../types';
-import { ApiType, ExternalProvider, ProviderType } from '../interfaces/enums';
+import { ApiType, DbProvider, ExternalProvider, ProviderType, ThemeMode } from '../interfaces/enums';
 
 const DB_NAME = 'SynthLabsSettingsDB';
 const DB_VERSION = 3; // Aligned with modelService for models store
@@ -98,22 +98,22 @@ export interface AppSettings {
     huggingFaceToken?: string;
     huggingFaceDefaultRepo?: string;
 
-    // Firebase (override env vars)
-    firebaseApiKey?: string;
-    firebaseAuthDomain?: string;
-    firebaseProjectId?: string;
-    firebaseStorageBucket?: string;
-    firebaseMessagingSenderId?: string;
-    firebaseAppId?: string;
+    // Firebase backend (service account managed by backend server)
+    backendServiceAccountPath?: string;
 
     // Gemini (primary provider, not external)
     geminiApiKey?: string;
+
+    // Database provider
+    dbProvider?: DbProvider;
+    cockroachConnectionString?: string;
+    cockroachCaCertPem?: string;
 
     // UI Preferences
     defaultProvider?: string;
     defaultModel?: string;
     defaultConcurrency?: number;
-    theme?: 'dark' | 'light';
+    theme?: ThemeMode;
     promptSet?: string;
 
     // Task Classification / Auto-routing
@@ -130,6 +130,18 @@ export interface AppSettings {
     // Default generation parameters for LLM calls
     defaultGenerationParams?: GenerationParams;
     generationTimeoutSeconds?: number;
+
+    // Assistant (Verifier chat) preferences
+    assistantDefaults?: AssistantDefaults;
+
+    // Context Management (chat context window management)
+    contextManagement?: {
+        enabled?: boolean;
+        strategy?: 'none' | 'truncate-old' | 'truncate-middle' | 'summarize';
+        triggerThreshold?: number;      // 0-1, when to trigger compaction (e.g., 0.85 = 85% of context used)
+        responseReserve?: number;       // Tokens to reserve for response
+        keepRecentMessages?: number;    // Number of recent messages to always keep
+    };
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -138,7 +150,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     workflowDefaults: { ...DEFAULT_WORKFLOW_DEFAULTS },
     generalPurposeModel: { ...EMPTY_STEP_CONFIG },
     defaultConcurrency: 4,
-    theme: 'dark',
+    theme: ThemeMode.Dark,
     promptSet: 'default',
     autoRouteEnabled: false,
     autoRouteMethod: 'heuristic',
@@ -160,10 +172,27 @@ const DEFAULT_SETTINGS: AppSettings = {
         presencePenalty: undefined,
         frequencyPenalty: undefined,
         maxTokens: undefined,
-        forceStructuredOutput: true
+        forceStructuredOutput: true,
+        splitFieldRequests: false
     },
-    generationTimeoutSeconds: 300
+    generationTimeoutSeconds: 300,
+    backendServiceAccountPath: '',
+    contextManagement: {
+        enabled: true,
+        strategy: 'truncate-middle',
+        triggerThreshold: 0.85,
+        responseReserve: 4096,
+        keepRecentMessages: 10
+    }
 };
+
+export interface AssistantDefaults {
+    provider: ProviderType | ExternalProvider;
+    model: string;
+    apiKeyOverride?: string;
+    customBaseUrl?: string;
+    toolsEnabled?: boolean;
+}
 
 // In-memory cache for synchronous access
 let isInitialized = false;
@@ -465,7 +494,8 @@ export const SettingsService = {
             presencePenalty: defaults?.presencePenalty,
             frequencyPenalty: defaults?.frequencyPenalty,
             maxTokens: defaults?.maxTokens,
-            forceStructuredOutput: defaults?.forceStructuredOutput ?? true
+            forceStructuredOutput: defaults?.forceStructuredOutput ?? true,
+            splitFieldRequests: defaults?.splitFieldRequests ?? false
         };
     },
 

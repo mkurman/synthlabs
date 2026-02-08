@@ -13,7 +13,7 @@ export enum DataSource {
   Synthetic = 'synthetic'
 }
 
-export enum AppMode {
+export enum CreatorMode {
   Generator = 'generator',
   Converter = 'converter'
 }
@@ -29,7 +29,6 @@ export enum Environment {
 }
 
 export enum ProviderType {
-  Gemini = 'gemini',
   External = 'external'
 }
 
@@ -52,6 +51,7 @@ export enum ExternalProvider {
   Groq = 'groq',
   Ollama = 'ollama',
   Chutes = 'chutes',
+  Gemini = 'gemini',
   HuggingFace = 'huggingface',
   Other = 'other'
 }
@@ -64,6 +64,7 @@ export { LogFilter } from './enums/LogFilter';
 export { DeepPhase } from './enums/DeepPhase';
 export { ResponderPhase } from './enums/ResponderPhase';
 export { ChatRole } from './enums/ChatRole';
+export { ToolApprovalAction } from './enums/ToolApprovalAction';
 
 // Prompt-related enums
 export { PromptCategory } from './enums/PromptCategory';
@@ -103,3 +104,16 @@ export { ExportColumnName } from './enums/ExportColumnName';
 
 // Task type enum
 export { TaskType } from './enums/TaskType';
+
+// Feed display mode enum
+export { FeedDisplayMode } from './enums/FeedDisplayMode';
+
+// Log feed rewrite target enum
+export { LogFeedRewriteTarget } from './enums/LogFeedRewriteTarget';
+
+// Creator controls tab enum
+export { CreatorControlsTab } from './enums/CreatorControlsTab';
+export { SessionVerificationStatus } from './enums/SessionVerificationStatus';
+export { VerifierDataSource } from './enums/VerifierDataSource';
+export { BackendApplyStatus } from './enums/BackendApplyStatus';
+export { DbProvider } from './enums/DbProvider';

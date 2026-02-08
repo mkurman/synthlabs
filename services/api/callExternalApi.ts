@@ -5,6 +5,7 @@ import { SettingsService } from '../settingsService';
 import { ExternalApiConfig, RESPONSES_API_SCHEMAS, sleep, generateJsonSchemaForPrompt, ResponsesSchemaName } from './schemas';
 import { processStreamResponse } from './streaming';
 import { parseJsonContent, MissingFieldsError } from './jsonParser';
+import { cleanGenerationParamsForApi } from '../../utils/generationParamsUtils';
 
 export type { ExternalApiConfig } from './schemas';
 
@@ -13,7 +14,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     provider, apiKey, model, apiType = ApiType.Chat, customBaseUrl, userPrompt, signal,
     maxRetries = 3, retryDelay = 2000, generationParams, structuredOutput,
     responsesSchema = ResponsesSchemaName.ReasoningTrace, stream = false, onStreamChunk, streamPhase, tools,
-    promptSchema
+    promptSchema, onUsage
   } = config;
 
   let baseUrl = provider === ExternalProvider.Other ? customBaseUrl : PROVIDERS[provider]?.url;
@@ -24,15 +25,22 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
 
   // Get selected fields from config (for field selection feature)
   const selectedFields = config.selectedFields;
-  
+  const useNativeOutput = generationParams?.useNativeOutput ?? false;
+
   logger.log('[callExternalApi] Field selection debug:', {
     selectedFields,
     hasPromptSchema: !!promptSchema,
+    useNativeOutput,
     promptSchemaOutputLength: promptSchema?.output?.length,
     promptSchemaOutput: promptSchema?.output?.map(f => ({ name: f.name, optional: f.optional }))
   });
 
-  if (config.systemPrompt) {
+  const splitFieldRequests = generationParams?.splitFieldRequests ?? false;
+
+  if (useNativeOutput || splitFieldRequests) {
+    // Native mode or split field mode: use system prompt as-is, no JSON output instructions
+    enhancedSystemPrompt = config.systemPrompt || '';
+  } else if (config.systemPrompt) {
     if (structuredOutput) {
       // Use promptSchema.output if available, otherwise we can't generate proper schema
       if (promptSchema?.output && promptSchema.output.length > 0) {
@@ -103,14 +111,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     headers['Authorization'] = `Bearer ${safeApiKey}`;
   }
 
-  const cleanGenParams: Record<string, any> = {};
-  if (generationParams) {
-    if (generationParams.temperature !== undefined) cleanGenParams.temperature = generationParams.temperature;
-    if (generationParams.topP !== undefined) cleanGenParams.top_p = generationParams.topP;
-    if (generationParams.topK !== undefined) cleanGenParams.top_k = generationParams.topK;
-    if (generationParams.frequencyPenalty !== undefined) cleanGenParams.frequency_penalty = generationParams.frequencyPenalty;
-    if (generationParams.presencePenalty !== undefined) cleanGenParams.presence_penalty = generationParams.presencePenalty;
-  }
+  const cleanGenParams = cleanGenerationParamsForApi(generationParams);
 
   let url = '';
   let payload: any = {};
@@ -171,6 +172,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         }
       } : undefined),
       stream: shouldStream,
+      ...(shouldStream ? { include_usage: true, stream_options: { include_usage: true } } : {}),
       ...cleanGenParams
     };
 
@@ -191,10 +193,11 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       response_format: structuredOutput && provider !== ExternalProvider.Ollama ? { type: responseFormat } : undefined,
       stream: shouldStream,
+      ...(shouldStream ? { include_usage: true, stream_options: { include_usage: true } } : {}),
       ...(tools && tools.length > 0 ? { tools } : {}),
       ...cleanGenParams
     };
-    
+
     if (cleanGenParams.temperature === undefined) {
       const defaults = SettingsService.getSettings().defaultGenerationParams;
       if (defaults && defaults.temperature !== undefined) {
@@ -236,8 +239,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           response,
           provider,
           (chunk, accumulated, usage) => {
-            console.log('externalApiService callExternalApi wrapper - usage:', usage);
-            onStreamChunk!(chunk, accumulated, streamPhase, usage);
+            return onStreamChunk!(chunk, accumulated, streamPhase, usage);
           },
           signal,
           apiType
@@ -255,6 +257,21 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
       }
 
       const data = await response.json();
+
+      // Extract usage data from non-streaming response
+      if (onUsage && data.usage) {
+        const usage = data.usage;
+        const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens
+          ?? usage.reasoning_tokens
+          ?? 0;
+        onUsage({
+          prompt_tokens: usage.prompt_tokens || usage.input_tokens || 0,
+          completion_tokens: usage.completion_tokens || usage.output_tokens || 0,
+          total_tokens: usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)),
+          reasoning_tokens: reasoningTokens,
+          cost: 0
+        });
+      }
 
       if (provider === ExternalProvider.Anthropic) {
         const content = data.content?.[0]?.text || "";
@@ -299,6 +316,20 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
           rawContent = message?.reasoning || message?.reasoning_content || "";
         }
 
+        // Native mode: combine reasoning_content with content using <think> tags
+        // This mirrors the streaming behavior where reasoning_content is wrapped in <think> tags
+        if (useNativeOutput) {
+          const reasoningContent = message?.reasoning_content || message?.reasoning;
+          const contentPart = message?.content || '';
+          if (reasoningContent && contentPart) {
+            rawContent = `<think>${reasoningContent}</think>${contentPart}`;
+          } else if (reasoningContent) {
+            rawContent = `<think>${reasoningContent}</think>`;
+          } else {
+            rawContent = contentPart;
+          }
+        }
+
         if (message?.tool_calls) {
           rawContent = rawContent || "";
           for (const tc of message.tool_calls) {
@@ -326,7 +357,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
 
     } catch (err: any) {
       if (err.name === 'AbortError') throw err;
-      
+
       // If MissingFieldsError, don't retry - the model returned incomplete data
       if (err instanceof MissingFieldsError) {
         logger.error(`Missing required fields in response: ${err.missingFields.join(', ')}`);

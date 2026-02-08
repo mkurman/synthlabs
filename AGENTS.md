@@ -1,6 +1,6 @@
 # AGENTS.md - Guide for Agentic Coding Assistants
 
-This repo is a Vite + React + TypeScript app with optional Electron/Tauri/Bun builds.
+This repo is a Vite + React + TypeScript app with optional Electron/Bun builds.
 Use this file as the operational guide for automated agents.
 
 ## Install & Run
@@ -29,8 +29,6 @@ npm run electron:build
 npm run electron:build:win
 npm run electron:build:mac
 
-npm run tauri:dev
-npm run tauri:build
 ```
 
 ## Lint / Typecheck / Tests
@@ -44,7 +42,7 @@ Single-test command: none (no test runner configured).
 ## Tech Stack Snapshot
 
 - React 19, TypeScript 5.8, Vite 6
-- Optional Electron + Tauri
+- Optional Electron
 - Firebase/Firestore integrations
 - AI providers: Google GenAI, OpenAI, Anthropic, custom endpoints
 
@@ -177,6 +175,7 @@ Required keys (Vite prefixes):
 - `VITE_GEMINI_API_KEY`
 - `VITE_OPENAI_API_KEY`
 - `VITE_ANTHROPIC_API_KEY`
+- `VITE_API_KEY_SALT` – Shared secret for encrypting API keys sent to the backend (both frontend and backend read this). Defaults to a dev-only fallback if unset.
 
 ## Security & Safety
 
@@ -184,6 +183,7 @@ Required keys (Vite prefixes):
 - Validate and sanitize user inputs.
 - Rate-limit provider calls to protect quotas.
 - Use Firebase security rules in production.
+- API keys sent to the backend are encrypted with AES-256-CBC using a shared salt (`VITE_API_KEY_SALT`). See `utils/keyEncryption.ts` (frontend) and `server/utils/keyEncryption.js` (backend).
 
 ## Comments & Docs
 
@@ -278,6 +278,106 @@ Example re-export stub:
 export * from './generation/generationService';
 export { default } from './generation/generationService';
 ```
+
+## Backend Server
+
+Express server in `server/` provides Firestore-backed APIs and background job execution.
+
+```bash
+node server/index.js       # Start backend (auto-discovers port 8787-8797)
+```
+
+### Backend Structure
+
+```
+server/
+├── index.js               # Route registration + server startup
+├── firebaseAdmin.js       # Firestore admin SDK init
+├── jobs/
+│   └── jobStore.js        # In-memory + Firestore job tracking (Pending/Running/Completed/Failed)
+├── services/
+│   └── aiClient.js        # OpenAI-compatible chat completions caller (shared by jobs)
+├── utils/
+│   └── keyEncryption.js   # AES-256-CBC decrypt for API keys from frontend
+├── routes/
+│   ├── health/            # GET /health
+│   ├── admin/             # POST /api/admin/service-account-*
+│   ├── jobs/
+│   │   ├── getJob.js      # GET /api/jobs/:id
+│   │   ├── startAutoscore.js  # POST /api/jobs/autoscore
+│   │   └── startRewrite.js    # POST /api/jobs/rewrite
+│   ├── sessions/          # CRUD + verification status
+│   ├── logs/              # CRUD + stats + pagination
+│   └── orphans/           # Orphan detection + sync jobs
+```
+
+### Background Jobs
+
+Jobs use `jobStore.js` with statuses: `pending` → `running` → `completed`/`failed`.
+Progress is polled via `GET /api/jobs/:id`. The frontend uses `backendClient.fetchJob(jobId)` / `backendClient.pollJob(jobId)`.
+
+### Backend AI Client (`server/services/aiClient.js`)
+
+Simple OpenAI-compatible caller used by autoscore and rewrite jobs:
+- `callChatCompletion({ baseUrl, apiKey, model, systemPrompt, userPrompt, maxTokens?, temperature? })`
+- Auto-appends `/v1/chat/completions` to base URL
+- Retries up to 2 times with 2s delay
+
+## Agent Tools (ToolExecutor)
+
+The verifier agent has access to tools registered in `services/toolService.ts`. Tools are exposed as OpenAI function-calling definitions.
+
+### Tool Registration
+
+```ts
+this.registerTool(
+    { name, description, parameters: { type: 'object', properties, required } },
+    async (args) => { /* execute */ },
+    { requiresApproval: true, approvalSettingName: 'Label' }  // optional
+);
+```
+
+### Available Tools (20 total)
+
+| # | Tool | Approval | Description |
+|---|------|----------|-------------|
+| 1 | `getTotalItemsCount` | No | Count items in current dataset |
+| 2 | `getItems` | No | Get items by range with field selection |
+| 3 | `getItem` | No | Get single item by index |
+| 4 | `updateItem` | No | Update item field locally |
+| 5 | `fetchRows` | No | Fetch more rows from DB |
+| 6 | `listSessions` | No | List sessions with filtering |
+| 7 | `getLatestSession` | No | Most recently updated session |
+| 8 | `getSessionWithMostRows` | No | Session with highest row count |
+| 9 | `getSessionWithFewestRows` | No | Session with lowest row count |
+| 10 | `fetchSessionRows` | No | Fetch rows from specific session |
+| 11 | `loadSessionById` | No | Load session into UI |
+| 12 | `refreshSessionsList` | No | Refresh sessions from storage |
+| 13 | `renameSession` | Yes | Rename session |
+| 14 | `autoscoreItems` | No | Set scores locally by indices |
+| 15 | `updateItemsInDb` | Yes | Persist local changes to Firebase |
+| 16 | `getSessionByVerificationStatus` | No | Find session by status (unreviewed/verified/garbage) + order (latest/oldest) |
+| 17 | `markSessionVerificationStatus` | Yes | Mark session as verified/garbage |
+| 18 | `runAutoScore` | Yes | Start backend auto-scoring job, returns jobId |
+| 19 | `runRewrite` | Yes | Start backend rewrite job with field selection, returns jobId |
+| 20 | `checkJobStatus` | No | Poll backend job status/progress by jobId |
+
+### Backend Job Tools (18-20)
+
+`runAutoScore` and `runRewrite` send encrypted API keys to the backend, which runs the AI calls as background jobs. The agent receives a `jobId` and uses `checkJobStatus` to monitor progress.
+
+Parameters for `runAutoScore`: `{ sessionId, provider?, model?, baseUrl?, limit?, sleepMs? }`
+Parameters for `runRewrite`: `{ sessionId, fields: ['query'|'reasoning'|'answer'], provider?, model?, baseUrl?, limit?, sleepMs? }`
+
+Provider/model/baseUrl default to current settings if not specified by the agent.
+
+### ToolContext
+
+Tools access data via `ToolContext` (provided by `useVerifierToolExecutor` hook):
+- `data`, `setData` – current dataset
+- `sessions`, `refreshSessions` – session list
+- `getApiKey(provider)`, `getExternalProvider()`, `getCustomBaseUrl()`, `getModel()` – settings accessors
+- `loadSessionById`, `loadSessionRows`, `autoscoreItems`, etc.
 
 ### File Organization After Refactoring
 

@@ -2,13 +2,15 @@ import { useCallback } from 'react';
 
 import type { VerifierItem } from '../types';
 import { parseVerifierItemsFromText } from '../services/verifierFileParseService';
+import { VerifierPanelTab } from '../interfaces/enums/VerifierPanelTab';
+import { VerifierDataSource } from '../interfaces/enums/VerifierDataSource';
 
 interface UseVerifierImportOptions {
     setIsImporting: (value: boolean) => void;
     analyzeDuplicates: (items: VerifierItem[]) => void;
     setData: (items: VerifierItem[]) => void;
-    setDataSource: (source: 'file' | 'db' | null) => void;
-    setActiveTab: (tab: 'import' | 'review' | 'export') => void;
+    setDataSource: (source: VerifierDataSource | null) => void;
+    setActiveTab: (tab: VerifierPanelTab) => void;
     toast: { error: (message: string) => void };
 }
 
@@ -53,8 +55,8 @@ export function useVerifierImport({
             if (allItems.length > 0) {
                 analyzeDuplicates(allItems);
                 setData(allItems);
-                setDataSource('file');
-                setActiveTab('review');
+                setDataSource(VerifierDataSource.File);
+                setActiveTab(VerifierPanelTab.Review);
             } else {
                 toast.error('No valid data found in selected files. Please check the format (JSON Array or JSONL).');
             }
