@@ -21,12 +21,6 @@ Create synthetic datasets from scratch using AI-powered generation. Define topic
 
 Core idea: [SYNTH The New Data Frontier by PleIAs](https://pleias.fr/blog/blogsynth-the-new-data-frontier)
 
-<details>
-<summary>📸 Screenshot</summary>
-
-![Generator](assets/creator.png)
-
-</details>
 
 ---
 
@@ -62,15 +56,6 @@ Have data but unsure what's inside? Explore it directly with our HuggingFace-sty
 - Fullscreen expansion with pagination
 - Click any row to see full details
 
-<details>
-<summary>📸 Screenshots</summary>
-
-![Data Preview](assets/data_preview.png)
-
-![Single Row View](assets/data_preview_single_row.png)
-
-</details>
-
 ---
 
 ### Verifier View
@@ -81,15 +66,6 @@ Quality control your generated data:
 - Assign ratings (1-5 stars)
 - Export only verified, high-quality data
 
-<details>
-<summary>📸 Screenshots</summary>
-
-![Verifier](assets/verifier.png)
-
-![Rating System](assets/verifier_rating.png)
-
-</details>
-
 ---
 
 ### Cloud Integration
@@ -99,13 +75,6 @@ Seamless Firebase/Firestore support:
 - **Production Mode**: Upload to your Firestore database with one click
 - Session management and persistence
 - Real-time sync across devices
-
-<details>
-<summary>📸 Screenshot</summary>
-
-![Production Mode](assets/production_mode.png)
-
-</details>
 
 ---
 
@@ -171,6 +140,70 @@ Seamless Firebase/Firestore support:
 
 4. **Open in browser:**
    Navigate to `http://localhost:3000`
+
+## Step-by-Step Walkthrough
+
+Follow this guide to get started with SynthLabs Reasoning Generator.
+
+### 1. Dashboard Overview
+The main dashboard gives you quick access to all your generation sessions and configuration settings.
+
+<details>
+<summary>📸 Screenshot</summary>
+
+![Dashboard](assets/screenshots/dashboard.jpg)
+
+</details>
+
+### 2. Configuring Providers
+Navigate to **Settings > API Keys** to configure your AI providers.
+For local inference or custom endpoints (e.g. vLLM, Aphrodite):
+1. Select **Other (Custom)**.
+2. Set your Base URL (e.g., `http://localhost:8001/v1`).
+3. Enter your Model ID (e.g., `Qwen/Qwen3-14B`).
+
+<details>
+<summary>📸 Screenshot</summary>
+
+![Settings](assets/screenshots/settings_custom_config.jpg)
+</details>
+
+### 3. Creating a Session
+In the **Generator** (or **Engine**) tab, you can define your dataset parameters, customize system prompts, and configure output fields.
+
+<details>
+<summary>📸 Screenshot</summary>
+
+![Session Creation](assets/screenshots/session_creation.jpg)
+</details>
+
+### 4. Production Mode
+Navigate to **Settings > DB Provider** to configure your database providers.
+Switch to **Prod (Cloud)** mode to access and manage your cloud-persisted sessions. This allows you to collaborate and sync data across devices.
+
+<details>
+<summary>📸 Screenshot</summary>
+
+![Production Session](assets/screenshots/creator_production_session.jpg)
+</details>
+
+### 5. Reviewing Generated Data
+Use the **Verifier** (or **Review**) interface to inspect generated samples, check reasoning traces within `<think>` tags, and validate data quality.
+
+<details>
+<summary>📸 Screenshot</summary>
+
+![Data View](assets/screenshots/data_view.jpg)
+</details>
+
+### 6. AI Data Assistant
+Interact with your data using the integrated AI assistant to analyze patterns, summarize findings, or ask questions about your dataset.
+
+<details>
+<summary>📸 Screenshot</summary>
+
+![AI Interface](assets/screenshots/ai_interface.jpg)
+</details>
 
 ### Backend (optional)
 
