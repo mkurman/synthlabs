@@ -1,5 +1,5 @@
 <div align="center">
-<img width="1200" height="auto" alt="SynthLabs Reasoning Generator" src="assets/synthlabs.jpeg" />
+<img width="1200" height="auto" alt="SynthLabs Reasoning Generator" src="assets/synthlabs.jpg" />
 
 # SynthLabs Reasoning Generator
 
