@@ -18,6 +18,8 @@ const JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const JOB_TYPE_LABELS: Record<string, string> = {
     autoscore: 'Auto-Score',
     rewrite: 'Rewrite',
+    'remove-items': 'Remove Items',
+    'migrate-reasoning': 'Migrate Reasoning',
     orphan_check: 'Orphan Check',
     orphan_sync: 'Orphan Sync',
 };
@@ -31,6 +33,7 @@ export interface UseJobMonitorReturn {
     dismissJob: (jobId: string) => void;
     stopJob: (jobId: string) => Promise<void>;
     rerunJob: (jobId: string) => Promise<void>;
+    resumeJob: (jobId: string) => Promise<void>;
     clearCompleted: () => void;
     refreshJobs: () => Promise<void>;
     selectedJobId: string | null;
@@ -255,6 +258,66 @@ export const useJobMonitor = (options?: UseJobMonitorOptions): UseJobMonitorRetu
         }
     }, [jobs, trackJob]);
 
+    const resumeJob = useCallback(async (jobId: string) => {
+        const oldJob = jobs.find(j => j.id === jobId);
+        const label = getJobLabel(oldJob?.type || 'unknown');
+        try {
+            let newJobId: string;
+
+            // Resume based on job type
+            if (oldJob?.type === 'autoscore') {
+                // Autoscore needs API key
+                const fullJob = await backendClient.fetchJob(jobId) as Record<string, unknown>;
+                const params = fullJob?.params as Record<string, unknown> | undefined;
+                const provider = (params?.provider as string) || '';
+
+                const apiKey = provider ? SettingsService.getApiKey(provider) : '';
+                if (!apiKey) {
+                    toast.error(`No API key for provider "${provider}" — cannot resume job`);
+                    return;
+                }
+
+                const encrypted = await encryptKey(apiKey);
+                newJobId = await backendClient.startAutoScore({
+                    resumeJobId: jobId,
+                    apiKey: encrypted,
+                });
+            } else if (oldJob?.type === 'migrate-reasoning') {
+                // Migrate reasoning doesn't need API key
+                newJobId = await backendClient.startMigrateReasoning({
+                    resumeJobId: jobId,
+                });
+            } else if (oldJob?.type === 'rewrite') {
+                // Rewrite needs API key
+                const fullJob = await backendClient.fetchJob(jobId) as Record<string, unknown>;
+                const params = fullJob?.params as Record<string, unknown> | undefined;
+                const provider = (params?.provider as string) || '';
+
+                const apiKey = provider ? SettingsService.getApiKey(provider) : '';
+                if (!apiKey) {
+                    toast.error(`No API key for provider "${provider}" — cannot resume job`);
+                    return;
+                }
+
+                const encrypted = await encryptKey(apiKey);
+                newJobId = await backendClient.startRewrite({
+                    resumeJobId: jobId,
+                    apiKey: encrypted,
+                });
+            } else {
+                toast.error(`Job type "${oldJob?.type}" does not support resume`);
+                return;
+            }
+
+            // The resumed job keeps the same ID, so just refresh
+            await refreshJobs();
+            toast.success(`${label} job resumed from where it stopped`);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            toast.error(`Failed to resume job: ${msg}`);
+        }
+    }, [jobs, refreshJobs]);
+
     const dismissJob = useCallback((jobId: string) => {
         removeLocalJob(jobId).catch(() => { /* ignore */ });
         previousStatusRef.current.delete(jobId);
@@ -283,6 +346,7 @@ export const useJobMonitor = (options?: UseJobMonitorOptions): UseJobMonitorRetu
         dismissJob,
         stopJob,
         rerunJob,
+        resumeJob,
         clearCompleted,
         refreshJobs,
         selectedJobId,

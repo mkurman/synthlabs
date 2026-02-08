@@ -48,7 +48,6 @@ export const registerRerunJobRoute = (app, { getJob }) => {
         fakeReq.method = 'POST';
         fakeReq.url = endpoint;
         fakeReq.originalUrl = endpoint;
-        fakeReq.path = endpoint;
 
         app.handle(fakeReq, res);
     });

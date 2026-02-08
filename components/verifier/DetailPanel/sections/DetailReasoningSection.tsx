@@ -35,9 +35,15 @@ export const DetailReasoningSection: React.FC<DetailReasoningSectionProps> = ({
     showRewriteDropdown,
     setShowRewriteDropdown
 }) => {
+    console.log('[DetailReasoningSection] Rendering, item.id:', item.id);
+    console.log('[DetailReasoningSection] item.reasoning:', item.reasoning?.substring(0, 50) || '(empty)');
+    console.log('[DetailReasoningSection] item.answer:', item.answer?.substring(0, 50) || '(empty)');
     const isEditing = editState?.field === 'reasoning';
     const parsedAnswer = parseThinkTagsForDisplay(item.answer || '');
+    console.log('[DetailReasoningSection] parsedAnswer.hasThinkTags:', parsedAnswer.hasThinkTags);
+    console.log('[DetailReasoningSection] parsedAnswer.reasoning:', parsedAnswer.reasoning?.substring(0, 50) || '(empty)');
     const displayReasoning = sanitizeReasoningContent(item.reasoning || parsedAnswer.reasoning || '');
+    console.log('[DetailReasoningSection] displayReasoning:', displayReasoning?.substring(0, 50) || '(empty)');
 
     const isRewritingThis = rewritingField?.itemId === item.id && 
         (rewritingField?.field === VerifierRewriteTarget.Reasoning || rewritingField?.field === VerifierRewriteTarget.Both);
@@ -122,15 +128,19 @@ export const DetailReasoningSection: React.FC<DetailReasoningSectionProps> = ({
                     autoFocus
                 />
             ) : (
-                <div className="bg-slate-950/50 border border-slate-800 rounded-lg p-4 max-h-[60vh] overflow-y-auto">
+                <div className="bg-slate-950/50 border border-slate-800 rounded-lg p-4 max-h-[60vh] overflow-y-auto" style={{ minHeight: '100px' }}>
                     {isRewritingThis && streamingContent ? (
                         <p className="text-sm text-sky-300 font-mono animate-pulse whitespace-pre-wrap leading-relaxed">
                             {streamingContent}
                             <span className="inline-block w-2 h-4 bg-sky-400 ml-1 animate-pulse" />
                         </p>
                     ) : (
-                        <div className="text-sm leading-relaxed">
-                            <ReasoningHighlighter text={displayReasoning || '(No reasoning)'} />
+                        <div className="text-sm leading-relaxed text-slate-100">
+                            {displayReasoning ? (
+                                <ReasoningHighlighter text={displayReasoning} />
+                            ) : (
+                                <span className="text-slate-500 italic">No reasoning content</span>
+                            )}
                         </div>
                     )}
                 </div>

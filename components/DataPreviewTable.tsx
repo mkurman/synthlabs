@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Maximize2, Minimize2, X, Table, ChevronLeft, ChevronRight, Search, Columns } from 'lucide-react';
 import ConversationView from './ConversationView';
+import MarkdownRenderer from './MarkdownRenderer';
 import { ChatMessage } from '../types';
 
 interface DataPreviewTableProps {
@@ -244,9 +245,15 @@ export default function DataPreviewTable({ rawText, onClose }: DataPreviewTableP
                                             {detectType(value)}
                                         </span>
                                     </div>
-                                    <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
-                                        {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}
-                                    </pre>
+                                    {typeof value === 'string' && (key === 'answer' || key === 'reasoning' || key === 'content' || key === 'query') ? (
+                                        <div className="text-xs text-slate-300 max-h-48 overflow-y-auto">
+                                            <MarkdownRenderer content={value} />
+                                        </div>
+                                    ) : (
+                                        <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                                            {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}
+                                        </pre>
+                                    )}
                                 </div>
                             ))
                         )}

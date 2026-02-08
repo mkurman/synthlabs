@@ -7,6 +7,7 @@ import ConversationView from './ConversationView';
 import StreamingConversationCard from './StreamingConversationCard';
 import AutoResizeTextarea from './AutoResizeTextarea';
 import CollapsibleThinkContent from './CollapsibleThinkContent';
+import MarkdownRenderer from './MarkdownRenderer';
 import { SynthLogItem, StreamingConversationState } from '../types';
 import { FeedDisplayMode, LogFeedRewriteTarget } from '../interfaces/enums';
 
@@ -267,7 +268,9 @@ const LogFeed: React.FC<LogFeedProps> = ({
                               </div>
                               <div>
                                 <h5 className="text-[10px] uppercase text-slate-400 font-bold mb-2">Answer</h5>
-                                <p className="text-xs text-slate-200 whitespace-pre-wrap max-h-40 overflow-y-auto">{renderSafeContent(displayAnswer) || 'N/A'}</p>
+                                <div className="text-xs text-slate-200 max-h-40 overflow-y-auto">
+                                  <MarkdownRenderer content={renderSafeContent(displayAnswer) || 'N/A'} />
+                                </div>
                               </div>
                             </div>
                           )}
@@ -369,7 +372,9 @@ const LogFeed: React.FC<LogFeedProps> = ({
                       <h4 className="text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-2 flex items-center gap-1 sticky top-0 bg-slate-950/90 py-1">
                         Answer
                       </h4>
-                      <p className="text-[11px] text-slate-200 whitespace-pre-wrap">{renderSafeContent(displayAnswer) || 'N/A'}</p>
+                      <div className="text-[11px] text-slate-200">
+                        <MarkdownRenderer content={renderSafeContent(displayAnswer) || 'N/A'} />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -706,9 +711,9 @@ const LogFeed: React.FC<LogFeedProps> = ({
                             {streamingContent || 'Rewriting...'}
                           </div>
                         ) : (
-                          <p className="text-sm text-slate-200 leading-relaxed font-sans whitespace-pre-wrap">
-                            {renderSafeContent(displayAnswer)}
-                          </p>
+                          <div className="text-sm text-slate-200 leading-relaxed">
+                            <MarkdownRenderer content={renderSafeContent(displayAnswer)} />
+                          </div>
                         )}
                       </div>
 

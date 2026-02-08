@@ -39,7 +39,7 @@ interface VerifierReviewToolbarProps {
             | VerifierRewriteTarget.Both
     ) => void;
     isAutoscoring: boolean;
-    autoscoreProgress: { current: number; total: number };
+    autoscoreProgress: { current: number; total: number } | null;
     onAutoscoreSelected: () => void;
     isBulkUpdating: boolean;
     onBulkDbUpdate: () => void;
@@ -179,7 +179,7 @@ export default function VerifierReviewToolbar({
                             {isAutoscoring ? (
                                 <>
                                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    Scoring {autoscoreProgress.current}/{autoscoreProgress.total}
+                                    Scoring {autoscoreProgress?.current ?? 0}/{autoscoreProgress?.total ?? 0}
                                 </>
                             ) : (
                                 <>

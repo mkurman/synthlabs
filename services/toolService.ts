@@ -119,7 +119,7 @@ export class ToolExecutor {
         // 2. getItems
         this.registerTool({
             name: 'getItems',
-            description: 'Get a list of items from the dataset. Returns partial fields by default to save tokens. Requires sessionId to confirm which session you are querying.',
+            description: 'Get a list of items (logs) from the dataset. Returns partial fields by default to save tokens. Requires sessionId to confirm which session you are querying.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -181,7 +181,7 @@ export class ToolExecutor {
         // 3. getItem
         this.registerTool({
             name: 'getItem',
-            description: 'Get a single specific item by index with full details. Requires sessionId to confirm which session you are querying.',
+            description: 'Get a single specific item (log) by index with full details. Requires sessionId to confirm which session you are querying.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -228,10 +228,65 @@ export class ToolExecutor {
             };
         });
 
+        // 3b. getItemById
+        this.registerTool({
+            name: 'getItemById',
+            description: 'Get a single specific item (log) by its unique ID with full details. This is useful when you know the ID but not the index. Requires sessionId to confirm which session you are querying.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    sessionId: {
+                        type: 'string',
+                        description: 'Session ID (sessionUid) to query. Must match the currently loaded session. Use getCurrentSessionId to get this value.'
+                    },
+                    id: { type: 'string', description: 'Unique ID of the item to fetch' }
+                },
+                required: ['sessionId', 'id']
+            }
+        }, async ({ sessionId, id }: { sessionId: string; id: string }) => {
+            const { data, currentSessionUid } = this.contextProvider();
+
+            if (!sessionId) {
+                return { error: 'sessionId is required. Use getCurrentSessionId to get the session ID.' };
+            }
+            if (!currentSessionUid) {
+                return { error: 'No session is currently loaded. Load a session first using loadSessionById.' };
+            }
+            if (sessionId !== currentSessionUid) {
+                return { error: `Session mismatch. You provided "${sessionId}" but currently loaded is "${currentSessionUid}".` };
+            }
+
+            const index = data.findIndex((item: VerifierItem) => item.id === id);
+
+            if (index === -1) {
+                return { error: `Item with ID "${id}" not found in current session.` };
+            }
+
+            const item = data[index] as any;
+
+            if (item.messages && item.messages?.length > 0) {
+                return {
+                    index,
+                    id: item.id,
+                    messages: item.messages
+                };
+            }
+
+            return {
+                index,
+                id: item.id,
+                query: item.query,
+                reasoning: item.reasoning,
+                answer: item.answer,
+                ...(item.messages && { messages: item.messages }),
+                ...(item.full_seed && { full_seed: item.full_seed }),
+            };
+        });
+
         // 4. updateItem
         this.registerTool({
             name: 'updateItem',
-            description: 'Update a specific field of an item in the local state. Updates are immediately reflected in UI. Requires sessionId to confirm which session you are modifying.',
+            description: 'Update a specific field of an item (log) in the local state. Updates are immediately reflected in UI. Requires sessionId to confirm which session you are modifying.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -973,8 +1028,165 @@ export class ToolExecutor {
                 required: ['jobId']
             }
         }, async ({ jobId }: { jobId: string }) => {
-            const result = await backendClient.fetchJob(jobId);
-            return result;
+            const job = await backendClient.fetchJob(jobId) as any;
+
+            // Return only essential fields for the assistant
+            return {
+                id: job.id,
+                type: job.type,
+                status: job.status,
+                sessionId: job.sessionId,  // Session being processed
+                progress: job.progress,
+                error: job.error,
+                createdAt: job.createdAt,
+                updatedAt: job.updatedAt,
+                // Omit: params, result (with trace/logs), config
+            };
+        });
+
+        // 20a. listJobs - Query and filter jobs
+        this.registerTool({
+            name: 'listJobs',
+            description: 'List and filter background jobs. Useful for checking stalled jobs, monitoring progress, or finding failed jobs that need attention. Returns array of job objects with id, type, status, sessionId, progress, error, createdAt, updatedAt.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    type: {
+                        type: 'string',
+                        enum: ['autoscore', 'rewrite', 'migrate-reasoning', 'remove-items', 'orphan_check', 'orphan_sync'],
+                        description: 'Filter by job type. Optional - omit to get all types.'
+                    },
+                    status: {
+                        type: 'string',
+                        enum: ['pending', 'running', 'completed', 'failed'],
+                        description: 'Filter by job status. Optional - omit to get all statuses. Use "failed" to find jobs that need resuming.'
+                    },
+                    limit: {
+                        type: 'number',
+                        description: 'Maximum number of jobs to return (default: 50, max: 100)'
+                    }
+                }
+            }
+        }, async ({ type, status, limit }: { type?: string; status?: string; limit?: number }) => {
+            const jobs = await backendClient.fetchJobs({ type, status, limit });
+
+            // Return only essential fields for the assistant (omit trace, params, full results)
+            const compactJobs = jobs.map((job: any) => ({
+                id: job.id,
+                type: job.type,
+                status: job.status,
+                sessionId: job.sessionId,  // Session being processed
+                progress: job.progress,
+                error: job.error,
+                createdAt: job.createdAt,
+                updatedAt: job.updatedAt,
+            }));
+
+            return {
+                jobs: compactJobs,
+                count: compactJobs.length,
+                summary: `Found ${compactJobs.length} job(s)${type ? ` of type "${type}"` : ''}${status ? ` with status "${status}"` : ''}`
+            };
+        });
+
+        // 20b. resumeJob - Resume a failed job
+        this.registerTool({
+            name: 'resumeJob',
+            description: 'Resume a failed or stalled job from where it stopped. Works for autoscore, rewrite, and migrate-reasoning jobs. Skips already-processed items and continues with the same parameters. The job will continue from its last checkpoint.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    jobId: {
+                        type: 'string',
+                        description: 'The job ID to resume. Use listJobs with status="failed" to find resumable jobs.'
+                    }
+                },
+                required: ['jobId']
+            }
+        }, async ({ jobId }: { jobId: string }) => {
+            // Get the job details to determine type
+            const job = await backendClient.fetchJob(jobId) as any;
+
+            if (job.status === 'completed') {
+                return { error: 'Job is already completed. Use checkJobStatus to view results.' };
+            }
+
+            if (job.type === 'autoscore') {
+                // Autoscore needs API key from settings
+                const params = job.params as Record<string, unknown> | undefined;
+                const provider = (params?.provider as string) || '';
+                const apiKey = SettingsService.getApiKey(provider);
+
+                if (!apiKey) {
+                    return { error: `No API key found for provider "${provider}". Configure it in Settings before resuming.` };
+                }
+
+                const encryptedKey = await encryptKey(apiKey);
+                const newJobId = await backendClient.startAutoScore({
+                    resumeJobId: jobId,
+                    apiKey: encryptedKey,
+                });
+
+                return {
+                    jobId: newJobId,
+                    message: `Auto-scoring job resumed from checkpoint. Previous progress preserved. Use checkJobStatus to monitor.`
+                };
+            } else if (job.type === 'rewrite') {
+                // Rewrite needs API key from settings
+                const params = job.params as Record<string, unknown> | undefined;
+                const provider = (params?.provider as string) || '';
+                const apiKey = SettingsService.getApiKey(provider);
+
+                if (!apiKey) {
+                    return { error: `No API key found for provider "${provider}". Configure it in Settings before resuming.` };
+                }
+
+                const encryptedKey = await encryptKey(apiKey);
+                const newJobId = await backendClient.startRewrite({
+                    resumeJobId: jobId,
+                    apiKey: encryptedKey,
+                });
+
+                return {
+                    jobId: newJobId,
+                    message: `Rewrite job resumed from checkpoint. Previous progress preserved. Use checkJobStatus to monitor.`
+                };
+            } else if (job.type === 'migrate-reasoning') {
+                const newJobId = await backendClient.startMigrateReasoning({
+                    resumeJobId: jobId,
+                });
+
+                return {
+                    jobId: newJobId,
+                    message: `Reasoning migration job resumed from checkpoint. Previous progress preserved. Use checkJobStatus to monitor.`
+                };
+            } else {
+                return {
+                    error: `Job type "${job.type}" does not support resume. Only autoscore, rewrite, and migrate-reasoning jobs can be resumed.`
+                };
+            }
+        });
+
+        // 20c. cancelJob - Stop a running job
+        this.registerTool({
+            name: 'cancelJob',
+            description: 'Cancel a running or pending job. The job will be marked as failed and stopped. Use with caution - cancelled jobs may leave partial work.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    jobId: {
+                        type: 'string',
+                        description: 'The job ID to cancel. Use listJobs with status="running" to find active jobs.'
+                    }
+                },
+                required: ['jobId']
+            }
+        }, async ({ jobId }: { jobId: string }) => {
+            await backendClient.cancelJob(jobId);
+            return {
+                success: true,
+                message: `Job ${jobId} has been cancelled. You can resume it later if needed.`
+            };
         });
 
         // 21. runRemoveItems (requires approval) - starts a background job

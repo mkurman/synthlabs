@@ -23,11 +23,11 @@ export const DetailPanelFooter: React.FC<DetailPanelFooterProps> = ({
                 )}
                 {sessionUid && (
                     <span className="bg-slate-800/60 text-slate-400 font-mono px-2 py-0.5 rounded border border-slate-700/50" title={`Session: ${sessionUid}`}>
-                        Session: {sessionUid.slice(0, 8)}...
+                        Session: {sessionUid}
                     </span>
                 )}
             </div>
-            
+
             <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
                     {isDeep && (
@@ -45,7 +45,7 @@ export const DetailPanelFooter: React.FC<DetailPanelFooterProps> = ({
                     <span>ESC to close</span>
                     <span>← → to navigate</span>
                     <span>Ctrl+S to save</span>
-                    <span>Tab to switch sections</span>
+                    <span>Tab/Shift+Tab to switch sections</span>
                 </div>
             </div>
         </div>

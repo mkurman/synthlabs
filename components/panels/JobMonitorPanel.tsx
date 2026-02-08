@@ -16,6 +16,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
     autoscore: 'Auto-Score',
     rewrite: 'Rewrite',
     'remove-items': 'Remove Items',
+    'migrate-reasoning': 'Migrate Reasoning',
     orphan_check: 'Orphan Check',
     orphan_sync: 'Orphan Sync',
 };

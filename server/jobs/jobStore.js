@@ -30,15 +30,31 @@ export const createJobStore = (repo) => {
         return job;
     };
 
-    const updateJob = (jobId, patch) => {
+    const updateJob = async (jobId, patch) => {
         const job = jobs.get(jobId);
-        if (!job) return;
-        Object.assign(job, patch, { updatedAt: Date.now() });
-        try {
-            repo.updateJob(jobId, job);
-        } catch (error) {
-            // eslint-disable-next-line no-console
-            console.error('Failed to persist job update', error);
+        if (job) {
+            // Job exists in memory - update both memory and DB
+            Object.assign(job, patch, { updatedAt: Date.now() });
+            try {
+                await repo.updateJob(jobId, job);
+            } catch (error) {
+                // eslint-disable-next-line no-console
+                console.error('Failed to persist job update', error);
+            }
+        } else {
+            // Job not in memory - fetch from DB, update it, then save
+            try {
+                const dbJob = await repo.getJob(jobId);
+                if (dbJob) {
+                    const updatedJob = { ...dbJob, ...patch, updatedAt: Date.now() };
+                    await repo.updateJob(jobId, updatedJob);
+                    // Optionally add to memory for future access
+                    jobs.set(jobId, updatedJob);
+                }
+            } catch (error) {
+                // eslint-disable-next-line no-console
+                console.error('Failed to update job not in memory', error);
+            }
         }
     };
 

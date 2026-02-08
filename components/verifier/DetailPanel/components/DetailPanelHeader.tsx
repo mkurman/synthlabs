@@ -1,13 +1,17 @@
 import React from 'react';
-import { X, Save, RotateCcw, ChevronLeft, ChevronRight, Loader2, Star } from 'lucide-react';
+import { X, Save, RotateCcw, ChevronLeft, ChevronRight, Loader2, Star, Download, Sparkles } from 'lucide-react';
 import { VerifierItem } from '../../../../types';
 
 interface DetailPanelHeaderProps {
     item: VerifierItem;
     currentIndex: number;
     totalItems: number;
+    totalInStack: number;
+    totalInDb: number;
     hasPrevious: boolean;
     hasNext: boolean;
+    canFetchMore: boolean;
+    isFetchingMore: boolean;
     onPrevious: () => void;
     onNext: () => void;
     onClose: () => void;
@@ -15,8 +19,11 @@ interface DetailPanelHeaderProps {
     onRollback?: () => void;
     onScore: (score: number) => void;
     onDelete?: () => void;
+    onFetchMore?: () => void;
+    onAutoscore?: () => void;
     isSaving?: boolean;
     isRollingBack?: boolean;
+    isAutoscoring?: boolean;
     showPersistenceButtons?: boolean;
 }
 
@@ -24,8 +31,12 @@ export const DetailPanelHeader: React.FC<DetailPanelHeaderProps> = ({
     item,
     currentIndex,
     totalItems,
+    totalInStack,
+    totalInDb,
     hasPrevious,
     hasNext,
+    canFetchMore,
+    isFetchingMore,
     onPrevious,
     onNext,
     onClose,
@@ -33,14 +44,16 @@ export const DetailPanelHeader: React.FC<DetailPanelHeaderProps> = ({
     onRollback,
     onScore,
     onDelete,
+    onFetchMore,
+    onAutoscore,
     isSaving,
     isRollingBack,
+    isAutoscoring,
     showPersistenceButtons
 }) => {
     return (
-        <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-950/50 rounded-t-2xl">
-            {/* Left: Navigation */}
-            <div className="flex items-center gap-3">
+        <div className="p-4 border-b border-slate-800 bg-slate-950/50 rounded-t-2xl space-y-3">
+            <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1 bg-slate-900/50 rounded-lg p-1">
                     <button
                         onClick={onPrevious}
@@ -50,9 +63,6 @@ export const DetailPanelHeader: React.FC<DetailPanelHeaderProps> = ({
                     >
                         <ChevronLeft className="w-5 h-5" />
                     </button>
-                    <span className="text-xs font-mono text-slate-400 px-2">
-                        {currentIndex + 1} / {totalItems}
-                    </span>
                     <button
                         onClick={onNext}
                         disabled={!hasNext}
@@ -75,76 +85,121 @@ export const DetailPanelHeader: React.FC<DetailPanelHeaderProps> = ({
                     )}
                 </div>
 
-                {/* Star Rating */}
-                <div className="flex items-center gap-0.5">
-                    {[1, 2, 3, 4, 5].map(star => (
+                <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-0.5">
+                        {[1, 2, 3, 4, 5].map(star => (
+                            <button
+                                key={star}
+                                onClick={() => onScore(star)}
+                                className="focus:outline-none transition-transform hover:scale-110 p-0.5"
+                            >
+                                <Star className={`w-5 h-5 ${(item.score || 0) >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
+                            </button>
+                        ))}
+                    </div>
+
+                    {onAutoscore && (
                         <button
-                            key={star}
-                            onClick={() => onScore(star)}
-                            className="focus:outline-none transition-transform hover:scale-110 p-0.5"
+                            onClick={onAutoscore}
+                            disabled={isAutoscoring}
+                            className="flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-purple-400 hover:bg-purple-900/30 border border-purple-800/50 rounded-lg transition-colors disabled:opacity-50"
+                            title="Auto-score this item using AI"
                         >
-                            <Star className={`w-5 h-5 ${(item.score || 0) >= star ? 'fill-yellow-400 text-yellow-400' : 'text-slate-700'}`} />
+                            {isAutoscoring ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                                <Sparkles className="w-3.5 h-3.5" />
+                            )}
+                            {isAutoscoring ? 'Scoring...' : 'Autoscore'}
                         </button>
-                    ))}
+                    )}
+
+                    {showPersistenceButtons && (
+                        <>
+                            <button
+                                onClick={onSave}
+                                disabled={isSaving || !item.hasUnsavedChanges}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${isSaving
+                                        ? 'bg-emerald-600/20 text-emerald-400 border-emerald-800/50'
+                                        : item.hasUnsavedChanges
+                                            ? 'bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600/20 border-emerald-800/50'
+                                            : 'bg-slate-800/50 text-slate-500 border-slate-700/50 cursor-not-allowed'
+                                    }`}
+                                title={item.hasUnsavedChanges ? "Save changes to database" : "No unsaved changes"}
+                            >
+                                {isSaving ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                    <Save className="w-3.5 h-3.5" />
+                                )}
+                                {isSaving ? 'Saving...' : 'Save'}
+                            </button>
+
+                            <button
+                                onClick={onRollback}
+                                disabled={isRollingBack}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-900/20 border border-amber-800/50 rounded-lg transition-colors disabled:opacity-50"
+                                title="Discard changes and reload from database"
+                            >
+                                {isRollingBack ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                )}
+                                Rollback
+                            </button>
+                        </>
+                    )}
+
+                    {onDelete && (
+                        <button
+                            onClick={onDelete}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-900/20 border border-red-800/50 rounded-lg transition-colors"
+                        >
+                            <span>Delete</span>
+                        </button>
+                    )}
+
+                    <button
+                        onClick={onClose}
+                        className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                        title="Close (ESC)"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
                 </div>
             </div>
 
-            {/* Right: Actions */}
-            <div className="flex items-center gap-2">
-                {/* Save & Rollback Buttons */}
-                {showPersistenceButtons && (
-                    <>
-                        <button
-                            onClick={onSave}
-                            disabled={isSaving || !item.hasUnsavedChanges}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${isSaving
-                                    ? 'bg-emerald-600/20 text-emerald-400 border-emerald-800/50'
-                                    : item.hasUnsavedChanges
-                                        ? 'bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600/20 border-emerald-800/50'
-                                        : 'bg-slate-800/50 text-slate-500 border-slate-700/50 cursor-not-allowed'
-                                }`}
-                            title={item.hasUnsavedChanges ? "Save changes to database" : "No unsaved changes"}
-                        >
-                            {isSaving ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                                <Save className="w-3.5 h-3.5" />
-                            )}
-                            {isSaving ? 'Saving...' : 'Save'}
-                        </button>
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-slate-400 bg-slate-900/50 px-2 py-1 rounded">
+                        {currentIndex + 1} / {totalItems}
+                    </span>
+                    <span className="text-slate-500 bg-slate-900/60 px-2 py-1 rounded border border-slate-700/50">
+                        Stack: {totalInStack}
+                    </span>
+                    {totalInDb > 0 && (
+                        <span className="text-slate-500 bg-slate-900/60 px-2 py-1 rounded border border-slate-700/50">
+                            DB: {totalInDb}
+                        </span>
+                    )}
+                </div>
 
-                        <button
-                            onClick={onRollback}
-                            disabled={isRollingBack}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-900/20 border border-amber-800/50 rounded-lg transition-colors disabled:opacity-50"
-                            title="Discard changes and reload from database"
-                        >
-                            {isRollingBack ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                                <RotateCcw className="w-3.5 h-3.5" />
-                            )}
-                            Rollback
-                        </button>
-                    </>
-                )}
-
-                {onDelete && (
+                {canFetchMore && onFetchMore && (
                     <button
-                        onClick={onDelete}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-900/20 border border-red-800/50 rounded-lg transition-colors"
+                        onClick={onFetchMore}
+                        disabled={isFetchingMore}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-sky-400 hover:bg-sky-900/30 border border-sky-800/50 rounded-lg transition-colors disabled:opacity-50"
+                        title="Fetch more items from database"
                     >
-                        <span>Delete</span>
+                        {isFetchingMore ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                            <Download className="w-3.5 h-3.5" />
+                        )}
+                        {isFetchingMore ? 'Loading...' : 'Load More'}
                     </button>
                 )}
-
-                <button
-                    onClick={onClose}
-                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
-                    title="Close (ESC)"
-                >
-                    <X className="w-5 h-5" />
-                </button>
             </div>
         </div>
     );

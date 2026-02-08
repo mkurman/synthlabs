@@ -1400,6 +1400,7 @@ export default function App() {
                     onDismiss={(id) => { jobMonitor.dismissJob(id); jobMonitor.setSelectedJobId(null); }}
                     onStop={(id) => jobMonitor.stopJob(id)}
                     onRerun={(id) => { jobMonitor.rerunJob(id); jobMonitor.setSelectedJobId(null); }}
+                    onResume={(id) => { jobMonitor.resumeJob(id); }}
                 />
             )}
 

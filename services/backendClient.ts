@@ -527,11 +527,11 @@ export const rerunJob = async (jobId: string, encryptedApiKey: string): Promise<
 };
 
 export const startAutoScore = async (params: {
-    sessionId: string;
-    provider: string;
-    model: string;
-    baseUrl: string;
-    apiKey: string;
+    sessionId?: string;
+    provider?: string;
+    model?: string;
+    baseUrl?: string;
+    apiKey?: string;
     limit?: number;
     offset?: number;
     sleepMs?: number;
@@ -540,6 +540,7 @@ export const startAutoScore = async (params: {
     retryDelay?: number;
     force?: boolean;
     itemIds?: string[];
+    resumeJobId?: string;
 }) => {
     const { jobId } = await requestJson<{ jobId: string }>('/api/jobs/autoscore', {
         method: 'POST',
@@ -549,12 +550,12 @@ export const startAutoScore = async (params: {
 };
 
 export const startRewrite = async (params: {
-    sessionId: string;
-    provider: string;
-    model: string;
-    baseUrl: string;
-    apiKey: string;
-    fields: string[];
+    sessionId?: string;  // Optional when resuming
+    provider?: string;   // Optional when resuming
+    model?: string;      // Optional when resuming
+    baseUrl?: string;    // Optional when resuming
+    apiKey?: string;     // Optional when resuming
+    fields?: string[];   // Optional when resuming
     limit?: number;
     offset?: number;
     sleepMs?: number;
@@ -564,8 +565,26 @@ export const startRewrite = async (params: {
     systemPrompt?: string;
     fieldPrompts?: Record<string, string>;
     itemIds?: string[];
+    resumeJobId?: string;  // NEW: Resume from this job
 }) => {
     const { jobId } = await requestJson<{ jobId: string }>('/api/jobs/rewrite', {
+        method: 'POST',
+        body: JSON.stringify(params)
+    });
+    return jobId;
+};
+
+export const startMigrateReasoning = async (params: {
+    sessionId?: string;
+    limit?: number;
+    offset?: number;
+    sleepMs?: number;
+    concurrency?: number;
+    force?: boolean;
+    itemIds?: string[];
+    resumeJobId?: string;
+}) => {
+    const { jobId } = await requestJson<{ jobId: string }>('/api/jobs/migrate-reasoning', {
         method: 'POST',
         body: JSON.stringify(params)
     });

@@ -39,7 +39,7 @@ interface UseVerifierBulkActionsResult {
     isRewritingAll: boolean;
     rewriteProgress: { current: number; total: number };
     isAutoscoring: boolean;
-    autoscoreProgress: { current: number; total: number };
+    autoscoreProgress: { current: number; total: number } | null;
     isBulkUpdating: boolean;
     deleteModalOpen: boolean;
     itemsToDelete: string[];
@@ -50,6 +50,7 @@ interface UseVerifierBulkActionsResult {
     handleSelectAll: () => void;
     handleBulkRewrite: (mode: VerifierRewriteTarget.Query | VerifierRewriteTarget.Reasoning | VerifierRewriteTarget.Answer | VerifierRewriteTarget.Both) => Promise<void>;
     handleAutoscoreSelected: () => Promise<void>;
+    handleAutoscoreSingleItem: (itemId: string) => Promise<void>;
     handleBulkDbUpdate: () => Promise<void>;
     initiateDelete: (ids: string[]) => void;
     confirmDelete: () => Promise<void>;
@@ -72,7 +73,7 @@ export function useVerifierBulkActions({
     const [isRewritingAll, setIsRewritingAll] = useState(false);
     const [rewriteProgress, setRewriteProgress] = useState({ current: 0, total: 0 });
     const [isAutoscoring, setIsAutoscoring] = useState(false);
-    const [autoscoreProgress, setAutoscoreProgress] = useState({ current: 0, total: 0 });
+    const [autoscoreProgress, setAutoscoreProgress] = useState<{ current: number; total: number } | null>(null);
     const [isBulkUpdating, setIsBulkUpdating] = useState(false);
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [itemsToDelete, setItemsToDelete] = useState<string[]>([]);
@@ -531,7 +532,7 @@ Based on the criteria above, provide a 1-5 score.`;
                     console.error(`Failed to score item ${item.id}:`, err);
                 }
 
-                setAutoscoreProgress(prev => ({ ...prev, current: prev.current + 1 }));
+                setAutoscoreProgress(prev => prev ? { ...prev, current: prev.current + 1 } : { current: 1, total: 1 });
 
                 if (sleepTime > 0 && currentIndex < itemsToScore.length) {
                     await new Promise(r => setTimeout(r, sleepTime));
@@ -652,6 +653,40 @@ Based on the criteria above, provide a 1-5 score.`;
         }
     }, [itemsToDelete, setData]);
 
+    const handleAutoscoreSingleItem = useCallback(async (itemId: string): Promise<void> => {
+        const item = data.find(i => i.id === itemId);
+        if (!item) {
+            toast.error('Item not found');
+            return;
+        }
+
+        setIsAutoscoring(true);
+        setAutoscoreProgress({ current: 1, total: 1 });
+
+        try {
+            const score = await autoscoreSingleItem(item);
+            if (score > 0) {
+                const updatedItem = { ...item, score, hasUnsavedChanges: true };
+                setData(prev => prev.map(i => i.id === itemId ? updatedItem : i));
+                if (autoSaveEnabled && dataSource === VerifierDataSource.Database) {
+                    await handleDbUpdate(updatedItem);
+                }
+                toast.success(`Item scored: ${score}/5`);
+            } else {
+                toast.error('Failed to get valid score from AI');
+            }
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                toast.info('Autoscoring cancelled');
+            } else {
+                toast.error('Autoscoring failed: ' + error.message);
+            }
+        } finally {
+            setIsAutoscoring(false);
+            setAutoscoreProgress(null);
+        }
+    }, [data, autoscoreSingleItem, setData, autoSaveEnabled, dataSource, handleDbUpdate]);
+
     return {
         selectedItemIds,
         isRewritingAll,
@@ -669,6 +704,7 @@ Based on the criteria above, provide a 1-5 score.`;
         handleBulkRewrite,
         handleAutoscoreSelected,
         handleBulkDbUpdate,
+        handleAutoscoreSingleItem,
         initiateDelete,
         confirmDelete,
         setDeleteModalOpen

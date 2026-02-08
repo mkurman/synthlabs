@@ -27,6 +27,7 @@ import { useVerifierInlineEditing } from '../../../hooks/useVerifierInlineEditin
 import { useHuggingFaceData } from '../../../hooks/useHuggingFaceData';
 import { useVerifierHfImport } from '../../../hooks/useVerifierHfImport';
 import { normalizeImportItem } from '../../../services/verifierImportService';
+import { normalizeItemsReasoning } from '../../../utils/messageNormalizer';
 import ImportTab from '../ImportTab';
 import ExportTab from '../ExportTab';
 import type { SessionData } from '../../../interfaces';
@@ -60,7 +61,17 @@ interface VerifierPanelProps {
 }
 
 export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen, onChatToggle, onSessionSelect, onJobCreated, refreshTrigger }: VerifierPanelProps) {
-    const [data, setData] = useState<VerifierItem[]>([]);
+    const [data, _setData] = useState<VerifierItem[]>([]);
+    
+    // Wrapped setData that normalizes reasoning from think tags
+    const setData = useCallback((items: VerifierItem[] | ((prev: VerifierItem[]) => VerifierItem[])) => {
+        if (typeof items === 'function') {
+            _setData(prev => normalizeItemsReasoning(items(prev)));
+        } else {
+            _setData(normalizeItemsReasoning(items));
+        }
+    }, []);
+    
     const [viewMode, setViewMode] = useState<VerifierViewMode>(VerifierViewMode.List);
     const [dataSource, setDataSource] = useState<VerifierDataSource | null>(null);
     const [activeTab, setActiveTab] = useState<VerifierPanelTab>(VerifierPanelTab.Import);
@@ -685,6 +696,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         handleSelectAll,
         handleBulkRewrite,
         handleAutoscoreSelected,
+        handleAutoscoreSingleItem,
         handleBulkDbUpdate,
         initiateDelete,
         confirmDelete,
@@ -981,7 +993,8 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
             {/* Detail Panel */}
             <DetailPanel
                 item={detailItem}
-                items={currentItems}
+                items={filteredData}
+                allData={data}
                 isOpen={isDetailOpen}
                 onClose={closeDetailPanel}
                 onNavigate={(item) => {
@@ -1009,6 +1022,12 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                 onDeleteItem={(item) => initiateDelete([item.id])}
                 onDbUpdate={dataSource === VerifierDataSource.Database ? handleDbUpdate : undefined}
                 onDbRollback={dataSource === VerifierDataSource.Database ? handleDbRollback : undefined}
+                onFetchMore={dataSource === VerifierDataSource.Database ? fetchMoreRows : undefined}
+                isFetchingMore={isImporting}
+                hasMoreData={dataSource === VerifierDataSource.Database}
+                totalInDb={data.length}
+                onAutoscore={handleAutoscoreSingleItem}
+                isAutoscoring={isAutoscoring}
                 rewritingField={rewritingField}
                 streamingContent={streamingContent}
                 messageRewriteStates={messageRewriteStates}

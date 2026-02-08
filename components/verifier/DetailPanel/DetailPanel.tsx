@@ -16,11 +16,13 @@ import { useDetailPersistence } from './hooks/useDetailPersistence';
 interface DetailPanelProps {
     item: VerifierItem | null;
     items: VerifierItem[];
+    allData?: VerifierItem[];
     isOpen: boolean;
     onClose: () => void;
     onNavigate: (item: VerifierItem) => void;
     onSave: (item: VerifierItem, updates: Partial<VerifierItem>) => void;
     onScore: (item: VerifierItem, score: number) => void;
+    onAutoscore?: (itemId: string) => Promise<void>;
     onRewriteField: (item: VerifierItem, field: VerifierRewriteTarget) => void;
     onRewriteMessage?: (item: VerifierItem, messageIndex: number) => void;
     onRewriteMessageReasoning?: (item: VerifierItem, messageIndex: number) => void;
@@ -30,6 +32,11 @@ interface DetailPanelProps {
     onDeleteItem?: (item: VerifierItem) => void;
     onDbUpdate?: (item: VerifierItem) => Promise<void>;
     onDbRollback?: (item: VerifierItem) => Promise<void>;
+    onFetchMore?: () => Promise<void>;
+    isFetchingMore?: boolean;
+    hasMoreData?: boolean;
+    totalInDb?: number;
+    isAutoscoring?: boolean;
     rewritingField?: { itemId: string; field: VerifierRewriteTarget } | null;
     streamingContent?: string;
     messageRewriteStates?: Record<string, { field: VerifierRewriteTarget; content: string; reasoningContent?: string }>;
@@ -39,11 +46,13 @@ interface DetailPanelProps {
 export const DetailPanel: React.FC<DetailPanelProps> = ({
     item,
     items,
+    allData = [],
     isOpen,
     onClose,
     onNavigate,
     onSave,
     onScore,
+    onAutoscore,
     onRewriteField,
     onRewriteMessage,
     onRewriteMessageReasoning,
@@ -53,6 +62,11 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
     onDeleteItem,
     onDbUpdate,
     onDbRollback,
+    onFetchMore,
+    isFetchingMore = false,
+    hasMoreData = false,
+    totalInDb = 0,
+    isAutoscoring = false,
     rewritingField,
     streamingContent = '',
     messageRewriteStates = {},
@@ -66,7 +80,8 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
     const [messageRewriteDropdownIndex, setMessageRewriteDropdownIndex] = useState<number | null>(null);
 
     const isEditing = !!editState;
-    const isMultiTurn = item?.isMultiTurn && item.messages && item.messages.length > 0;
+    // Ensure isMultiTurn is strictly boolean and handles edge cases
+    const isMultiTurn = !!(item?.isMultiTurn && Array.isArray(item.messages) && item.messages.length > 0);
 
     // Navigation hook
     const { currentIndex, hasPrevious, hasNext, goToPrevious, goToNext } = useDetailNavigation({
@@ -245,9 +260,19 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
     useEffect(() => {
         if (item) {
             console.log('[DetailPanel] item prop updated:', item.id);
+            console.log('[DetailPanel] isMultiTurn:', isMultiTurn, 'item.isMultiTurn:', item.isMultiTurn);
+            console.log('[DetailPanel] has messages:', !!item.messages, 'count:', item.messages?.length);
             console.log('[DetailPanel] query:', item.query?.substring(0, 50));
+            console.log('[DetailPanel] reasoning:', item.reasoning?.substring(0, 50));
+            console.log('[DetailPanel] answer:', item.answer?.substring(0, 50));
+            console.log('[DetailPanel] activeSection:', activeSection);
         }
-    }, [item?.id, item?.query, item?.reasoning, item?.answer]);
+    }, [item?.id, item?.reasoning, item?.answer, isMultiTurn, activeSection]);
+    
+    // Debug: log section changes
+    useEffect(() => {
+        console.log('[DetailPanel] activeSection changed:', activeSection);
+    }, [activeSection]);
 
     if (!isOpen || !item) return null;
 
@@ -264,15 +289,19 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
             {/* Panel */}
             <div 
                 ref={panelRef}
-                className="relative w-full max-w-5xl max-h-[90vh] bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl flex flex-col"
+                className="relative w-full max-w-5xl max-h-[90vh] min-h-[600px] bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl flex flex-col"
             >
                 {/* Header */}
                 <DetailPanelHeader
                     item={item}
                     currentIndex={currentIndex}
                     totalItems={items.length}
+                    totalInStack={allData.length}
+                    totalInDb={totalInDb}
                     hasPrevious={hasPrevious}
                     hasNext={hasNext}
+                    canFetchMore={hasMoreData}
+                    isFetchingMore={isFetchingMore}
                     onPrevious={goToPrevious}
                     onNext={goToNext}
                     onClose={onClose}
@@ -280,8 +309,11 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                     onRollback={showPersistenceButtons ? handleRollback : undefined}
                     onScore={(score) => onScore(item, score)}
                     onDelete={onDeleteItem ? () => onDeleteItem(item) : undefined}
+                    onFetchMore={onFetchMore}
+                    onAutoscore={onAutoscore ? () => onAutoscore(item.id) : undefined}
                     isSaving={isSaving}
                     isRollingBack={isRollingBack}
+                    isAutoscoring={isAutoscoring}
                     showPersistenceButtons={!!showPersistenceButtons}
                 />
                 

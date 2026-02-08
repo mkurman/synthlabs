@@ -14,7 +14,10 @@ interface TraceEntry {
 }
 
 /** Job types that support rerun (have stored params with API key) */
-const RERUNNABLE_TYPES = new Set(['rewrite', 'autoscore']);
+const RERUNNABLE_TYPES = new Set(['rewrite', 'autoscore', 'migrate-reasoning']);
+
+/** Job types that support resume (can continue from where they stopped) */
+const RESUMABLE_TYPES = new Set(['autoscore', 'migrate-reasoning', 'rewrite']);
 
 interface JobDetailModalProps {
     job: BackendJobRecord | undefined;
@@ -22,12 +25,14 @@ interface JobDetailModalProps {
     onDismiss: (id: string) => void;
     onStop?: (id: string) => void;
     onRerun?: (id: string) => void;
+    onResume?: (id: string) => void;
 }
 
 const JOB_TYPE_LABELS: Record<string, string> = {
     autoscore: 'Auto-Score',
     rewrite: 'Rewrite',
     'remove-items': 'Remove Items',
+    'migrate-reasoning': 'Migrate Reasoning',
     orphan_check: 'Orphan Check',
     orphan_sync: 'Orphan Sync',
 };
@@ -133,7 +138,7 @@ function TraceRow({ entry }: { entry: TraceEntry }) {
     );
 }
 
-export default function JobDetailModal({ job, onClose, onDismiss, onStop, onRerun }: JobDetailModalProps) {
+export default function JobDetailModal({ job, onClose, onDismiss, onStop, onRerun, onResume }: JobDetailModalProps) {
     const [traceExpanded, setTraceExpanded] = useState(false);
 
     if (!job) return null;
@@ -141,7 +146,9 @@ export default function JobDetailModal({ job, onClose, onDismiss, onStop, onReru
     const percent = getProgressPercent(job);
     const isRunning = job.status === 'running' || job.status === 'pending';
     const isTerminal = job.status === 'completed' || job.status === 'failed';
+    const isFailed = job.status === 'failed';
     const canRerun = isTerminal && RERUNNABLE_TYPES.has(typeof job.type === 'string' ? job.type : '');
+    const canResume = isFailed && RESUMABLE_TYPES.has(typeof job.type === 'string' ? job.type : '');
     const progress = job.progress || {};
     const result = job.result || {};
     const trace: TraceEntry[] = (result.trace as TraceEntry[]) || [];
@@ -178,6 +185,7 @@ export default function JobDetailModal({ job, onClose, onDismiss, onStop, onReru
                     <div className="bg-slate-950/50 rounded-lg p-3 border border-slate-800/40">
                         <DetailRow label="Created" value={formatTimestamp(job.createdAt)} />
                         <DetailRow label="Updated" value={formatTimestamp(job.updatedAt)} />
+                        {(job as any).sessionId && <DetailRow label="Session" value={(job as any).sessionId} />}
                     </div>
 
                     {/* Progress */}
@@ -265,7 +273,17 @@ export default function JobDetailModal({ job, onClose, onDismiss, onStop, onReru
                                 Stop
                             </button>
                         )}
-                        {isTerminal && canRerun && onRerun && (
+                        {canResume && onResume && (
+                            <button
+                                onClick={() => onResume(job.id)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-emerald-300 hover:bg-emerald-950/30 border border-emerald-900/30 transition-colors"
+                                title="Resume from where it stopped"
+                            >
+                                <RotateCcw className="w-3 h-3" />
+                                Resume
+                            </button>
+                        )}
+                        {isTerminal && canRerun && onRerun && !canResume && (
                             <button
                                 onClick={() => onRerun(job.id)}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-sky-300 hover:bg-sky-950/30 border border-sky-900/30 transition-colors"

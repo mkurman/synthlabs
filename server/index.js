@@ -6,6 +6,7 @@ import path from 'path';
 import { pathToFileURL, fileURLToPath } from 'url';
 import { getFirestoreAdmin, setServiceAccountPath } from './firebaseAdmin.js';
 import { createJobStore } from './jobs/jobStore.js';
+import { createStalledJobMonitor } from './jobs/stalledJobMonitor.js';
 import { initRepository } from './db/repositoryFactory.js';
 import { registerHealthRoutes } from './routes/health/getHealth.js';
 import { registerAdminRoutes } from './routes/admin/setServiceAccountPath.js';
@@ -31,6 +32,7 @@ import { registerListJobsRoute } from './routes/jobs/listJobs.js';
 import { registerStartAutoscoreRoute } from './routes/jobs/startAutoscore.js';
 import { registerStartRewriteRoute } from './routes/jobs/startRewrite.js';
 import { registerStartRemoveItemsRoute } from './routes/jobs/startRemoveItems.js';
+import { registerStartMigrateReasoningRoute } from './routes/jobs/startMigrateReasoning.js';
 import { registerCancelJobRoute } from './routes/jobs/cancelJob.js';
 import { registerRerunJobRoute } from './routes/jobs/rerunJob.js';
 import { registerGetScoreDistributionRoute } from './routes/sessions/getScoreDistribution.js';
@@ -77,6 +79,14 @@ const createApp = async () => {
     const repo = await initRepository(initConfig);
     const { createJob, updateJob, getJob, listJobs, cancelJob } = createJobStore(repo);
 
+    // Start stalled job monitor
+    const stalledJobMonitor = createStalledJobMonitor({ listJobs, updateJob, getJob }, {
+        checkIntervalMs: 2 * 60 * 1000, // Check every 2 minutes
+        stalledThresholdMs: 5 * 60 * 1000, // 5 minutes without update = stalled
+        autoMarkAsFailed: true,
+        enabled: true
+    });
+
     registerHealthRoutes(app);
     registerAdminRoutes(app, { setServiceAccountPath });
     registerSwitchDbProviderRoute(app);
@@ -101,6 +111,7 @@ const createApp = async () => {
     registerStartAutoscoreRoute(app, { repo, createJob, updateJob, getJob });
     registerStartRewriteRoute(app, { repo, createJob, updateJob, getJob });
     registerStartRemoveItemsRoute(app, { repo, createJob, updateJob, getJob });
+    registerStartMigrateReasoningRoute(app, { repo, createJob, updateJob, getJob });
     registerCancelJobRoute(app, { cancelJob });
     registerRerunJobRoute(app, { getJob });
     registerGetScoreDistributionRoute(app, { repo });

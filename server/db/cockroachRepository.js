@@ -255,7 +255,11 @@ export class CockroachRepository extends DbRepository {
         if (cursor) {
             const op = dir === 'DESC' ? '<' : '>';
             conditions.push(`${col} ${op} $${idx++}`);
-            params.push(cursor);
+            // Convert cursor (Unix timestamp in ms) back to Date for PostgreSQL
+            const cursorDate = typeof cursor === 'number' || (typeof cursor === 'string' && !isNaN(Number(cursor)))
+                ? new Date(Number(cursor))
+                : new Date(cursor);
+            params.push(cursorDate);
         }
 
         const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';

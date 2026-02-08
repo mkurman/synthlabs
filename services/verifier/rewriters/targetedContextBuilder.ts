@@ -59,7 +59,7 @@ ${parts.content}`;
 
 Expected Output Format:
 {
-  "reasoning": "# 1. Query decomposition..."
+  "reasoning": "### 1. Query decomposition..."
 }`;
     } else if (targetComponent === VerifierRewriteTarget.Answer) {
         instructions = `TASK: Regenerate ONLY the ANSWER for the target message.
@@ -79,7 +79,7 @@ Expected Output Format:
 
 Expected Output Format:
 {
-  "reasoning": "# 1. Query decomposition...",
+  "reasoning": "### 1. Query decomposition...",
   "answer": "The solution is..."
 }`;
     }

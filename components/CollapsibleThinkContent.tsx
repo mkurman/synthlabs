@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Brain, ChevronRight } from 'lucide-react';
+import MarkdownRenderer from './MarkdownRenderer';
 
 interface ThinkSection {
     type: 'text' | 'think';
@@ -61,8 +62,8 @@ function CollapsibleThinkSection({ content, index }: CollapsibleThinkSectionProp
                 <span className="font-medium">Thoughts</span>
             </button>
             {isExpanded && (
-                <div className="mt-1 ml-4 pl-2 border-l-2 border-blue-500/30 text-[10px] text-slate-300 whitespace-pre-wrap animate-in fade-in slide-in-from-top-1 duration-200">
-                    {content.trim()}
+                <div className="mt-1 ml-4 pl-2 border-l-2 border-blue-500/30 text-[10px] text-slate-300 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <MarkdownRenderer content={content.trim()} />
                 </div>
             )}
         </div>
@@ -83,7 +84,9 @@ export default function CollapsibleThinkContent({ content, className = '' }: Col
                 section.type === 'think' ? (
                     <CollapsibleThinkSection key={idx} content={section.content} index={idx} />
                 ) : (
-                    <span key={idx} className="whitespace-pre-wrap">{section.content}</span>
+                    <div key={idx} className="text-[11px]">
+                        <MarkdownRenderer content={section.content} />
+                    </div>
                 )
             ))}
         </div>

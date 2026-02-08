@@ -2,6 +2,7 @@ import { JobStatus } from '../../jobs/jobStore.js';
 import { callChatCompletion } from '../../services/aiClient.js';
 import { decryptKey } from '../../utils/keyEncryption.js';
 import { sanitizeReasoningContent } from '../../utils/reasoningSanitizer.js';
+import { canResumeJob, extractResumeState } from '../../jobs/jobResume.js';
 
 /**
  * Strip markdown code block encapsulation from AI responses
@@ -398,21 +399,58 @@ export const registerStartRewriteRoute = (app, { repo, createJob, updateJob, get
             apiKey: encryptedApiKey, fields, limit, offset, sleepMs,
             concurrency: reqConcurrency, maxRetries: reqMaxRetries, retryDelay: reqRetryDelay,
             systemPrompt, fieldPrompts, itemIds,
+            resumeJobId,
         } = req.body || {};
 
-        if (!sessionId) {
-            res.status(400).json({ error: 'sessionId is required' });
-            return;
-        }
-        if (!model || !baseUrl || !encryptedApiKey) {
-            res.status(400).json({ error: 'model, baseUrl, and apiKey are required' });
-            return;
-        }
-        if (!fields || !Array.isArray(fields) || fields.length === 0) {
-            res.status(400).json({ error: 'fields array is required (e.g. ["query", "reasoning", "answer"])' });
-            return;
+        // Check if this is a resume operation
+        let existingJob = null;
+        if (resumeJobId) {
+            existingJob = await getJob(resumeJobId);
+            if (!canResumeJob(existingJob)) {
+                res.status(400).json({ error: 'Job cannot be resumed (not found, not failed, or already completed)' });
+                return;
+            }
         }
 
+        // For resume: allow missing params (use existing job params)
+        // For new job: require all params
+        if (!resumeJobId) {
+            if (!sessionId) {
+                res.status(400).json({ error: 'sessionId is required' });
+                return;
+            }
+            if (!model || !baseUrl || !encryptedApiKey) {
+                res.status(400).json({ error: 'model, baseUrl, and apiKey are required' });
+                return;
+            }
+            if (!fields || !Array.isArray(fields) || fields.length === 0) {
+                res.status(400).json({ error: 'fields array is required (e.g. ["query", "reasoning", "answer"])' });
+                return;
+            }
+        }
+
+        // Extract resume state if resuming
+        const resumeState = extractResumeState(existingJob);
+        const processedIds = resumeState.processedIds;
+
+        // Resolve job parameters: use existing params if resuming, otherwise use request params
+        const existingParams = existingJob?.params || {};
+        const resolvedSessionId = sessionId || existingParams.sessionId;
+        const resolvedProvider = provider || existingParams.provider;
+        const resolvedModel = model || existingParams.model;
+        const resolvedBaseUrl = baseUrl || existingParams.baseUrl;
+        const resolvedFields = fields || existingParams.fields;
+        const resolvedLimit = limit !== undefined ? limit : existingParams.limit;
+        const resolvedOffset = offset !== undefined ? offset : existingParams.offset;
+        const resolvedSleepMs = sleepMs !== undefined ? sleepMs : existingParams.sleepMs;
+        const resolvedConcurrency = reqConcurrency !== undefined ? reqConcurrency : existingParams.concurrency;
+        const resolvedMaxRetries = reqMaxRetries !== undefined ? reqMaxRetries : existingParams.maxRetries;
+        const resolvedRetryDelay = reqRetryDelay !== undefined ? reqRetryDelay : existingParams.retryDelay;
+        const resolvedSystemPrompt = systemPrompt || existingParams.systemPrompt;
+        const resolvedFieldPrompts = fieldPrompts || existingParams.fieldPrompts;
+        const resolvedItemIds = itemIds || existingParams.itemIds;
+
+        // Decrypt API key
         let apiKey;
         try {
             apiKey = decryptKey(encryptedApiKey);
@@ -421,53 +459,84 @@ export const registerStartRewriteRoute = (app, { repo, createJob, updateJob, get
             return;
         }
 
-        const validFields = fields.filter(f => ['query', 'reasoning', 'answer'].includes(f));
+        const validFields = resolvedFields.filter(f => ['query', 'reasoning', 'answer'].includes(f));
         if (validFields.length === 0) {
             res.status(400).json({ error: 'No valid fields provided. Use: query, reasoning, answer' });
             return;
         }
 
-        const job = await createJob('rewrite');
+        // Create new job or reuse existing job ID
+        const job = resumeJobId ? existingJob : await createJob('rewrite');
         res.json({ jobId: job.id });
 
-        // Store original params (sans decrypted key) so we can rerun this job later
+        // Store params for future resume/rerun
         const jobParams = {
-            sessionId, provider, model, baseUrl,
-            fields: validFields, limit, offset, sleepMs,
-            concurrency: reqConcurrency, maxRetries: reqMaxRetries, retryDelay: reqRetryDelay,
-            systemPrompt, fieldPrompts, itemIds,
+            sessionId: resolvedSessionId,
+            provider: resolvedProvider,
+            model: resolvedModel,
+            baseUrl: resolvedBaseUrl,
+            fields: validFields,
+            limit: resolvedLimit,
+            offset: resolvedOffset,
+            sleepMs: resolvedSleepMs,
+            concurrency: resolvedConcurrency,
+            maxRetries: resolvedMaxRetries,
+            retryDelay: resolvedRetryDelay,
+            systemPrompt: resolvedSystemPrompt,
+            fieldPrompts: resolvedFieldPrompts,
+            itemIds: resolvedItemIds,
         };
-        updateJob(job.id, { params: jobParams });
+
+        // Store sessionId at top level for easy access by tools/UI
+        await updateJob(job.id, {
+            params: jobParams,
+            sessionId: resolvedSessionId  // Store at top level
+        });
 
         // Run rewriting in background
         (async () => {
-            updateJob(job.id, { status: JobStatus.Running });
-            const trace = [];
+            await updateJob(job.id, { status: JobStatus.Running });
+
+            // Initialize trace: preserve existing if resuming, otherwise start fresh
+            const trace = resumeState.trace || [];
+
             try {
                 // Resolve settings
-                const concurrency = (typeof reqConcurrency === 'number' && reqConcurrency > 0) ? reqConcurrency : 1;
-                const maxRetries = (typeof reqMaxRetries === 'number' && reqMaxRetries >= 0) ? reqMaxRetries : 2;
-                const retryDelay = (typeof reqRetryDelay === 'number' && reqRetryDelay >= 0) ? reqRetryDelay : 2000;
-                const sleepTime = typeof sleepMs === 'number' ? sleepMs : 500;
+                const concurrency = (typeof resolvedConcurrency === 'number' && resolvedConcurrency > 0) ? resolvedConcurrency : 1;
+                const maxRetries = (typeof resolvedMaxRetries === 'number' && resolvedMaxRetries >= 0) ? resolvedMaxRetries : 2;
+                const retryDelay = (typeof resolvedRetryDelay === 'number' && resolvedRetryDelay >= 0) ? resolvedRetryDelay : 2000;
+                const sleepTime = typeof resolvedSleepMs === 'number' ? resolvedSleepMs : 500;
 
-                const fetchLimit = (typeof offset === 'number' && offset > 0)
-                    ? (limit || 10000) + offset
-                    : (typeof limit === 'number' && limit > 0 ? limit : undefined);
+                const fetchLimit = (typeof resolvedOffset === 'number' && resolvedOffset > 0)
+                    ? (resolvedLimit || 10000) + resolvedOffset
+                    : (typeof resolvedLimit === 'number' && resolvedLimit > 0 ? resolvedLimit : undefined);
 
-                let logs = await repo.fetchLogsForProcessing(sessionId, { limit: fetchLimit });
+                let logs = await repo.fetchLogsForProcessing(resolvedSessionId, { limit: fetchLimit });
 
                 // Apply offset manually
-                if (typeof offset === 'number' && offset > 0) {
-                    logs = logs.slice(offset);
-                    if (typeof limit === 'number' && limit > 0) {
-                        logs = logs.slice(0, limit);
+                if (typeof resolvedOffset === 'number' && resolvedOffset > 0) {
+                    logs = logs.slice(resolvedOffset);
+                    if (typeof resolvedLimit === 'number' && resolvedLimit > 0) {
+                        logs = logs.slice(0, resolvedLimit);
                     }
                 }
 
                 // Filter to specific item IDs if provided
-                if (Array.isArray(itemIds) && itemIds.length > 0) {
-                    const itemIdSet = new Set(itemIds);
+                if (Array.isArray(resolvedItemIds) && resolvedItemIds.length > 0) {
+                    const itemIdSet = new Set(resolvedItemIds);
                     logs = logs.filter(l => itemIdSet.has(l.id));
+                }
+
+                // Filter out already-processed logs if resuming
+                if (resumeJobId && processedIds.size > 0) {
+                    const originalCount = logs.length;
+                    logs = logs.filter(l => !processedIds.has(l.id));
+                    console.log(`[rewrite] Resuming job ${job.id}: skipping ${originalCount - logs.length} already-processed logs, ${logs.length} remaining`);
+                    trace.push({
+                        type: 'info',
+                        message: `Resuming job: ${originalCount - logs.length} logs already processed, ${logs.length} remaining`,
+                        timestamp: Date.now()
+                    });
                 }
 
                 // Count conversational vs flat items
@@ -475,29 +544,33 @@ export const registerStartRewriteRoute = (app, { repo, createJob, updateJob, get
                 const flatCount = logs.length - conversationalCount;
 
                 const total = logs.length;
-                let rewritten = 0;
-                let skipped = 0;
-                let errors = 0;
+
+                // Preserve existing counters if resuming
+                let rewritten = resumeState.progress.rewritten || 0;
+                let skipped = resumeState.progress.skipped || 0;
+                let errors = resumeState.progress.errors || 0;
                 let processed = 0;
                 let cancelled = false;
 
-                // Log initial job context
-                const promptSource = systemPrompt ? 'custom override' : (fieldPrompts ? 'prompt set' : 'defaults');
-                trace.push({
-                    type: 'info',
-                    message: `Job started: session=${sessionId}, model=${model}, provider=${provider || 'unknown'}, prompts: ${promptSource}`,
-                    timestamp: Date.now()
-                });
-                trace.push({
-                    type: 'info',
-                    message: `Found ${logs.length} logs (${conversationalCount} conversational, ${flatCount} flat), fields: ${validFields.join(', ')}`,
-                    timestamp: Date.now()
-                });
-                trace.push({
-                    type: 'info',
-                    message: `Config: concurrency=${concurrency}, maxRetries=${maxRetries}, retryDelay=${retryDelay}ms, sleepMs=${sleepTime}ms`,
-                    timestamp: Date.now()
-                });
+                // Log initial job context (only if not resuming)
+                if (!resumeJobId) {
+                    const promptSource = resolvedSystemPrompt ? 'custom override' : (resolvedFieldPrompts ? 'prompt set' : 'defaults');
+                    trace.push({
+                        type: 'info',
+                        message: `Job started: session=${resolvedSessionId}, model=${resolvedModel}, provider=${resolvedProvider || 'unknown'}, prompts: ${promptSource}`,
+                        timestamp: Date.now()
+                    });
+                    trace.push({
+                        type: 'info',
+                        message: `Found ${logs.length} logs (${conversationalCount} conversational, ${flatCount} flat), fields: ${validFields.join(', ')}`,
+                        timestamp: Date.now()
+                    });
+                    trace.push({
+                        type: 'info',
+                        message: `Config: concurrency=${concurrency}, maxRetries=${maxRetries}, retryDelay=${retryDelay}ms, sleepMs=${sleepTime}ms`,
+                        timestamp: Date.now()
+                    });
+                }
 
                 // Process items in batches of `concurrency`
                 for (let batchStart = 0; batchStart < logs.length; batchStart += concurrency) {
@@ -514,7 +587,7 @@ export const registerStartRewriteRoute = (app, { repo, createJob, updateJob, get
 
                     // Run batch concurrently
                     const results = await Promise.allSettled(
-                        batch.map(log => rewriteOneItem({ log, fields: validFields, repo, baseUrl, apiKey, model, maxRetries, retryDelay, customSystemPrompt: systemPrompt, fieldPrompts }))
+                        batch.map(log => rewriteOneItem({ log, fields: validFields, repo, baseUrl, apiKey, model: resolvedModel, maxRetries, retryDelay, customSystemPrompt: resolvedSystemPrompt, fieldPrompts: resolvedFieldPrompts }))
                     );
 
                     // Collect results
@@ -539,7 +612,7 @@ export const registerStartRewriteRoute = (app, { repo, createJob, updateJob, get
                         processed++;
                     }
 
-                    updateJob(job.id, {
+                    await updateJob(job.id, {
                         progress: { rewritten, skipped, errors, total, current: processed, fields: validFields },
                         result: { totalRewritten: rewritten, totalSkipped: skipped, totalErrors: errors, total, fields: validFields, trace },
                     });
@@ -551,11 +624,11 @@ export const registerStartRewriteRoute = (app, { repo, createJob, updateJob, get
                 }
 
                 if (cancelled) {
-                    updateJob(job.id, {
+                    await updateJob(job.id, {
                         result: { totalRewritten: rewritten, totalSkipped: skipped, totalErrors: errors, total, fields: validFields, cancelled: true, trace },
                     });
                 } else {
-                    updateJob(job.id, {
+                    await updateJob(job.id, {
                         status: JobStatus.Completed,
                         result: { totalRewritten: rewritten, totalSkipped: skipped, totalErrors: errors, total, fields: validFields, trace },
                     });
@@ -563,7 +636,7 @@ export const registerStartRewriteRoute = (app, { repo, createJob, updateJob, get
             } catch (error) {
                 console.error('[rewrite] Job failed:', error);
                 trace.push({ type: 'error', message: String(error), timestamp: Date.now() });
-                updateJob(job.id, { status: JobStatus.Failed, error: String(error), result: { trace } });
+                await updateJob(job.id, { status: JobStatus.Failed, error: String(error), result: { trace } });
             }
         })();
     });

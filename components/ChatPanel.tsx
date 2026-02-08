@@ -17,6 +17,7 @@ import { useChatPersistence } from '../hooks/useChatPersistence';
 import { useChatScroll } from '../hooks/useChatScroll';
 import { ChatRole, ExternalProvider, ProviderType, ToolApprovalAction } from '../interfaces/enums';
 import ModelSelector from './ModelSelector';
+import MarkdownRenderer from './MarkdownRenderer';
 
 
 
@@ -845,11 +846,11 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
                     {/* Only render text bubble if there is content or if it's currently streaming */}
                     {(msg.content?.trim() || (isStreaming && idx === messages.length - 1)) && (
-                        <div className={`relative group px-4 py-2 rounded-2xl text-[14px] whitespace-pre-wrap break-words break-all ${isUser
-                            ? 'bg-blue-600 text-white'
+                        <div className={`relative group px-4 py-2 rounded-2xl text-[14px] break-words break-all ${isUser
+                            ? 'bg-blue-600 text-white whitespace-pre-wrap'
                             : 'bg-slate-900/60 text-slate-100 border border-slate-700/70'
                             }`}>
-                            {msg.content}
+                            {isUser ? msg.content : <MarkdownRenderer content={msg.content || ''} />}
                             {!msg.content && isStreaming && idx === messages.length - 1 && (
                                 <span className="animate-pulse">▍</span>
                             )}
