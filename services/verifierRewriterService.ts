@@ -47,7 +47,9 @@ export {
     rewriteFieldStreaming,
     rewriteMessage,
     rewriteMessageStreaming,
-    rewriteMessageBothStreaming
+    rewriteMessageBothStreaming,
+    rewriteBothSplitStreaming,
+    rewriteMessageBothSplitStreaming
 } from './verifier/rewriters/fieldRewriter';
 
 export {

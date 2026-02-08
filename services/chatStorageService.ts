@@ -3,7 +3,7 @@
  * Persists chat history to IndexedDB
  */
 
-import { ChatMessage } from './chatService';
+import type { ChatMessage, ChatUsageSummary } from './chatService';
 import { ChatRole } from '../interfaces/enums';
 
 const DB_NAME = 'SynthLabsChatDB';
@@ -17,6 +17,11 @@ export interface ChatSession {
     messages: ChatMessage[];
     updatedAt: number;
     createdAt: number;
+    usageSummary?: {
+        totalTokens: number;
+        totalCost: number;
+        lastUsage?: ChatUsageSummary;
+    };
 }
 
 let dbInstance: IDBDatabase | null = null;
@@ -106,7 +111,11 @@ export const ChatStorageService = {
             title: 'New Chat',
             messages: [],
             updatedAt: Date.now(),
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            usageSummary: {
+                totalTokens: 0,
+                totalCost: 0
+            }
         };
         await ChatStorageService.saveSession(session);
         await ChatStorageService.setCurrentSessionId(id);
@@ -124,6 +133,20 @@ export const ChatStorageService = {
                 if (session.title === 'New Chat' && session.messages.length > 0) {
                     session.title = ChatStorageService.generateTitle(session.messages);
                 }
+
+                const usageMessages = session.messages.filter(msg => Boolean(msg.usage));
+                const totals = usageMessages.reduce((acc, msg) => {
+                    const usage = msg.usage!;
+                    acc.tokens += usage.totalTokens;
+                    acc.cost += usage.cost;
+                    return acc;
+                }, { tokens: 0, cost: 0 });
+
+                session.usageSummary = {
+                    totalTokens: totals.tokens,
+                    totalCost: totals.cost,
+                    lastUsage: usageMessages.length > 0 ? usageMessages[usageMessages.length - 1].usage : undefined
+                };
 
                 session.updatedAt = Date.now();
 

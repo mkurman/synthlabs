@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { FeedAnalyticsPanelProps } from '../components/layout/FeedAnalyticsPanel';
 import { SidebarPanelProps } from '../components/layout/SidebarPanel';
 import { VerifierContentProps } from '../components/layout/VerifierContent';
-import { AppMode, DataSource, DeepPhase, EngineMode, Environment, ExternalProvider, LogFilter, ProviderType, ApiType, OllamaStatus, ViewMode } from '../interfaces/enums';
+import { CreatorMode, DataSource, DeepPhase, EngineMode, Environment, ExternalProvider, LogFilter, ProviderType, ApiType, OllamaStatus, ViewMode, FeedDisplayMode, LogFeedRewriteTarget } from '../interfaces/enums';
 import { DeepConfig, DetectedColumns, GenerationParams, HuggingFaceConfig, ProgressStats, UserAgentConfig } from '../types';
 import { PrefetchState } from '../services/hfPrefetchService';
 import { TaskType } from '../interfaces/enums';
@@ -18,8 +18,8 @@ interface UseAppViewPropsInput {
     onSaveSession: () => void;
     onCloudLoadOpen: () => void;
     onCloudSave: () => void;
-    appMode: AppMode;
-    onAppModeChange: (mode: AppMode) => void;
+    appMode: CreatorMode;
+    onAppModeChange: (mode: CreatorMode) => void;
     isRunning: boolean;
     isPaused: boolean;
     progress: ProgressStats;
@@ -146,10 +146,12 @@ interface UseAppViewPropsInput {
     hasInvalidLogs: boolean;
     showLatestOnly: boolean;
     feedPageSize: number;
+    feedDisplayMode: FeedDisplayMode;
     onViewModeChange: (mode: ViewMode) => void;
     onLogFilterChange: (filter: LogFilter) => void;
     onShowLatestOnlyChange: (value: boolean) => void;
     onFeedPageSizeChange: (size: number) => void;
+    onFeedDisplayModeChange: (mode: FeedDisplayMode) => void;
     visibleLogs: SynthLogItem[];
     filteredLogCount: number;
     currentPage: number;
@@ -164,6 +166,20 @@ interface UseAppViewPropsInput {
     streamingConversations?: Map<string, StreamingConversationState>;
     streamingVersion: number;
     sessionUid: string;
+    isLoadingLogs: boolean;
+    // Inline editing props
+    editingField?: { itemId: string; field: LogFeedRewriteTarget; originalValue: string } | null;
+    editValue?: string;
+    onStartEditing?: (itemId: string, field: LogFeedRewriteTarget, currentValue: string) => void;
+    onSaveEditing?: () => void;
+    onCancelEditing?: () => void;
+    onEditValueChange?: (value: string) => void;
+    // Rewriting props
+    rewritingField?: { itemId: string; field: LogFeedRewriteTarget } | null;
+    streamingContent?: string;
+    onRewrite?: (itemId: string, field: LogFeedRewriteTarget) => void;
+    // Score change prop
+    onScoreChange?: (itemId: string, score: number) => void;
 }
 
 export function useAppViewProps(input: UseAppViewPropsInput) {
@@ -308,10 +324,12 @@ export function useAppViewProps(input: UseAppViewPropsInput) {
         hasInvalidLogs: input.hasInvalidLogs,
         showLatestOnly: input.showLatestOnly,
         feedPageSize: input.feedPageSize,
+        feedDisplayMode: input.feedDisplayMode,
         onViewModeChange: input.onViewModeChange,
         onLogFilterChange: input.onLogFilterChange,
         onShowLatestOnlyChange: input.onShowLatestOnlyChange,
         onFeedPageSizeChange: input.onFeedPageSizeChange,
+        onFeedDisplayModeChange: input.onFeedDisplayModeChange,
         logs: input.visibleLogs,
         totalLogCount: input.filteredLogCount,
         currentPage: input.currentPage,
@@ -325,7 +343,18 @@ export function useAppViewProps(input: UseAppViewPropsInput) {
         savingIds: input.savingIds,
         isProdMode: input.environment === Environment.Production,
         streamingConversations: input.logFilter === LogFilter.Live ? input.streamingConversations : undefined,
-        streamingVersion: input.streamingVersion
+        streamingVersion: input.streamingVersion,
+        isLoading: input.isLoadingLogs,
+        editingField: input.editingField,
+        editValue: input.editValue,
+        onStartEditing: input.onStartEditing,
+        onSaveEditing: input.onSaveEditing,
+        onCancelEditing: input.onCancelEditing,
+        onEditValueChange: input.onEditValueChange,
+        rewritingField: input.rewritingField,
+        streamingContent: input.streamingContent,
+        onRewrite: input.onRewrite,
+        onScoreChange: input.onScoreChange
     }), [input]);
 
     const verifierProps: VerifierContentProps = useMemo(() => ({

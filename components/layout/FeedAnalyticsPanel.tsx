@@ -2,7 +2,7 @@ import AnalyticsDashboard from '../AnalyticsDashboard';
 import FeedControlBar from './FeedControlBar';
 import LogFeed from '../LogFeed';
 import { SynthLogItem } from '../../types';
-import { LogFilter, ViewMode } from '../../interfaces/enums';
+import { LogFilter, ViewMode, FeedDisplayMode, LogFeedRewriteTarget } from '../../interfaces/enums';
 import { StreamingConversationState } from '../../types';
 
 export interface FeedAnalyticsPanelProps {
@@ -11,10 +11,12 @@ export interface FeedAnalyticsPanelProps {
     hasInvalidLogs: boolean;
     showLatestOnly: boolean;
     feedPageSize: number;
+    feedDisplayMode: FeedDisplayMode;
     onViewModeChange: (mode: ViewMode) => void;
     onLogFilterChange: (filter: LogFilter) => void;
     onShowLatestOnlyChange: (value: boolean) => void;
     onFeedPageSizeChange: (size: number) => void;
+    onFeedDisplayModeChange: (mode: FeedDisplayMode) => void;
     logs: SynthLogItem[];
     totalLogCount: number;
     currentPage: number;
@@ -29,6 +31,20 @@ export interface FeedAnalyticsPanelProps {
     isProdMode: boolean;
     streamingConversations?: Map<string, StreamingConversationState>;
     streamingVersion: number;
+    isLoading?: boolean;
+    // Inline editing props
+    editingField?: { itemId: string; field: LogFeedRewriteTarget; originalValue: string } | null;
+    editValue?: string;
+    onStartEditing?: (itemId: string, field: LogFeedRewriteTarget, currentValue: string) => void;
+    onSaveEditing?: () => void;
+    onCancelEditing?: () => void;
+    onEditValueChange?: (value: string) => void;
+    // Rewriting props
+    rewritingField?: { itemId: string; field: LogFeedRewriteTarget } | null;
+    streamingContent?: string;
+    onRewrite?: (itemId: string, field: LogFeedRewriteTarget) => void;
+    // Score change prop
+    onScoreChange?: (itemId: string, score: number) => void;
 }
 
 export default function FeedAnalyticsPanel({
@@ -37,10 +53,12 @@ export default function FeedAnalyticsPanel({
     hasInvalidLogs,
     showLatestOnly,
     feedPageSize,
+    feedDisplayMode,
     onViewModeChange,
     onLogFilterChange,
     onShowLatestOnlyChange,
     onFeedPageSizeChange,
+    onFeedDisplayModeChange,
     logs,
     totalLogCount,
     currentPage,
@@ -54,20 +72,33 @@ export default function FeedAnalyticsPanel({
     savingIds,
     isProdMode,
     streamingConversations,
-    streamingVersion
+    streamingVersion,
+    isLoading,
+    editingField,
+    editValue,
+    onStartEditing,
+    onSaveEditing,
+    onCancelEditing,
+    onEditValueChange,
+    rewritingField,
+    streamingContent,
+    onRewrite,
+    onScoreChange
 }: FeedAnalyticsPanelProps) {
     return (
-        <div className="lg:col-span-8">
+        <div className="lg:col-span-8 p-4 pb-8">
             <FeedControlBar
                 viewMode={viewMode}
                 logFilter={logFilter}
                 hasInvalidLogs={hasInvalidLogs}
                 showLatestOnly={showLatestOnly}
                 feedPageSize={feedPageSize}
+                feedDisplayMode={feedDisplayMode}
                 onViewModeChange={onViewModeChange}
                 onLogFilterChange={onLogFilterChange}
                 onShowLatestOnlyChange={onShowLatestOnlyChange}
                 onFeedPageSizeChange={onFeedPageSizeChange}
+                onFeedDisplayModeChange={onFeedDisplayModeChange}
             />
 
             {viewMode === ViewMode.Feed ? (
@@ -89,6 +120,18 @@ export default function FeedAnalyticsPanel({
                     streamingVersion={streamingVersion}
                     showLatestOnly={showLatestOnly}
                     onShowLatestOnlyChange={onShowLatestOnlyChange}
+                    isLoading={isLoading}
+                    displayMode={feedDisplayMode}
+                    editingField={editingField}
+                    editValue={editValue}
+                    onStartEditing={onStartEditing}
+                    onSaveEditing={onSaveEditing}
+                    onCancelEditing={onCancelEditing}
+                    onEditValueChange={onEditValueChange}
+                    rewritingField={rewritingField}
+                    streamingContent={streamingContent}
+                    onRewrite={onRewrite}
+                    onScoreChange={onScoreChange}
                 />
             ) : (
                 <AnalyticsDashboard logs={logs} />

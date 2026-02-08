@@ -4,7 +4,7 @@
  * Provides type definitions for file operations, loading, saving, and exports.
  */
 
-import { AppMode } from '../enums';
+import { CreatorMode } from '../enums';
 import { DetectedColumns } from '../../types';
 import { ConfirmVariant } from '../../services/confirmService';
 
@@ -51,7 +51,7 @@ export enum ExportMethod {
  */
 export interface LoadRubricConfig {
     /** Current application mode */
-    appMode: AppMode;
+    appMode: CreatorMode;
     /** Set system prompt for generator mode */
     setSystemPrompt: (prompt: string) => void;
     /** Set converter prompt for converter mode */
@@ -63,7 +63,7 @@ export interface LoadRubricConfig {
  */
 export interface SaveRubricConfig {
     /** Current application mode */
-    appMode: AppMode;
+    appMode: CreatorMode;
     /** System prompt content (generator mode) */
     systemPrompt: string;
     /** Converter prompt content (converter mode) */

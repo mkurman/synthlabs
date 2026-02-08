@@ -3,6 +3,7 @@ import { RewriterConfig, RewriterStreamCallback, callRewriterAIRaw, callRewriter
 import { buildMessageContextForTarget } from './targetedContextBuilder';
 import { VerifierRewriteTarget } from '../../../interfaces/enums';
 import { parseRewriteResult, RewriteResult } from './responseParser';
+import { extractMessageParts } from '../../../utils/thinkTagParser';
 
 export interface RewriteMessageParams {
     item: VerifierItem;
@@ -24,14 +25,11 @@ export async function rewriteMessageReasoning(params: RewriteMessageParams): Pro
 
     const targetMessage = item.messages[messageIndex];
 
-    // Extract existing answer to preserve
-    const thinkMatch = targetMessage.content.match(/<think>([\s\S]*?)<\/think>/);
-    const existingReasoning = thinkMatch ? thinkMatch[1].trim() : (targetMessage.reasoning || '');
-    const existingAnswer = thinkMatch
-        ? targetMessage.content.replace(/<think>[\s\S]*?<\/think>/, '').trim()
-        : targetMessage.content;
+    // Extract existing reasoning and answer using unified utility
+    // Priority: reasoning_content > <think> tags > reasoning field
+    const { reasoning: existingReasoning, content: existingAnswer } = extractMessageParts(targetMessage);
 
-    const systemPrompt = config.systemPrompt || `You are an expert at generating detailed reasoning traces. 
+    const systemPrompt = config.systemPrompt || `You are an expert at generating detailed reasoning traces.
 Given a conversation and a target message, regenerate ONLY the reasoning/thinking process.
 The answer must remain EXACTLY as provided - do not modify it.
 Respond with a JSON object: { "reasoning": "your new reasoning", "answer": "preserved answer" }`;
@@ -77,12 +75,8 @@ export async function rewriteMessageBoth(params: RewriteMessageParams): Promise<
 
     const targetMessage = item.messages[messageIndex];
 
-    // Extract existing values as fallbacks
-    const thinkMatch = targetMessage.content.match(/<think>([\s\S]*?)<\/think>/);
-    const existingReasoning = thinkMatch ? thinkMatch[1].trim() : (targetMessage.reasoning || '');
-    const existingAnswer = thinkMatch
-        ? targetMessage.content.replace(/<think>[\s\S]*?<\/think>/, '').trim()
-        : targetMessage.content;
+    // Extract existing values as fallbacks using unified utility
+    const { reasoning: existingReasoning, content: existingAnswer } = extractMessageParts(targetMessage);
 
     const systemPrompt = config.systemPrompt || `You are an expert at generating high-quality reasoning traces and answers.
 Given a conversation, regenerate both the reasoning process AND the final answer for the target message.

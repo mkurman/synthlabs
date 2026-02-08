@@ -14,8 +14,8 @@ import { TaskType } from '../../interfaces/enums';
 import { PromptService } from '../promptService';
 import { DEFAULT_HF_PREFETCH_CONFIG } from '../../types';
 import { extractInputContent } from '../../utils/contentExtractor';
-import { parseThinkTagsForDisplay, parseNativeOutput } from '../../utils/thinkTagParser';
-import { DataSource, EngineMode, AppMode, Environment, ProviderType, ExternalProvider, ApiType, ChatRole, ResponderPhase, LogItemStatus, PromptCategory, PromptRole, StreamingPhase, OutputFieldName, SynthLogFieldName, ResponsesSchemaName } from '../../interfaces/enums';
+import { parseThinkTagsForDisplay, parseNativeOutput, sanitizeReasoningContent } from '../../utils/thinkTagParser';
+import { DataSource, EngineMode, CreatorMode, Environment, ProviderType, ExternalProvider, ApiType, ChatRole, ResponderPhase, LogItemStatus, PromptCategory, PromptRole, StreamingPhase, OutputFieldName, SynthLogFieldName, ResponsesSchemaName } from '../../interfaces/enums';
 import { ExtractContentFormat } from '../../interfaces/services/DataTransformConfig';
 import type { CompleteGenerationConfig as GenerationConfig, RuntimePromptConfig, WorkItem } from '../../interfaces';
 import { mergeWithExistingFields } from '../fieldSelectionService';
@@ -37,6 +37,7 @@ export const buildGenerationConfig = (input: GenerationConfigBuilderInput): Gene
 
 export class GenerationService {
     private config: GenerationConfig;
+    private isAppendRun: boolean = false;
 
     constructor(config: GenerationConfig) {
         this.config = config;
@@ -44,6 +45,7 @@ export class GenerationService {
 
     async startGeneration(append = false): Promise<void> {
         const { config } = this;
+        this.isAppendRun = append;
 
         // Check Firebase in production
         if (config.environment === Environment.Production && !FirebaseService.isFirebaseConfigured()) {
@@ -108,6 +110,8 @@ export class GenerationService {
         } finally {
             this.cleanup();
             config.setIsRunning(false);
+            // Final refresh to sync visible logs with IndexedDB after generation completes
+            config.refreshLogs();
         }
     }
 
@@ -127,7 +131,7 @@ export class GenerationService {
 
         if (config.environment === Environment.Production && FirebaseService.isFirebaseConfigured() && !isCurrentSessionFirebase) {
             try {
-                const sessionName = `${config.appMode === AppMode.Generator ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
+                const sessionName = `${config.appMode === CreatorMode.Generator ? 'Generation' : 'Conversion'} - ${new Date().toLocaleString()}`;
                 const sessionConfig = config.getSessionData();
                 newUid = await FirebaseService.createSessionInFirebase(sessionName, sourceLabel, sessionConfig);
                 logger.log(`Created Firebase session: ${newUid}`);
@@ -198,13 +202,14 @@ export class GenerationService {
 
     private async setupPrefetchMode(): Promise<void> {
         const { config } = this;
+        const effectiveSkipRows = this.getEffectiveSkipRows();
 
         config.setProgress({ current: 0, total: config.rowsToFetch, activeWorkers: 1 });
 
         const prefetchConfig = config.hfConfig.prefetchConfig || DEFAULT_HF_PREFETCH_CONFIG;
         config.prefetchManagerRef.current = createPrefetchManager(
             config.hfConfig,
-            config.skipRows,
+            effectiveSkipRows,
             config.rowsToFetch,
             config.concurrency,
             prefetchConfig
@@ -220,6 +225,7 @@ export class GenerationService {
 
     private async parseManualInput(): Promise<WorkItem[]> {
         const { config } = this;
+        const effectiveSkipRows = this.getEffectiveSkipRows();
         let parsedRows: any[] = [];
         const trimmedInput = config.converterInputText.trim();
 
@@ -247,7 +253,7 @@ export class GenerationService {
             });
         }
 
-        const rowsToProcess = parsedRows.slice(config.skipRows, config.skipRows + config.rowsToFetch);
+        const rowsToProcess = parsedRows.slice(effectiveSkipRows, effectiveSkipRows + config.rowsToFetch);
         config.setProgress({ current: 0, total: rowsToProcess.length, activeWorkers: 1 });
 
         const workItems = rowsToProcess.map(row => {
@@ -263,6 +269,15 @@ export class GenerationService {
         }
 
         return workItems;
+    }
+
+    private getEffectiveSkipRows(): number {
+        const { config } = this;
+        if (!this.isAppendRun) {
+            return config.skipRows;
+        }
+        const existingItemCount = Math.max(0, config.existingItemCount || 0);
+        return Math.max(0, config.skipRows + existingItemCount);
     }
 
     private async generateSyntheticSeeds(): Promise<WorkItem[]> {
@@ -669,7 +684,7 @@ export class GenerationService {
                 : 'synthetic';
 
         const settings = SettingsService.getSettings();
-        const timeoutSeconds = Math.max(1, settings.generationTimeoutSeconds ?? 300);
+        const timeoutSeconds = Math.max(0, settings.generationTimeoutSeconds ?? 300);
         const timeoutMs = timeoutSeconds * 1000;
         const generationId = retryId || crypto.randomUUID();
 
@@ -728,17 +743,18 @@ export class GenerationService {
                 const effectiveSystemPrompt = runtimeConfig?.systemPrompt ?? config.systemPrompt;
                 const effectiveConverterPrompt = runtimeConfig?.converterPrompt ?? config.converterPrompt;
                 const effectiveDeepConfig = runtimeConfig?.deepConfig ?? config.deepConfig;
-                const activePrompt = config.appMode === AppMode.Generator ? effectiveSystemPrompt : effectiveConverterPrompt;
-                const genParams = config.generationParams;
+                const activePrompt = config.appMode === CreatorMode.Generator ? effectiveSystemPrompt : effectiveConverterPrompt;
+                const settingsDefaults = SettingsService.getDefaultGenerationParams();
+                const genParams = { ...settingsDefaults, ...config.generationParams };
                 const useNativeOutput = genParams?.useNativeOutput ?? false;
                 const retryConfig = { maxRetries: config.maxRetries, retryDelay: config.retryDelay, generationParams: genParams };
 
                 // Get prompt schema for field selection
-                const promptCategory = config.appMode === AppMode.Generator ? PromptCategory.Generator : PromptCategory.Converter;
+                const promptCategory = config.appMode === CreatorMode.Generator ? PromptCategory.Generator : PromptCategory.Converter;
                 const promptRole = PromptRole.System;
                 const promptSchema = PromptService.getPromptSchema(promptCategory, promptRole, config.sessionPromptSet || undefined);
                 const selectedFields = genParams?.selectedFields;
-                
+
                 logger.log('[Non-Conversation Mode] Field selection debug:', {
                     selectedFields,
                     hasPromptSchema: !!promptSchema,
@@ -765,9 +781,27 @@ export class GenerationService {
                     isSinglePrompt
                 });
 
+                // Capture API-reported usage data for accurate token counting
+                interface CapturedUsage { prompt_tokens: number; completion_tokens: number; total_tokens: number; reasoning_tokens?: number }
+                const usageRef: { current: CapturedUsage | null } = { current: null };
+                const captureUsage = (rawUsage: any) => {
+                    if (!rawUsage || typeof rawUsage !== 'object') return;
+                    const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens
+                        ?? rawUsage.reasoning_tokens
+                        ?? 0;
+                    usageRef.current = {
+                        prompt_tokens: rawUsage.prompt_tokens || rawUsage.input_tokens || 0,
+                        completion_tokens: rawUsage.completion_tokens || rawUsage.output_tokens || 0,
+                        total_tokens: rawUsage.total_tokens || ((rawUsage.prompt_tokens || 0) + (rawUsage.completion_tokens || 0)),
+                        reasoning_tokens: reasoningTokens || undefined
+                    };
+                };
+
                 // Progressive streaming callback that parses JSON fields
                 const MAX_STREAM_RAW_CHARS = 5000;
-                const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase) => {
+                const handleStreamChunk: StreamChunkCallback = (_chunk, accumulated, _phase, usage) => {
+                    // Capture usage data when the API sends it (typically in the final chunk)
+                    if (usage) captureUsage(usage);
                     const current = config.streamingConversationsRef.current.get(generationId);
                     if (!current) return;
 
@@ -784,7 +818,8 @@ export class GenerationService {
                         const thinkStart = /<think>/i.test(accumulated);
                         const thinkEnd = /<\/think>/i.test(accumulated);
 
-                        if (expectReasoning) {
+                        if (expectReasoning && expectAnswer) {
+                            // Both reasoning and answer expected: normal native flow
                             if (thinkStart && !thinkEnd) {
                                 newPhase = StreamingPhase.ExtractingReasoning;
                                 const partial = accumulated.match(/<think>([\s\S]*)$/i);
@@ -795,9 +830,41 @@ export class GenerationService {
                                 nextReasoning = parsed.reasoning || nextReasoning;
                                 nextAnswer = parsed.answer || nextAnswer;
                             }
-                        } else if (expectAnswer) {
-                            newPhase = StreamingPhase.ExtractingAnswer;
-                            nextAnswer = accumulated;
+                        } else if (expectReasoning && !expectAnswer) {
+                            // Only reasoning expected: collect reasoning, stop when done
+                            if (thinkStart && !thinkEnd) {
+                                newPhase = StreamingPhase.ExtractingReasoning;
+                                const partial = accumulated.match(/<think>([\s\S]*)$/i);
+                                nextReasoning = partial?.[1] || nextReasoning;
+                            } else if (thinkStart && thinkEnd) {
+                                // Reasoning complete — extract it and signal stop
+                                const parsed = parseThinkTagsForDisplay(accumulated);
+                                nextReasoning = parsed.reasoning || nextReasoning;
+                                newPhase = StreamingPhase.MessageComplete;
+
+                                const updated: StreamingConversationState = {
+                                    ...current,
+                                    phase: newPhase,
+                                    currentReasoning: nextReasoning,
+                                    currentAnswer: current.currentAnswer,
+                                    rawAccumulated: accumulated.slice(-MAX_STREAM_RAW_CHARS)
+                                };
+                                config.streamingConversationsRef.current.set(generationId, updated);
+                                config.scheduleStreamingUpdate();
+                                return false; // Stop streaming early
+                            }
+                        } else if (expectAnswer && !expectReasoning) {
+                            // Only answer expected: skip reasoning, extract content after </think>
+                            if (thinkStart && thinkEnd) {
+                                newPhase = StreamingPhase.ExtractingAnswer;
+                                const parsed = parseThinkTagsForDisplay(accumulated);
+                                nextAnswer = parsed.answer || nextAnswer;
+                            } else if (!thinkStart) {
+                                // No think tags at all — entire content is the answer
+                                newPhase = StreamingPhase.ExtractingAnswer;
+                                nextAnswer = accumulated;
+                            }
+                            // If think started but not ended, wait for reasoning to finish
                         }
                     } else {
                         const extracted = extractJsonFields(accumulated);
@@ -846,7 +913,7 @@ export class GenerationService {
                                 const roleStr = m.role || (m.from === 'human' ? 'user' : m.from === 'gpt' ? 'assistant' : m.from);
                                 // Map string role to ChatRole enum
                                 let role: ChatRole;
-                                switch(roleStr) {
+                                switch (roleStr) {
                                     case 'user': role = ChatRole.User; break;
                                     case 'assistant': role = ChatRole.Assistant; break;
                                     case 'system': role = ChatRole.System; break;
@@ -975,22 +1042,153 @@ export class GenerationService {
                 // Regular generation mode
                 if (config.engineMode === EngineMode.Regular) {
                     let promptInput = "";
-                    if (config.appMode === AppMode.Generator) {
+                    if (config.appMode === CreatorMode.Generator) {
                         promptInput = `[SEED TEXT START]\n${safeInput}\n[SEED TEXT END]`;
                     } else {
                         const contentToConvert = extractInputContent(safeInput);
                         promptInput = `[INPUT LOGIC START]\n${contentToConvert}\n[INPUT LOGIC END]`;
                     }
 
+                    const splitFieldRequests = genParams?.splitFieldRequests ?? false;
+
                     let enhancedPrompt = activePrompt;
-                    if (!useNativeOutput && !enhancedPrompt.toLowerCase().includes("json")) {
-                        enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with '${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', and '${OutputFieldName.Answer}' fields.`;
+                    if (!splitFieldRequests && !useNativeOutput && !enhancedPrompt.toLowerCase().includes("json")) {
+                        const selFields = genParams?.selectedFields;
+                        const fieldNames = selFields && selFields.length > 0
+                            ? selFields.map((f: string) => `'${f}'`).join(', ')
+                            : `'${OutputFieldName.Query}', '${OutputFieldName.Reasoning}', '${OutputFieldName.Answer}'`;
+                        enhancedPrompt += `\n\nCRITICAL: You must output ONLY valid JSON with ${fieldNames} fields.`;
                     }
 
-                    if (config.provider === ProviderType.Gemini) {
+                    if (splitFieldRequests && config.provider !== ProviderType.Gemini) {
+                        // Split mode: separate plain-text requests per selected field
+                        const selectedFields = genParams?.selectedFields;
+                        const wantReasoning = !selectedFields || selectedFields.length === 0 || selectedFields.includes(OutputFieldName.Reasoning);
+                        const wantAnswer = !selectedFields || selectedFields.length === 0 || selectedFields.includes(OutputFieldName.Answer);
+
+                        logger.log('[Split Field Requests] Starting split generation...', { wantReasoning, wantAnswer });
+
+                        const baseSystemPrompt = activePrompt;
+                        let reasoningText = originalReasoning || '';
+                        let answerText = originalAnswer || '';
+
+                        // Streaming callback for split mode: plain text (possibly with <think> tags from model)
+                        const handleSplitStreamChunk = (field: 'reasoning' | 'answer'): StreamChunkCallback => {
+                            return (_chunk, accumulated, _phase, usage) => {
+                                if (usage) captureUsage(usage);
+                                const current = config.streamingConversationsRef.current.get(generationId);
+                                if (!current) return;
+
+                                // Model may return reasoning_content which streaming.ts wraps in <think> tags
+                                const parsed = parseThinkTagsForDisplay(accumulated);
+                                let cleanText: string;
+
+                                if (field === 'reasoning') {
+                                    // For reasoning: prefer content OUTSIDE <think> tags, fallback to full text
+                                    cleanText = parsed.hasThinkTags ? (sanitizeReasoningContent(parsed.answer) || '') : accumulated;
+                                } else {
+                                    // For answer: strip <think> tags, use clean content
+                                    cleanText = parsed.answer;
+                                }
+
+                                const updated: StreamingConversationState = {
+                                    ...current,
+                                    phase: field === 'reasoning' ? StreamingPhase.ExtractingReasoning : StreamingPhase.ExtractingAnswer,
+                                    currentReasoning: field === 'reasoning' ? cleanText : current.currentReasoning,
+                                    currentAnswer: field === 'answer' ? cleanText : current.currentAnswer,
+                                    rawAccumulated: accumulated.slice(-MAX_STREAM_RAW_CHARS)
+                                };
+                                config.streamingConversationsRef.current.set(generationId, updated);
+                                config.scheduleStreamingUpdate();
+                            };
+                        };
+
+                        // Step 1: Generate reasoning (if selected)
+                        if (wantReasoning) {
+                            const reasoningSystemPrompt = baseSystemPrompt + `\n\nGenerate ONLY the reasoning/thinking process for this task. Output as plain text, nothing else. Do not output JSON.`;
+
+                            const reasoningStreamState = initStreamingState(1, promptInput, true);
+                            config.streamingConversationsRef.current.set(generationId, reasoningStreamState);
+                            config.bumpStreamingConversations();
+
+                            const reasoningResult = await ExternalApiService.callExternalApi({
+                                provider: config.externalProvider,
+                                apiKey: config.externalApiKey || SettingsService.getApiKey(config.externalProvider),
+                                model: config.externalModel,
+                                apiType: config.apiType,
+                                customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+                                systemPrompt: reasoningSystemPrompt,
+                                userPrompt: promptInput,
+                                signal: itemAbortController.signal,
+                                maxRetries: config.maxRetries,
+                                retryDelay: config.retryDelay,
+                                generationParams: genParams,
+                                structuredOutput: false,
+                                stream: config.isStreamingEnabled,
+                                onStreamChunk: handleSplitStreamChunk('reasoning'),
+                                streamPhase: 'regular',
+                                onUsage: captureUsage
+                            });
+                            clearStreamingState();
+
+                            // Clean <think> tags from final result: model may return reasoning_content
+                            const rawReasoning = typeof reasoningResult === 'string' ? reasoningResult : String(reasoningResult);
+                            const parsedReasoning = parseThinkTagsForDisplay(rawReasoning);
+                            reasoningText = (parsedReasoning.hasThinkTags ? (sanitizeReasoningContent(parsedReasoning.answer) || '') : rawReasoning).trim();
+                            logger.log('[Split Field Requests] Reasoning generated, length:', reasoningText.length);
+                        } else {
+                            logger.log('[Split Field Requests] Reasoning skipped (not in selectedFields), using existing');
+                        }
+
+                        // Step 2: Generate answer (if selected)
+                        if (wantAnswer) {
+                            const answerSystemPrompt = baseSystemPrompt + `\n\nGenerate ONLY the final answer for this task. The reasoning process is provided below for reference. Output as plain text, nothing else. Do not output JSON.`;
+                            const answerUserPrompt = `${promptInput}\n\n## REASONING TRACE\n${reasoningText}\n\n---\nBased on the reasoning above, generate the answer.`;
+
+                            const answerStreamState = initStreamingState(1, answerUserPrompt, true);
+                            config.streamingConversationsRef.current.set(generationId, answerStreamState);
+                            config.bumpStreamingConversations();
+
+                            const answerResult = await ExternalApiService.callExternalApi({
+                                provider: config.externalProvider,
+                                apiKey: config.externalApiKey || SettingsService.getApiKey(config.externalProvider),
+                                model: config.externalModel,
+                                apiType: config.apiType,
+                                customBaseUrl: config.customBaseUrl || SettingsService.getCustomBaseUrl(),
+                                systemPrompt: answerSystemPrompt,
+                                userPrompt: answerUserPrompt,
+                                signal: itemAbortController.signal,
+                                maxRetries: config.maxRetries,
+                                retryDelay: config.retryDelay,
+                                generationParams: genParams,
+                                structuredOutput: false,
+                                stream: config.isStreamingEnabled,
+                                onStreamChunk: handleSplitStreamChunk('answer'),
+                                streamPhase: 'regular',
+                                onUsage: captureUsage
+                            });
+                            clearStreamingState();
+
+                            // Clean <think> tags from final result
+                            const rawAnswer = typeof answerResult === 'string' ? answerResult : String(answerResult);
+                            const parsedAnswer = parseThinkTagsForDisplay(rawAnswer);
+                            answerText = parsedAnswer.answer.trim();
+                            logger.log('[Split Field Requests] Answer generated, length:', answerText.length);
+                        } else {
+                            logger.log('[Split Field Requests] Answer skipped (not in selectedFields), using existing');
+                        }
+
+                        // Assemble result — query comes from seed text in split mode
+                        result = {
+                            query: originalQuestion || safeInput,
+                            reasoning: reasoningText,
+                            reasoning_content: reasoningText,
+                            answer: answerText,
+                        };
+                    } else if (config.provider === ProviderType.Gemini) {
                         if (useNativeOutput) {
                             result = await GeminiService.generateNativeText(promptInput, enhancedPrompt, { ...retryConfig, model: config.externalModel });
-                        } else if (config.appMode === AppMode.Generator) {
+                        } else if (config.appMode === CreatorMode.Generator) {
                             result = await GeminiService.generateReasoningTrace(safeInput, enhancedPrompt, { ...retryConfig, model: config.externalModel });
                         } else {
                             const contentToConvert = extractInputContent(safeInput);
@@ -1014,12 +1212,13 @@ export class GenerationService {
                             maxRetries: config.maxRetries,
                             retryDelay: config.retryDelay,
                             generationParams: genParams,
-                            structuredOutput: useNativeOutput ? false : (genParams?.forceStructuredOutput ?? true),
+                            structuredOutput: (useNativeOutput || splitFieldRequests) ? false : (genParams?.forceStructuredOutput ?? true),
                             responsesSchema: ResponsesSchemaName.ReasoningTrace,
                             selectedFields: useNativeOutput ? undefined : genParams?.selectedFields,
                             stream: config.isStreamingEnabled,
                             onStreamChunk: handleStreamChunk,
-                            streamPhase: 'regular'
+                            streamPhase: 'regular',
+                            onUsage: captureUsage
                         });
                         clearStreamingState();
                     }
@@ -1037,21 +1236,24 @@ export class GenerationService {
                     // Get the schema for this prompt to know all available fields
                     const promptSetId = runtimeConfig?.promptSet || config.sessionPromptSet || SettingsService.getSettings().promptSet || 'default';
                     const schema = PromptService.getPromptSchema(
-                        config.appMode === AppMode.Generator ? PromptCategory.Generator : PromptCategory.Converter,
+                        config.appMode === CreatorMode.Generator ? PromptCategory.Generator : PromptCategory.Converter,
                         PromptRole.System,
                         promptSetId
                     );
 
                     let finalResult: Record<string, any>;
 
-                    if (useNativeOutput) {
+                    if (splitFieldRequests) {
+                        // In split mode, result is already assembled with the right fields
+                        finalResult = result;
+                    } else if (useNativeOutput) {
                         const rawText = typeof result === 'string' ? result : JSON.stringify(result);
                         finalResult = parseNativeOutput(rawText);
                     } else {
                         finalResult = result;
                     }
 
-                    if (!useNativeOutput && hasFieldSelection && schema.output.length > 0) {
+                    if (!splitFieldRequests && !useNativeOutput && hasFieldSelection && schema.output.length > 0) {
                         // In both Generator and Converter modes with field selection: merge generated fields with existing data
                         const existingItem: Partial<SynthLogItem> = {
                             reasoning: originalReasoning,
@@ -1091,17 +1293,18 @@ export class GenerationService {
                         }
                     }
                     // If field selection is enabled and answer was not selected, use original answer
-                    const finalAnswer = (originalAnswer && hasFieldSelection && !selectedFields?.includes(OutputFieldName.Answer)) 
-                        ? originalAnswer 
+                    const finalAnswer = (originalAnswer && hasFieldSelection && !selectedFields?.includes(OutputFieldName.Answer))
+                        ? originalAnswer
                         : answer;
 
+                    const finalUsage = usageRef.current;
                     return {
                         id: generationId,
                         sessionUid: config.sessionUid,
                         source: source,
                         seed_preview: safeInput.substring(0, 150) + "...",
                         full_seed: safeInput,
-                        query: originalQuestion || (config.appMode === AppMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
+                        query: originalQuestion || (config.appMode === CreatorMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
                         reasoning: reasoning,
                         reasoning_content: reasoningContent,
                         [SynthLogFieldName.OriginalReasoning]: originalReasoning,
@@ -1109,7 +1312,9 @@ export class GenerationService {
                         [SynthLogFieldName.OriginalAnswer]: originalAnswer,
                         timestamp: new Date().toISOString(),
                         duration: Date.now() - startTime,
-                        tokenCount: Math.round((finalAnswer.length + reasoning.length) / 4),
+                        tokenCount: finalUsage?.total_tokens
+                            || Math.round((finalAnswer.length + reasoning.length) / 4),
+                        usage: finalUsage || undefined,
                         modelUsed: config.provider === ProviderType.Gemini ? 'Gemini 3 Flash' : `${config.externalProvider}/${config.externalModel}`,
                         provider: config.externalProvider,
                         status: LogItemStatus.DONE
@@ -1117,11 +1322,11 @@ export class GenerationService {
                 } else {
                     // Deep mode
                     let inputPayload = safeInput;
-                    if (config.appMode === AppMode.Converter) {
+                    if (config.appMode === CreatorMode.Converter) {
                         inputPayload = extractInputContent(safeInput);
                     }
 
-                    if (config.appMode === AppMode.Generator && originalAnswer && originalAnswer.trim().length > 0) {
+                    if (config.appMode === CreatorMode.Generator && originalAnswer && originalAnswer.trim().length > 0) {
                         inputPayload = `${inputPayload}\n\n[EXPECTED ANSWER]\n${originalAnswer.trim()}`;
                     }
 
@@ -1133,7 +1338,7 @@ export class GenerationService {
 
                     const deepResult = await DeepReasoningService.orchestrateDeepReasoning({
                         input: inputPayload,
-                        originalQuery: originalQuestion || (config.appMode === AppMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
+                        originalQuery: originalQuestion || (config.appMode === CreatorMode.Converter ? extractInputContent(safeInput, { format: ExtractContentFormat.Display }) : safeInput),
                         expectedAnswer: originalAnswer,
                         config: runtimeDeepConfig,
                         signal: itemAbortController.signal,
@@ -1218,7 +1423,6 @@ export class GenerationService {
             });
         } catch (err: any) {
             if (err.name === 'AbortError' && !didTimeout) {
-                clearStreamingState();
                 const safeErrInput = typeof inputText === 'string' ? inputText : JSON.stringify(inputText);
                 return {
                     id: generationId,
@@ -1241,7 +1445,6 @@ export class GenerationService {
                 };
             }
             if (err.name === 'TimeoutError' || didTimeout) {
-                clearStreamingState();
                 const safeErrInput = typeof inputText === 'string' ? inputText : JSON.stringify(inputText);
                 return {
                     id: generationId,
@@ -1285,13 +1488,14 @@ export class GenerationService {
                 error: err.message
             };
         } finally {
+            // Always clear streaming state to prevent stuck streaming cards
+            clearStreamingState();
             if (globalSignal) {
                 globalSignal.removeEventListener('abort', handleGlobalAbort);
             }
             if (timeoutId) {
                 window.clearTimeout(timeoutId);
             }
-            config.streamingAbortControllersRef.current.delete(generationId);
         }
     }
 
@@ -1304,14 +1508,17 @@ export class GenerationService {
         }
 
         await LogStorageService.saveLog(config.sessionUidRef.current, result);
-        config.setLogsTrigger((prev: number) => prev + 1);
 
+        // Directly prepend new log to visible list instead of full IndexedDB reload
+        // to avoid race conditions with concurrent workers during generation
         if (config.currentPage === 1) {
-            config.refreshLogs();
+            config.setVisibleLogs((prev: SynthLogItem[]) => [result, ...prev]);
         }
+        config.setTotalLogCount((prev: number) => prev + 1);
+        config.setFilteredLogCount((prev: number) => prev + 1);
 
         const currentEnv = config.environmentRef.current;
-        if (currentEnv === Environment.Production && !result.isError && FirebaseService.isFirebaseConfigured()) {
+        if (currentEnv === Environment.Production && FirebaseService.isFirebaseConfigured()) {
             try {
                 await FirebaseService.saveLogToFirebase(result);
                 result.savedToDb = true;

@@ -1,0 +1,173 @@
+/* Theme overrides for light mode (class-based) */
+
+:root {
+  color-scheme: dark;
+}
+
+html.light {
+  color-scheme: light;
+  --light-bg: #f5f7fb;
+  --light-surface: #ffffff;
+  --light-surface-2: #f1f5f9;
+  --light-surface-3: #e8eef6;
+  --light-border: #d7e0ec;
+  --light-border-strong: #c7d3e3;
+  --light-text: #0f172a;
+  --light-text-2: #1f2937;
+  --light-text-3: #334155;
+  --light-text-4: #64748b;
+  --light-accent: #0ea5e9;
+}
+
+html.light body {
+  background-color: var(--light-bg);
+  color: var(--light-text);
+}
+
+html.light body::before {
+  background:
+    radial-gradient(1200px 600px at 12% -10%, rgba(14, 165, 233, 0.16), transparent 60%),
+    radial-gradient(900px 500px at 88% -12%, rgba(56, 189, 248, 0.12), transparent 55%),
+    radial-gradient(700px 500px at 50% 120%, rgba(148, 163, 184, 0.10), transparent 50%);
+}
+
+html.light ::-webkit-scrollbar-track {
+  background: #e5eaf2;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: #c7d3e3;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+html.light select option {
+  background-color: var(--light-surface);
+  color: var(--light-text);
+}
+
+html.light select,
+html.light input,
+html.light textarea {
+  color-scheme: light;
+}
+
+/* Tailwind utility overrides for light mode */
+html.light [class*="bg-black"] { background-color: var(--light-surface) !important; }
+html.light [class*="bg-slate-9"] { background-color: var(--light-surface) !important; }
+html.light [class*="bg-slate-8"] { background-color: var(--light-surface-2) !important; }
+html.light [class*="bg-slate-7"] { background-color: var(--light-surface-3) !important; }
+html.light [class*="bg-slate-6"] { background-color: #dde7f3 !important; }
+html.light [class*="bg-slate-5"] { background-color: #e7eef7 !important; }
+html.light [class*="bg-slate-100"] { background-color: #ececec !important; }
+html.light [class*="bg-slate-900"] { background-color: #fcfcfc !important; }
+
+html.light [class*="text-white"] { color: var(--light-text) !important; }
+html.light [class*="text-black"] { color: var(--light-text) !important; }
+html.light [class*="text-slate-9"] { color: #0b1220 !important; }
+html.light [class*="text-slate-8"] { color: #111827 !important; }
+html.light [class*="text-slate-7"] { color: #1f2937 !important; }
+html.light [class*="text-slate-6"] { color: #334155 !important; }
+html.light [class*="text-slate-5"] { color: #475569 !important; }
+html.light [class*="text-slate-4"] { color: #64748b !important; }
+html.light [class*="text-slate-3"] { color: #64748b !important; }
+html.light [class*="text-slate-2"] { color: #475569 !important; }
+html.light [class*="text-slate-1"] { color: #334155 !important; }
+html.light [class*="text-slate-0"] { color: #1f2937 !important; }
+html.light [class*="text-slate-50"] { color: #0f172a !important; }
+html.light [class*="text-slate-100"] { color: #111827 !important; }
+html.light [class*="text-slate-200"] { color: #1f2937 !important; }
+html.light [class*="text-slate-300"] { color: #334155 !important; }
+html.light [class*="text-slate-400"] { color: #475569 !important; }
+html.light [class*="text-sky-9"] { color: #0b4a6f !important; }
+html.light [class*="text-sky-8"] { color: #0c4a6e !important; }
+html.light [class*="text-sky-7"] { color: #0f4c81 !important; }
+html.light [class*="text-sky-6"] { color: #0369a1 !important; }
+html.light [class*="text-sky-5"] { color: #0284c7 !important; }
+html.light [class*="text-sky-4"] { color: #0ea5e9 !important; }
+html.light [class*="text-sky-3"] { color: #0284c7 !important; }
+html.light [class*="text-sky-2"] { color: #0369a1 !important; }
+html.light [class*="text-sky-1"] { color: #0f4c81 !important; }
+html.light [class*="text-sky-0"] { color: #0b4a6f !important; }
+html.light [class*="text-sky-50"] { color: #0b4a6f !important; }
+html.light [class*="text-sky-100"] { color: #0c4a6e !important; }
+html.light [class*="text-sky-200"] { color: #075985 !important; }
+html.light [class*="text-sky-300"] { color: #0369a1 !important; }
+html.light [class*="text-sky-400"] { color: #0284c7 !important; }
+html.light [class*="text-sky-500"] { color: #0ea5e9 !important; }
+html.light [class*="text-red-9"] { color: #7f1d1d !important; }
+html.light [class*="text-red-8"] { color: #7f1d1d !important; }
+html.light [class*="text-red-7"] { color: #991b1b !important; }
+html.light [class*="text-red-6"] { color: #b91c1c !important; }
+html.light [class*="text-red-5"] { color: #dc2626 !important; }
+html.light [class*="text-red-4"] { color: #ef4444 !important; }
+html.light [class*="text-red-3"] { color: #b91c1c !important; }
+html.light [class*="text-red-2"] { color: #991b1b !important; }
+html.light [class*="text-red-1"] { color: #7f1d1d !important; }
+html.light [class*="text-red-0"] { color: #7f1d1d !important; }
+html.light [class*="text-red-50"] { color: #7f1d1d !important; }
+html.light [class*="text-red-100"] { color: #991b1b !important; }
+html.light [class*="text-red-200"] { color: #b91c1c !important; }
+html.light [class*="text-red-300"] { color: #dc2626 !important; }
+html.light [class*="text-red-400"] { color: #ef4444 !important; }
+html.light [class*="text-red-500"] { color: #dc2626 !important; }
+html.light [class*="text-amber-9"] { color: #7c2d12 !important; }
+html.light [class*="text-amber-8"] { color: #7c2d12 !important; }
+html.light [class*="text-amber-7"] { color: #9a3412 !important; }
+html.light [class*="text-amber-6"] { color: #b45309 !important; }
+html.light [class*="text-amber-5"] { color: #d97706 !important; }
+html.light [class*="text-amber-4"] { color: #b45309 !important; }
+html.light [class*="text-amber-3"] { color: #9a3412 !important; }
+html.light [class*="text-amber-2"] { color: #7c2d12 !important; }
+html.light [class*="text-amber-1"] { color: #7c2d12 !important; }
+html.light [class*="text-amber-0"] { color: #7c2d12 !important; }
+html.light [class*="text-amber-50"] { color: #7c2d12 !important; }
+html.light [class*="text-amber-100"] { color: #92400e !important; }
+html.light [class*="text-amber-200"] { color: #b45309 !important; }
+html.light [class*="text-amber-300"] { color: #d97706 !important; }
+html.light [class*="text-amber-400"] { color: #b45309 !important; }
+html.light [class*="text-amber-500"] { color: #d97706 !important; }
+
+html.light [class*="border-slate-9"] { border-color: var(--light-border) !important; }
+html.light [class*="border-slate-8"] { border-color: var(--light-border) !important; }
+html.light [class*="border-slate-7"] { border-color: var(--light-border-strong) !important; }
+html.light [class*="border-slate-6"] { border-color: var(--light-border-strong) !important; }
+html.light [class*="border-slate-5"] { border-color: var(--light-border) !important; }
+
+html.light [class*="shadow"] { box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08) !important; }
+
+/* Sky backgrounds tuned for light mode (dark text on light accents) */
+html.light [class*="bg-sky-9"] { background-color: #e0f2fe !important; }
+html.light [class*="bg-sky-8"] { background-color: #e0f2fe !important; }
+html.light [class*="bg-sky-7"] { background-color: #dbeafe !important; }
+html.light [class*="bg-sky-6"] { background-color: #dbeafe !important; }
+html.light [class*="bg-sky-5"] { background-color: #e0f2fe !important; }
+html.light [class*="bg-sky-4"] { background-color: #e0f2fe !important; }
+html.light [class*="bg-sky-3"] { background-color: #e6f4ff !important; }
+html.light [class*="bg-sky-2"] { background-color: #eff6ff !important; }
+html.light [class*="bg-sky-1"] { background-color: #f0f9ff !important; }
+html.light [class*="bg-sky-0"] { background-color: #f0f9ff !important; }
+html.light [class*="bg-sky-50"] { background-color: #f0f9ff !important; }
+html.light [class*="bg-sky-100"] { background-color: #e0f2fe !important; }
+html.light [class*="bg-sky-200"] { background-color: #bae6fd !important; }
+html.light [class*="bg-sky-300"] { background-color: #7dd3fc !important; }
+html.light [class*="bg-sky-400"] { background-color: #38bdf8 !important; }
+html.light [class*="bg-sky-500"] { background-color: #7dd3fc !important; }
+html.light [class*="bg-red-9"] { background-color: #fee2e2 !important; }
+html.light [class*="bg-red-8"] { background-color: #fee2e2 !important; }
+html.light [class*="bg-red-7"] { background-color: #fecaca !important; }
+html.light [class*="bg-red-6"] { background-color: #fecaca !important; }
+html.light [class*="bg-red-5"] { background-color: #fee2e2 !important; }
+html.light [class*="bg-red-4"] { background-color: #fee2e2 !important; }
+html.light [class*="bg-red-3"] { background-color: #ffe4e6 !important; }
+html.light [class*="bg-red-2"] { background-color: #fff1f2 !important; }
+html.light [class*="bg-red-1"] { background-color: #fff5f5 !important; }
+html.light [class*="bg-red-0"] { background-color: #fff5f5 !important; }
+html.light [class*="bg-red-50"] { background-color: #fff5f5 !important; }
+html.light [class*="bg-red-100"] { background-color: #fee2e2 !important; }
+html.light [class*="bg-red-200"] { background-color: #fecaca !important; }
+html.light [class*="bg-red-300"] { background-color: #fca5a5 !important; }
+html.light [class*="bg-red-400"] { background-color: #f87171 !important; }
+html.light [class*="bg-red-500"] { background-color: #fca5a5 !important; }

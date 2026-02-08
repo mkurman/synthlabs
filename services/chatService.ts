@@ -1,10 +1,15 @@
-import { ExternalProvider, ChatMessage, ApiType, ProviderType } from '../types';
+import { ExternalProvider, ApiType, ProviderType } from '../types';
+import type { ChatMessage, ChatUsageSummary } from '../types';
 import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 import { ToolExecutor } from './toolService';
 import { ChatRole } from '../interfaces/enums';
+import { isBackendAiAvailable, streamChatViaBackend } from './api/backendAiClient';
+import { ContextManager, ContextCompactionConfig, ContextStatus, SummarizationCallback } from './contextManager';
+import { extractMessageParts } from '../utils/thinkTagParser';
 
-export type { ChatMessage };
+export type { ChatMessage, ChatUsageSummary };
+export type { ContextStatus, SummarizationCallback };
 
 export interface ToolCall {
     id: string;
@@ -16,9 +21,47 @@ export class ChatService {
     private toolExecutor: ToolExecutor;
     private history: ChatMessage[] = [];
     private readonly maxHistory = 200;
+    private contextManager: ContextManager;
+    private contextCompactionEnabled: boolean = true;
 
-    constructor(toolExecutor: ToolExecutor) {
+    constructor(toolExecutor: ToolExecutor, modelId?: string) {
         this.toolExecutor = toolExecutor;
+        this.contextManager = new ContextManager(modelId || 'gpt-4');
+    }
+
+    /**
+     * Update the model for context management.
+     */
+    public setModel(modelId: string): void {
+        this.contextManager.setModel(modelId);
+    }
+
+    /**
+     * Update context compaction configuration.
+     */
+    public setContextConfig(config: Partial<ContextCompactionConfig>): void {
+        this.contextManager.setConfig(config);
+    }
+
+    /**
+     * Enable/disable context compaction.
+     */
+    public setContextCompactionEnabled(enabled: boolean): void {
+        this.contextCompactionEnabled = enabled;
+    }
+
+    /**
+     * Get current context status.
+     */
+    public getContextStatus(): ContextStatus {
+        return this.contextManager.getContextStatus(this.history);
+    }
+
+    /**
+     * Get the context manager instance.
+     */
+    public getContextManager(): ContextManager {
+        return this.contextManager;
     }
 
     public getHistory(): ChatMessage[] {
@@ -188,8 +231,56 @@ ${JSON.stringify(definitions, null, 2)}
         modelConfig: { provider: ExternalProvider | ProviderType.Gemini, model: string, apiKey?: string, customBaseUrl?: string, apiType?: ApiType },
         includeTools: boolean,
         onChunk: (chunk: string, accumulated: string, usage?: any) => void,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        onSummarizationStatus?: SummarizationCallback
     ): Promise<string> {
+        // Update context manager with current model
+        this.contextManager.setModel(modelConfig.model);
+
+        // Check if context compaction is needed and perform it
+        if (this.contextCompactionEnabled) {
+            const compactionResult = await this.contextManager.compactIfNeeded(
+                this.history,
+                // Summarization function - creates a quick summarization call
+                async (prompt: string) => {
+                    const summaryMessages = [
+                        { role: 'system', content: 'You are a helpful assistant that creates concise summaries of conversations.' },
+                        { role: 'user', content: prompt }
+                    ];
+
+                    let summaryText = '';
+                    const settings = SettingsService.getSettings();
+                    const customEndpoint = modelConfig.customBaseUrl || settings.customEndpointUrl;
+
+                    // Use a simpler call for summarization
+                    await import('./externalApiService').then(m => m.callExternalApi({
+                        provider: modelConfig.provider as ExternalProvider,
+                        model: modelConfig.model,
+                        apiKey: modelConfig.apiKey || SettingsService.getApiKey(modelConfig.provider),
+                        apiType: ApiType.Chat,
+                        customBaseUrl: customEndpoint,
+                        systemPrompt: summaryMessages[0].content,
+                        userPrompt: summaryMessages[1].content,
+                        messages: summaryMessages,
+                        stream: false,
+                        structuredOutput: false,
+                        generationParams: { maxTokens: 1000, temperature: 0.3 }
+                    })).then(response => {
+                        summaryText = response?.content || response?.text || String(response);
+                    });
+
+                    return summaryText;
+                },
+                onSummarizationStatus
+            );
+
+            if (compactionResult.wasCompacted) {
+                console.log(`[ChatService] Context compacted: ${compactionResult.originalTokens} -> ${compactionResult.finalTokens} tokens, removed ${compactionResult.removedMessages} messages`);
+                // Update internal history with compacted messages
+                this.history = compactionResult.messages;
+            }
+        }
+
         const systemPrompt = this.buildSystemPrompt();
 
         // Flatten history into the "User Prompt" for now
@@ -198,13 +289,16 @@ ${JSON.stringify(definitions, null, 2)}
             if (msg.role === ChatRole.Tool) {
                 conversationText += `<tool_response>\n${msg.content}\n</tool_response>\n`;
             } else if (msg.role === ChatRole.Model) {
-                if (msg.reasoning) conversationText += `<think>${msg.reasoning}</think>\n`;
+                // Extract reasoning and clean content using unified utility
+                // Priority: reasoning_content > <think> tags > reasoning field
+                const parts = extractMessageParts(msg);
+                if (parts.reasoning) conversationText += `<think>${parts.reasoning}</think>\n`;
                 if (msg.toolCalls && msg.toolCalls.length > 0) {
                     msg.toolCalls.forEach(tc => {
                         conversationText += `<tool_call>{"name": "${tc.name}", "arguments": ${JSON.stringify(tc.args)}}</tool_call>\n`;
                     });
                 }
-                conversationText += `${msg.content}\n`;
+                conversationText += `${parts.content}\n`;
             } else {
                 conversationText += `User: ${msg.content}\n`;
             }
@@ -262,6 +356,59 @@ ${JSON.stringify(definitions, null, 2)}
             const defaultGenerationParams = settings.defaultGenerationParams;
             const generationParams = defaultGenerationParams;
 
+            // Try to use backend AI streaming if available
+            const useBackend = await isBackendAiAvailable();
+            if (useBackend && customEndpoint) {
+                try {
+                    const result = await streamChatViaBackend({
+                        provider: config.provider as ExternalProvider,
+                        model: config.model,
+                        apiKey: config.apiKey,
+                        baseUrl: customEndpoint,
+                        messages: messages as Array<{ role: string; content: string | null; tool_calls?: unknown[]; tool_call_id?: string }>,
+                        tools: tools,
+                        generationParams: generationParams,
+                        onChunk: (chunk, accumulated, thinking, content, toolCalls, usage) => {
+                            // For native tool calls, we need to inject them into the accumulated text
+                            // so that ChatService.parseResponse can find them
+                            let effectiveAccumulated = accumulated;
+
+                            // If we have native tool calls, format them as XML so the parser can handle them
+                            if (toolCalls && toolCalls.length > 0) {
+                                const toolCallsXml = toolCalls.map(tc => {
+                                    const args = typeof tc.arguments === 'string'
+                                        ? tc.arguments
+                                        : JSON.stringify(tc.arguments);
+                                    return `<tool_call>{"id":"${tc.id}","name":"${tc.name}","arguments":${args}}</tool_call>`;
+                                }).join('\n');
+                                effectiveAccumulated = (content || accumulated) + '\n' + toolCallsXml;
+                            }
+
+                            onChunk(chunk, effectiveAccumulated, usage);
+                        },
+                        signal: abortSignal,
+                    });
+
+                    // If result has tool calls but no content, format them for the final response
+                    if (result.toolCalls && result.toolCalls.length > 0 && !result.content) {
+                        const toolCallsXml = result.toolCalls.map(tc => {
+                            const args = typeof tc.arguments === 'string'
+                                ? tc.arguments
+                                : JSON.stringify(tc.arguments);
+                            return `<tool_call>{"id":"${tc.id}","name":"${tc.name}","arguments":${args}}</tool_call>`;
+                        }).join('\n');
+                        // Send a final chunk with the tool calls
+                        onChunk('', toolCallsXml, null);
+                    }
+
+                    return '';
+                } catch (backendError) {
+                    console.warn('[chatService] Backend AI failed, falling back to direct call:', backendError);
+                    // Fall through to direct call
+                }
+            }
+
+            // Fallback to direct API call
             await import('./externalApiService').then(m => m.callExternalApi({
                 provider: config.provider as ExternalProvider,
                 model: config.model,

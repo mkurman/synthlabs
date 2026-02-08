@@ -1,12 +1,12 @@
 import { useCallback } from 'react';
 
 import { DataTransformService } from '../services/dataTransformService';
-import { AppMode } from '../interfaces/enums';
+import { CreatorMode } from '../interfaces/enums';
 import type { HuggingFaceConfig } from '../types';
 
 interface UseRowContentOptions {
     hfConfig: HuggingFaceConfig;
-    appMode: AppMode;
+    appMode: CreatorMode;
 }
 
 export function useRowContent({ hfConfig, appMode }: UseRowContentOptions) {

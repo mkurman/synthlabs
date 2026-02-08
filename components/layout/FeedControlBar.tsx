@@ -1,5 +1,5 @@
-import { LayoutDashboard, List, Terminal, AlertCircle, Eye } from 'lucide-react';
-import { ViewMode, LogFilter } from '../../interfaces/enums';
+import { LayoutDashboard, List, Terminal, AlertCircle, Eye, LayoutGrid, Table2, Layers } from 'lucide-react';
+import { ViewMode, LogFilter, FeedDisplayMode } from '../../interfaces/enums';
 
 interface FeedControlBarProps {
   viewMode: ViewMode;
@@ -7,10 +7,12 @@ interface FeedControlBarProps {
   hasInvalidLogs: boolean;
   showLatestOnly: boolean;
   feedPageSize: number;
+  feedDisplayMode: FeedDisplayMode;
   onViewModeChange: (mode: ViewMode) => void;
   onLogFilterChange: (filter: LogFilter) => void;
   onShowLatestOnlyChange: (show: boolean) => void;
   onFeedPageSizeChange: (size: number) => void;
+  onFeedDisplayModeChange: (mode: FeedDisplayMode) => void;
 }
 
 export default function FeedControlBar({
@@ -19,23 +21,25 @@ export default function FeedControlBar({
   hasInvalidLogs,
   showLatestOnly,
   feedPageSize,
+  feedDisplayMode,
   onViewModeChange,
   onLogFilterChange,
   onShowLatestOnlyChange,
-  onFeedPageSizeChange
+  onFeedPageSizeChange,
+  onFeedDisplayModeChange
 }: FeedControlBarProps) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
       {/* Left side controls */}
       <div className="flex items-center gap-3">
         {/* View Mode Switcher */}
-        <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
+        <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-lg border border-slate-800/70">
           <button
             onClick={() => onViewModeChange(ViewMode.Feed)}
             className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all ${
               viewMode === ViewMode.Feed
-                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-                : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                ? 'bg-sky-600 text-white shadow-lg shadow-sky-500/20'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
             }`}
           >
             <List className="w-3.5 h-3.5" /> Feed
@@ -44,8 +48,8 @@ export default function FeedControlBar({
             onClick={() => onViewModeChange(ViewMode.Analytics)}
             className={`px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all ${
               viewMode === ViewMode.Analytics
-                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-                : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                ? 'bg-sky-600 text-white shadow-lg shadow-sky-500/20'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
             }`}
           >
             <LayoutDashboard className="w-3.5 h-3.5" /> Analytics
@@ -54,13 +58,13 @@ export default function FeedControlBar({
 
         {/* Log Filter Buttons (Feed Mode Only) */}
         {viewMode === ViewMode.Feed && (
-          <div className="flex items-center gap-1 bg-slate-900/50 p-1 rounded-lg border border-slate-800">
+          <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-lg border border-slate-800/70">
             <button
               onClick={() => onLogFilterChange(LogFilter.Live)}
               className={`px-2 py-1 rounded-md text-[10px] font-bold flex items-center gap-1.5 transition-all ${
                 logFilter === LogFilter.Live 
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
-                  : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                  ? 'bg-sky-600 text-white shadow-lg shadow-sky-500/20' 
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
               }`}
             >
               <Terminal className="w-3 h-3" /> Live
@@ -72,7 +76,7 @@ export default function FeedControlBar({
                   ? 'bg-rose-600 text-white shadow-lg shadow-rose-500/20'
                   : hasInvalidLogs
                     ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20 hover:text-rose-300 hover:bg-rose-500/20'
-                    : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
               }`}
             >
               <AlertCircle className="w-3 h-3" /> Invalid
@@ -85,24 +89,63 @@ export default function FeedControlBar({
           <button
             onClick={() => onShowLatestOnlyChange(!showLatestOnly)}
             className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold uppercase transition-all border ${
-              showLatestOnly 
-                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' 
-                : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700'
+              showLatestOnly
+                ? 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                : 'bg-slate-950/70 text-slate-400 border-slate-800/70 hover:border-slate-700/70'
             }`}
           >
             <Eye className="w-3 h-3" /> Latest only
           </button>
+        )}
+
+        {/* Feed Display Mode Selector */}
+        {viewMode === ViewMode.Feed && (
+          <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-lg border border-slate-800/70">
+            <button
+              onClick={() => onFeedDisplayModeChange(FeedDisplayMode.Default)}
+              className={`p-1.5 rounded-md transition-all ${
+                feedDisplayMode === FeedDisplayMode.Default
+                  ? 'bg-slate-800/70 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+              }`}
+              title="Full View"
+            >
+              <Layers className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => onFeedDisplayModeChange(FeedDisplayMode.List)}
+              className={`p-1.5 rounded-md transition-all ${
+                feedDisplayMode === FeedDisplayMode.List
+                  ? 'bg-slate-800/70 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+              }`}
+              title="List View"
+            >
+              <Table2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => onFeedDisplayModeChange(FeedDisplayMode.Cards)}
+              className={`p-1.5 rounded-md transition-all ${
+                feedDisplayMode === FeedDisplayMode.Cards
+                  ? 'bg-slate-800/70 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+              }`}
+              title="Compact Cards"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+          </div>
         )}
       </div>
 
       {/* Right side controls */}
       {viewMode === ViewMode.Feed && (
         <div className="flex items-center gap-2">
-          <label className="text-[10px] font-bold text-slate-500 uppercase">Page Size</label>
+          <label className="text-[10px] font-bold text-slate-400 uppercase">Page Size</label>
           <select
             value={feedPageSize}
             onChange={(e) => onFeedPageSizeChange(Number(e.target.value))}
-            className="bg-slate-900 border border-slate-700 text-xs text-slate-300 rounded-lg px-2 py-1 outline-none focus:border-indigo-500"
+            className="bg-slate-950/70 border border-slate-700/70 text-xs text-slate-200 rounded-lg px-2 py-1 outline-none focus:border-sky-500"
           >
             <option value="5">5</option>
             <option value="25">25</option>

@@ -1,10 +1,10 @@
 import React from 'react';
 import { Layers, RefreshCcw } from 'lucide-react';
-import { AppMode, DataSource } from '../../interfaces/enums';
+import { CreatorMode, DataSource } from '../../interfaces/enums';
 import { HuggingFaceConfig } from '../../types';
 
 interface ConversationRewritePanelProps {
-    appMode: AppMode;
+    appMode: CreatorMode;
     dataSourceMode: DataSource;
     conversationRewriteMode: boolean;
     onConversationRewriteModeChange: (enabled: boolean) => void;
@@ -22,13 +22,13 @@ export default function ConversationRewritePanel({
     hfConfig,
     onHfConfigChange
 }: ConversationRewritePanelProps) {
-    if ((appMode !== AppMode.Converter && appMode !== AppMode.Generator)
+    if ((appMode !== CreatorMode.Converter && appMode !== CreatorMode.Generator)
         || (dataSourceMode !== DataSource.HuggingFace && dataSourceMode !== DataSource.Manual)) {
         return null;
     }
 
     return (
-        <div className="mt-4 pt-4 border-t border-slate-700">
+        <div className="mt-4 pt-4 border-t border-slate-700/70">
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                     <RefreshCcw className="w-4 h-4 text-amber-400" />
@@ -42,7 +42,7 @@ export default function ConversationRewritePanel({
                             onDisableUserAgent();
                         }
                     }}
-                    className={`w-10 h-5 rounded-full transition-all relative ${conversationRewriteMode ? 'bg-amber-600' : 'bg-slate-700'}`}
+                    className={`w-10 h-5 rounded-full transition-all relative ${conversationRewriteMode ? 'bg-amber-600' : 'bg-slate-800/70'}`}
                 >
                     <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${conversationRewriteMode ? 'left-5' : 'left-0.5'}`} />
                 </button>
@@ -54,7 +54,7 @@ export default function ConversationRewritePanel({
                         User messages and final answers are preserved unchanged.
                     </p>
                     <div className="flex items-center gap-3">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                        <label className="text-[10px] text-slate-300 font-bold uppercase flex items-center gap-1">
                             <Layers className="w-3 h-3" /> Max Traces
                         </label>
                         <input
@@ -65,10 +65,10 @@ export default function ConversationRewritePanel({
                                 ...hfConfig,
                                 maxMultiTurnTraces: e.target.value === '' ? undefined : Math.max(0, parseInt(e.target.value) || 0)
                             })}
-                            className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-amber-500 outline-none"
+                            className="w-20 bg-slate-950 border border-slate-700/70 rounded px-2 py-1 text-xs text-slate-100 focus:border-amber-500 outline-none"
                             placeholder="All"
                         />
-                        <span className="text-[10px] text-slate-500">Empty = process all traces</span>
+                        <span className="text-[10px] text-slate-400">Empty = process all traces</span>
                     </div>
                 </div>
             )}

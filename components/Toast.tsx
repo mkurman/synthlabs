@@ -31,7 +31,7 @@ const ToastItem: React.FC<{ toast: ToastType }> = ({ toast: item }) => {
             style={{ minWidth: '300px', maxWidth: '450px' }}
         >
             <div className="flex-shrink-0">{icons[item.type] || icons.info}</div>
-            <div className="flex-1 text-sm font-medium text-slate-200">{item.message}</div>
+            <div className="flex-1 text-sm font-medium text-slate-100">{item.message}</div>
             <button
                 onClick={() => {
                     setIsExiting(true);
@@ -39,7 +39,7 @@ const ToastItem: React.FC<{ toast: ToastType }> = ({ toast: item }) => {
                 }}
                 className="p-1 rounded-md hover:bg-white/5 transition-colors"
             >
-                <X className="w-4 h-4 text-slate-400" />
+                <X className="w-4 h-4 text-slate-300" />
             </button>
         </div>
     );

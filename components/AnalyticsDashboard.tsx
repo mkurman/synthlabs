@@ -71,7 +71,7 @@ export default function AnalyticsDashboard({ logs }: AnalyticsDashboardProps) {
 
   if (!stats) {
       return (
-          <div className="h-96 flex flex-col items-center justify-center text-slate-500 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/30">
+          <div className="h-96 flex flex-col items-center justify-center text-slate-400 border-2 border-dashed border-slate-800/70 rounded-xl bg-slate-950/60">
               <BarChart3 className="w-12 h-12 mb-4 opacity-50" />
               <p>No data available for analytics yet.</p>
               <p className="text-xs">Start generation to see metrics.</p>
@@ -86,38 +86,38 @@ export default function AnalyticsDashboard({ logs }: AnalyticsDashboardProps) {
     <div className="space-y-6 animate-in fade-in duration-500">
         {/* KPI Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                <div className="flex items-center gap-2 text-slate-500 mb-2">
-                    <Activity className="w-4 h-4 text-indigo-400" />
+            <div className="bg-slate-950/70 border border-slate-800/70 p-4 rounded-xl">
+                <div className="flex items-center gap-2 text-slate-400 mb-2">
+                    <Activity className="w-4 h-4 text-sky-400" />
                     <span className="text-xs font-bold uppercase">Throughput</span>
                 </div>
                 <div className="text-2xl font-mono font-bold text-white">
-                    {stats.avgTps.toFixed(1)} <span className="text-sm text-slate-600 font-sans">tok/s</span>
+                    {stats.avgTps.toFixed(1)} <span className="text-sm text-slate-500 font-sans">tok/s</span>
                 </div>
             </div>
             
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                <div className="flex items-center gap-2 text-slate-500 mb-2">
-                    <Clock className="w-4 h-4 text-pink-400" />
+            <div className="bg-slate-950/70 border border-slate-800/70 p-4 rounded-xl">
+                <div className="flex items-center gap-2 text-slate-400 mb-2">
+                    <Clock className="w-4 h-4 text-amber-400" />
                     <span className="text-xs font-bold uppercase">Avg Latency</span>
                 </div>
                 <div className="text-2xl font-mono font-bold text-white">
-                    {(stats.avgLatency / 1000).toFixed(2)} <span className="text-sm text-slate-600 font-sans">s</span>
+                    {(stats.avgLatency / 1000).toFixed(2)} <span className="text-sm text-slate-500 font-sans">s</span>
                 </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                <div className="flex items-center gap-2 text-slate-500 mb-2">
+            <div className="bg-slate-950/70 border border-slate-800/70 p-4 rounded-xl">
+                <div className="flex items-center gap-2 text-slate-400 mb-2">
                     <FileText className="w-4 h-4 text-emerald-400" />
                     <span className="text-xs font-bold uppercase">Avg Tokens</span>
                 </div>
                 <div className="text-2xl font-mono font-bold text-white">
-                    {Math.round(stats.avgTokens)} <span className="text-sm text-slate-600 font-sans">/gen</span>
+                    {Math.round(stats.avgTokens)} <span className="text-sm text-slate-500 font-sans">/gen</span>
                 </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-                <div className="flex items-center gap-2 text-slate-500 mb-2">
+            <div className="bg-slate-950/70 border border-slate-800/70 p-4 rounded-xl">
+                <div className="flex items-center gap-2 text-slate-400 mb-2">
                     <Zap className="w-4 h-4 text-amber-400" />
                     <span className="text-xs font-bold uppercase">Total API Req</span>
                 </div>
@@ -129,8 +129,8 @@ export default function AnalyticsDashboard({ logs }: AnalyticsDashboardProps) {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Latency Distribution Chart */}
-            <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-xl flex flex-col h-80">
-                <h3 className="text-sm font-bold text-slate-400 uppercase mb-6 flex items-center gap-2">
+            <div className="bg-slate-950/70 border border-slate-800/70 p-5 rounded-xl flex flex-col h-80">
+                <h3 className="text-sm font-bold text-slate-300 uppercase mb-6 flex items-center gap-2">
                     <BarChart3 className="w-4 h-4" /> Latency Distribution
                 </h3>
                 {/* 
@@ -143,12 +143,12 @@ export default function AnalyticsDashboard({ logs }: AnalyticsDashboardProps) {
                         const height = maxBucket > 0 ? (count / maxBucket) * 100 : 0;
                         return (
                             <div key={label} className="flex-1 flex flex-col justify-end items-center group h-full">
-                                <div className="w-full bg-slate-800 rounded-t relative hover:bg-slate-700 transition-colors flex items-end justify-center" style={{ height: `${height}%`, minHeight: count > 0 ? '4px' : '0' }}>
+                                <div className="w-full bg-slate-900/60 rounded-t relative hover:bg-slate-800/70 transition-colors flex items-end justify-center" style={{ height: `${height}%`, minHeight: count > 0 ? '4px' : '0' }}>
                                     <span className="absolute -top-6 text-xs font-mono text-white opacity-0 group-hover:opacity-100 transition-opacity">
                                         {count}
                                     </span>
                                 </div>
-                                <span className="text-[10px] text-slate-500 mt-2 font-mono h-4">{label}</span>
+                                <span className="text-[10px] text-slate-400 mt-2 font-mono h-4">{label}</span>
                             </div>
                         )
                     })}
@@ -156,20 +156,20 @@ export default function AnalyticsDashboard({ logs }: AnalyticsDashboardProps) {
             </div>
 
             {/* Provider Breakdown */}
-            <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-xl h-80 overflow-y-auto">
-                <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+            <div className="bg-slate-950/70 border border-slate-800/70 p-5 rounded-xl h-80 overflow-y-auto">
+                <h3 className="text-sm font-bold text-slate-300 uppercase mb-4 flex items-center gap-2">
                     <PieChart className="w-4 h-4" /> Model Distribution
                 </h3>
                 <div className="space-y-3">
                     {(Object.entries(stats.providerCounts) as [string, number][]).sort((a,b) => b[1] - a[1]).map(([model, count]) => (
                         <div key={model} className="group">
                             <div className="flex justify-between text-xs mb-1">
-                                <span className="text-slate-300 font-medium">{model}</span>
-                                <span className="text-slate-500 font-mono">{count} ({Math.round(count / logs.length * 100)}%)</span>
+                                <span className="text-slate-200 font-medium">{model}</span>
+                                <span className="text-slate-400 font-mono">{count} ({Math.round(count / logs.length * 100)}%)</span>
                             </div>
-                            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div className="w-full h-2 bg-slate-900/60 rounded-full overflow-hidden">
                                 <div 
-                                    className="h-full bg-indigo-500 group-hover:bg-indigo-400 transition-all" 
+                                    className="h-full bg-sky-500 group-hover:bg-sky-400 transition-all" 
                                     style={{ width: `${(count / logs.length) * 100}%` }}
                                 />
                             </div>

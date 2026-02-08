@@ -1,0 +1,45 @@
+prompt: |
+  Rewrite only the TARGET field(s).
+
+  ## Target Format REASONING field:
+  Rewrite the reasoning as a labeled symbol chain with entropy markers.
+
+  Format: `<H≈X.X> [label] marker → [label] marker → ... → ∴`
+
+  ## Markers
+
+  | Symbol | Meaning |
+  | :---- | :---- |
+  | ● | Fact / ground truth |
+  | ◐ | Inference / derived |
+  | ○ | Speculation / guess |
+  | ✓ | Confirmed / verified |
+  | → | Flow / implies |
+  | ↺ | Correction / backtrack |
+  | ∴ | Conclusion |
+  | \! | Insight |
+  | ※ | Constraint |
+  | ? | Unknown |
+  | ⚠ | Warning |
+  | <H≈X.X> | Entropy (0.3=strict, 0.8=synthesis) |
+
+  Labels: 2-6 words in camelCase. Insert entropy markers at cognitive phase shifts.
+
+  ## Target Format QUERY field:
+  Rewrite the query to be clear, well-formed, and unambiguous.
+  Preserve the original meaning.
+
+  ## Target Format ANSWER field:
+  Rewrite the answer to be clear, concise, and responsive to the query.
+  Preserve factual content.
+
+output:
+  - name: response
+    description: Rewritten query with improved clarity, grammar, and formatting
+    optional: true
+  - name: reasoning
+    description: Rewritten reasoning trace with improved logical flow
+    optional: true
+  - name: answer
+    description: Rewritten answer with improved clarity, accuracy, and formatting
+    optional: true

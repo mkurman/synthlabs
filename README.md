@@ -161,6 +161,9 @@ Seamless Firebase/Firestore support:
    ```bash
    # Using npm
    npm run dev
+
+   # Frontend only (custom port)
+   npm run dev:client -- --port 3000
    
    # OR using Bun (standalone)
    bun run bun:dev
@@ -168,6 +171,48 @@ Seamless Firebase/Firestore support:
 
 4. **Open in browser:**
    Navigate to `http://localhost:3000`
+
+### Backend (optional)
+
+This repo includes a minimal Node backend to handle Firebase Admin operations.
+
+1. **Set backend env vars (example):**
+   ```env
+   VITE_BACKEND_URL=http://localhost:8787
+   VITE_SESSION_LIST_PAGE_SIZE=50
+   VITE_SESSION_LIST_TTL_MS=60000
+   VITE_SESSION_MAX_TEXT_LEN=10000
+   SESSION_LIST_TTL_MS=60000
+   BACKEND_JSON_LIMIT_MB=10
+   FIREBASE_PROJECT_ID=your-project-id
+   FIREBASE_CLIENT_EMAIL=your-service-account-email
+   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+   ```
+
+2. **Run (Vite + backend):**
+   ```bash
+   npm run dev
+   ```
+
+The frontend will use the backend when `VITE_BACKEND_URL` is set.
+
+#### Port conflicts & multiple instances
+
+If `8787` is busy (e.g., multiple desktop windows), the backend will auto-increment to the next available port (default range: `8787-8797`).
+The frontend will probe `/health` and attach to the first healthy backend in that range.
+
+Optional envs:
+```env
+# Backend port behavior
+PORT=8787
+PORT_RANGE=10
+
+# Frontend discovery (falls back to VITE_BACKEND_URL if healthy)
+VITE_BACKEND_PORT_START=8787
+VITE_BACKEND_PORT_RANGE=10
+```
+
+You can also set these in `.env.example` and copy to `.env.local`.
 
 ### Bun Commands
 
