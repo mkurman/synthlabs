@@ -31,7 +31,8 @@ export const registerListSessionsRoute = (app, { repo }) => {
                 maxRows = '',
                 appMode = '',
                 engineMode = '',
-                model = ''
+                model = '',
+                tags = ''
             } = _req.query || {};
 
             const searchTerm = String(search).trim().toLowerCase();
@@ -39,8 +40,9 @@ export const registerListSessionsRoute = (app, { repo }) => {
             const onlyLogs = String(onlyWithLogs) === '1';
             const minRowsNum = minRows !== '' ? Number(minRows) : null;
             const maxRowsNum = maxRows !== '' ? Number(maxRows) : null;
+            const tagFilter = tags ? String(tags).split(',').filter(Boolean) : [];
 
-            const isFiltering = Boolean(search || onlyWithLogs || minRows !== '' || maxRows !== '' || appMode || engineMode || model);
+            const isFiltering = Boolean(search || onlyWithLogs || minRows !== '' || maxRows !== '' || appMode || engineMode || model || tagFilter.length > 0);
             let currentCursor = cursor || null;
             let hasMore = false;
 
@@ -74,6 +76,11 @@ export const registerListSessionsRoute = (app, { repo }) => {
                     if (modelTerm) {
                         const modelValue = (session.config?.externalModel || session.externalModel || '').toLowerCase();
                         if (!modelValue.includes(modelTerm)) return false;
+                    }
+                    if (tagFilter.length > 0) {
+                        const sessionTagNames = (session.tags || []).map(t => t.name?.toLowerCase() || '').filter(Boolean);
+                        const hasMatchingTag = tagFilter.some(tag => sessionTagNames.includes(tag.toLowerCase()));
+                        if (!hasMatchingTag) return false;
                     }
                     return true;
                 });

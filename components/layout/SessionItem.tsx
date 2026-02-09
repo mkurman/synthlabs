@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Edit2, Check, X } from 'lucide-react';
-import { SessionData } from '../../types';
-import { AppView } from '../../interfaces/enums';
+import { Edit2, Check, X, Tag } from 'lucide-react';
+import { SessionData } from '../../interfaces';
 import { SessionStatus } from '../../interfaces/enums/SessionStatus';
 
 interface SessionItemProps {
@@ -53,13 +52,13 @@ export default function SessionItem({
         }
     };
 
-    const modeColor = session.mode === AppView.Creator ? 'sky' : 'amber';
     const statusColor = {
-        [SessionStatus.Active]: 'green',
+        [SessionStatus.Idle]: 'slate',
+        [SessionStatus.Running]: 'green',
         [SessionStatus.Paused]: 'yellow',
-        [SessionStatus.Completed]: 'blue',
-        [SessionStatus.Archived]: 'slate'
-    }[session.status];
+        [SessionStatus.Stopped]: 'red',
+        [SessionStatus.Error]: 'red'
+    }[session.status] || 'slate';
 
     const formatDate = (timestamp: number) => {
         const date = new Date(timestamp);
@@ -77,13 +76,16 @@ export default function SessionItem({
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     };
 
+    const firstTag = session.tags?.[0];
+    const additionalTagsCount = (session.tags?.length || 0) - 1;
+
     return (
         <button
             onClick={onSelect}
             className={`
                 w-full p-3 rounded-lg text-left transition-all group
                 ${isActive
-                    ? `bg-slate-900/60 border border-${modeColor}-500/40 ring-1 ring-${modeColor}-500/20`
+                    ? 'bg-slate-900/60 border border-sky-500/40 ring-1 ring-sky-500/20'
                     : 'bg-slate-950/60 border border-transparent hover:bg-slate-950/60 hover:border-slate-800/70'
                 }
             `}
@@ -130,13 +132,23 @@ export default function SessionItem({
             </div>
 
             <div className="flex items-center gap-2 text-[10px]">
-                <span className={`px-1.5 py-0.5 rounded bg-${modeColor}-600/30 text-${modeColor}-400 font-medium`}>
-                    {session.mode}
-                </span>
                 <span className={`px-1.5 py-0.5 rounded bg-${statusColor}-600/30 text-${statusColor}-400`}>
                     {session.status}
                 </span>
                 <span className="text-slate-400">{session.itemCount} items</span>
+                {firstTag && (
+                    <>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-900/40 text-blue-300 rounded border border-blue-800/50">
+                            <Tag className="w-3 h-3" />
+                            {firstTag.name}
+                        </span>
+                        {additionalTagsCount > 0 && (
+                            <span className="text-slate-500">
+                                +{additionalTagsCount}
+                            </span>
+                        )}
+                    </>
+                )}
             </div>
 
             <div className="mt-1 text-[10px] text-slate-400">

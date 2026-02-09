@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { User, Bot, Brain, Check, X, Sparkles, Trash2, ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { User, Bot, Brain, Check, X, Sparkles, Trash2, ChevronLeft, ChevronRight, MessageCircle, Filter } from 'lucide-react';
 import { VerifierItem } from '../../../../types';
 import { VerifierRewriteTarget, ChatRole } from '../../../../interfaces/enums';
 import AutoResizeTextarea from '../../../AutoResizeTextarea';
@@ -13,6 +13,8 @@ interface DetailConversationSectionProps {
     expandedMessages: Set<number>;
     messageRewriteDropdownIndex: number | null;
     messageRewriteStates: Record<string, { field: VerifierRewriteTarget; content: string; reasoningContent?: string }>;
+    activeMessageIndex?: number;
+    onActiveMessageChange?: (index: number) => void;
     onEditStart: (field: string, value: string, messageIndex?: number) => void;
     onEditChange: (value: string) => void;
     onEditSave: () => void;
@@ -32,6 +34,8 @@ export const DetailConversationSection: React.FC<DetailConversationSectionProps>
     expandedMessages,
     messageRewriteDropdownIndex,
     messageRewriteStates,
+    activeMessageIndex: controlledActiveIndex,
+    onActiveMessageChange,
     onEditStart,
     onEditChange,
     onEditSave,
@@ -45,8 +49,25 @@ export const DetailConversationSection: React.FC<DetailConversationSectionProps>
     onDeleteMessageFromHere,
     setMessageRewriteDropdownIndex
 }) => {
-    // Move all hooks to the top - no early returns before hooks!
-    const [activeMessageIndex, setActiveMessageIndex] = useState(0);
+    const [internalActiveIndex, setInternalActiveIndex] = useState(0);
+    const [showOnlyAssistant, setShowOnlyAssistant] = useState(false);
+    const activeMessageIndex = controlledActiveIndex ?? internalActiveIndex;
+    const setActiveMessageIndex = onActiveMessageChange ?? setInternalActiveIndex;
+
+    const visibleIndices = useMemo(() => {
+        if (!item.messages) return [];
+        if (!showOnlyAssistant) return item.messages.map((_, idx) => idx);
+        return item.messages
+            .map((msg, idx) => ({ msg, idx }))
+            .filter(({ msg }) => msg.role !== ChatRole.User)
+            .map(({ idx }) => idx);
+    }, [item.messages, showOnlyAssistant]);
+
+    useEffect(() => {
+        if (visibleIndices.length === 0) return;
+        const targetIndex = visibleIndices[0];
+        setActiveMessageIndex(targetIndex);
+    }, [item.id, showOnlyAssistant]);
 
     // Guard clauses after all hooks
     const hasMessages = !!item.messages && item.messages.length > 0;
@@ -71,15 +92,15 @@ export const DetailConversationSection: React.FC<DetailConversationSectionProps>
     const msgContent = hasActiveMsg ? (parsed.hasThinkTags ? parsed.answer : activeMsg!.content) : '';
 
     const goToPrevious = () => {
-        if (activeMessageIndex > 0) {
-            setActiveMessageIndex(activeMessageIndex - 1);
-        }
+        const currentVisibleIdx = visibleIndices.indexOf(activeMessageIndex);
+        const newIdx = currentVisibleIdx <= 0 ? visibleIndices.length - 1 : currentVisibleIdx - 1;
+        setActiveMessageIndex(visibleIndices[newIdx]);
     };
 
     const goToNext = () => {
-        if (activeMessageIndex < item.messages!.length - 1) {
-            setActiveMessageIndex(activeMessageIndex + 1);
-        }
+        const currentVisibleIdx = visibleIndices.indexOf(activeMessageIndex);
+        const newIdx = currentVisibleIdx >= visibleIndices.length - 1 ? 0 : currentVisibleIdx + 1;
+        setActiveMessageIndex(visibleIndices[newIdx]);
     };
 
     // Keyboard navigation with Tab key
@@ -118,6 +139,8 @@ export const DetailConversationSection: React.FC<DetailConversationSectionProps>
             {/* Message Navigation Tabs */}
             <div className="flex items-center gap-2 p-1 bg-slate-900/50 rounded-lg overflow-x-auto">
                 {item.messages!.map((msg, idx) => {
+                    const isVisible = visibleIndices.includes(idx);
+                    if (!isVisible) return null;
                     const isActive = idx === activeMessageIndex;
                     const isMsgUser = msg.role === ChatRole.User;
                     return (
@@ -140,25 +163,37 @@ export const DetailConversationSection: React.FC<DetailConversationSectionProps>
                         </button>
                     );
                 })}
+                <div className="flex-1" />
+                <button
+                    onClick={() => setShowOnlyAssistant(!showOnlyAssistant)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-all whitespace-nowrap ${
+                        showOnlyAssistant
+                            ? 'bg-purple-600 text-white shadow-md'
+                            : 'text-slate-400 hover:bg-slate-800'
+                    }`}
+                    title={showOnlyAssistant ? 'Show all messages' : 'Show only assistant messages'}
+                >
+                    <Filter className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">{showOnlyAssistant ? 'Assistant Only' : 'All Messages'}</span>
+                </button>
             </div>
 
             {/* Navigation Controls */}
             <div className="flex items-center justify-between px-1">
                 <button
                     onClick={goToPrevious}
-                    disabled={activeMessageIndex === 0}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
                 >
                     <ChevronLeft className="w-4 h-4" />
                     Previous
                 </button>
                 <span className="text-xs text-slate-500 font-mono">
-                    Message {activeMessageIndex + 1} of {item.messages!.length}
+                    Message {visibleIndices.indexOf(activeMessageIndex) + 1} of {visibleIndices.length}
+                    {showOnlyAssistant && <span className="text-purple-400 ml-1">(filtered)</span>}
                 </span>
                 <button
                     onClick={goToNext}
-                    disabled={activeMessageIndex === item.messages!.length - 1}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
                 >
                     Next
                     <ChevronRight className="w-4 h-4" />

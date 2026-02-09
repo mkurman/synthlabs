@@ -1,6 +1,7 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { DeepConfig, DetectedColumns, GenerationParams, HuggingFaceConfig, ProgressStats, UserAgentConfig } from '../../types';
 import { ApiType, CreatorMode, DataSource, DeepPhase, EngineMode, Environment, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
+import { SessionTag } from '../../interfaces/services/SessionConfig';
 import { OutputField } from '../../interfaces/types/PromptSchema';
 import { OutputFieldName } from '../../interfaces/enums/OutputFieldName';
 import { PrefetchState } from '../../services/hfPrefetchService';
@@ -13,6 +14,7 @@ import { ModelListProvider } from '../../types';
 
 export interface SidebarPanelProps {
     sessionName: string | null;
+    sessionUid?: string | null;
     environment: Environment;
     onLoadSession: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onSaveSession: () => void;
@@ -140,6 +142,10 @@ export interface SidebarPanelProps {
     sourceFileInputRef: RefObject<HTMLInputElement | null>;
     onLoadSourceFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onDataSourceModeChange: (mode: DataSource) => void;
+    tags?: SessionTag[];
+    availableTags?: SessionTag[];
+    onTagsChange?: (tags: SessionTag[]) => void;
+    onCreateTag?: (name: string) => Promise<SessionTag | null>;
 }
 
 export default function SidebarPanel(props: SidebarPanelProps) {
@@ -269,13 +275,19 @@ export default function SidebarPanel(props: SidebarPanelProps) {
         converterInputText,
         onConverterInputChange,
         sourceFileInputRef,
-        onLoadSourceFile
+        onLoadSourceFile,
+        sessionUid,
+        tags,
+        availableTags,
+        onTagsChange,
+        onCreateTag
     } = props;
 
     return (
         <div className="lg:col-span-4 space-y-6">
             <SidebarSessionPanel
                 sessionName={sessionName}
+                sessionUid={sessionUid}
                 environment={environment}
                 onLoadSession={onLoadSession}
                 onSaveSession={onSaveSession}
@@ -306,6 +318,10 @@ export default function SidebarPanel(props: SidebarPanelProps) {
                 onSyncAll={onSyncAll}
                 onRetryAllFailed={onRetryAllFailed}
                 onStartNewSession={onStartNewSession}
+                tags={tags}
+                availableTags={availableTags}
+                onTagsChange={onTagsChange}
+                onCreateTag={onCreateTag}
             />
 
             <SidebarEnginePanel

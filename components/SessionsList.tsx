@@ -12,6 +12,7 @@ interface SessionsListProps {
     onSessionSelect: (id: string) => void;
     onSessionRename: (id: string, newName: string) => void;
     onSessionDelete: (id: string) => void;
+    onOpenInVerifier?: (id: string) => void;
     filters: SessionListFilters;
     onFiltersChange: (filters: SessionListFilters) => void;
     onLoadMore?: () => void;
@@ -26,6 +27,7 @@ export default function SessionsList({
     onSessionSelect,
     onSessionRename,
     onSessionDelete,
+    onOpenInVerifier,
     filters,
     onFiltersChange,
     onLoadMore,
@@ -249,6 +251,7 @@ export default function SessionsList({
                             onSelect={onSessionSelect}
                             onRename={onSessionRename}
                             onDelete={onSessionDelete}
+                            onOpenInVerifier={onOpenInVerifier}
                         />
                     ))
                 )}

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { VerifierItem } from '../../../types';
-import { VerifierRewriteTarget, VerifierDataSource } from '../../../interfaces/enums';
+import { VerifierRewriteTarget, VerifierDataSource, ChatRole } from '../../../interfaces/enums';
 import { parseThinkTagsForDisplay } from '../../../utils/thinkTagParser';
 import DetailPanelHeader from './components/DetailPanelHeader';
 import DetailSectionNav from './components/DetailSectionNav';
@@ -78,8 +78,29 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
     const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set());
     const [showRewriteDropdown, setShowRewriteDropdown] = useState(false);
     const [messageRewriteDropdownIndex, setMessageRewriteDropdownIndex] = useState<number | null>(null);
+    const [activeMessageIndex, setActiveMessageIndex] = useState(0);
 
     const isEditing = !!editState;
+
+    const rewriteCallbacksRef = useRef({
+        onRewriteField,
+        onRewriteMessage,
+        onRewriteMessageReasoning,
+        onRewriteMessageBoth,
+        onRewriteQuery
+    });
+    rewriteCallbacksRef.current = {
+        onRewriteField,
+        onRewriteMessage,
+        onRewriteMessageReasoning,
+        onRewriteMessageBoth,
+        onRewriteQuery
+    };
+
+    const isRewritingRef = useRef(false);
+    useEffect(() => {
+        isRewritingRef.current = !!rewritingField;
+    }, [rewritingField]);
     // Ensure isMultiTurn is strictly boolean and handles edge cases
     const isMultiTurn = !!(item?.isMultiTurn && Array.isArray(item.messages) && item.messages.length > 0);
 
@@ -112,10 +133,10 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
         }
     }, [item?.id, isMultiTurn]);
 
-    // Keyboard shortcuts (ESC, Ctrl+S, Tab)
+    // Keyboard shortcuts (ESC, Ctrl+S, Tab, Ctrl+R/A/B for rewrite)
     useEffect(() => {
         if (!isOpen) return;
-        
+
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 if (editState) {
@@ -134,21 +155,97 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
             }
             if (e.key === 'Tab' && !editState) {
                 e.preventDefault();
-                const sections: Array<'query' | 'reasoning' | 'answer' | 'conversation'> = 
-                    isMultiTurn 
-                        ? ['conversation', 'query'] 
+                const sections: Array<'query' | 'reasoning' | 'answer' | 'conversation'> =
+                    isMultiTurn
+                        ? ['conversation', 'query']
                         : ['query', 'reasoning', 'answer'];
                 const currentIdx = sections.indexOf(activeSection);
-                const nextIndex = e.shiftKey 
+                const nextIndex = e.shiftKey
                     ? (currentIdx - 1 + sections.length) % sections.length
                     : (currentIdx + 1) % sections.length;
                 setActiveSection(sections[nextIndex]);
+            }
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'a' || e.key === 'A') && !editState && item && !isAutoscoring && onAutoscore) {
+                e.preventDefault();
+                onAutoscore(item.id);
+            }
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'c' || e.key === 'C') && !editState && item) {
+                e.preventDefault();
+                if (isMultiTurn) {
+                    const msg = item.messages?.[activeMessageIndex];
+                    if (msg) {
+                        const isUser = msg.role === ChatRole.User;
+                        const updates: Partial<VerifierItem> = {};
+                        const newMessages = [...item.messages!];
+                        if (isUser) {
+                            newMessages[activeMessageIndex] = { ...msg, content: '' };
+                        } else {
+                            newMessages[activeMessageIndex] = { ...msg, content: '', reasoning_content: undefined };
+                        }
+                        updates.messages = newMessages;
+                        onSave(item, updates);
+                    }
+                } else {
+                    const updates: Partial<VerifierItem> = {};
+                    if (activeSection === 'query') {
+                        updates.query = '';
+                    } else if (activeSection === 'reasoning') {
+                        updates.reasoning = '';
+                        updates.reasoning_content = '';
+                    } else if (activeSection === 'answer') {
+                        updates.answer = '';
+                    }
+                    if (Object.keys(updates).length > 0) {
+                        onSave(item, updates);
+                    }
+                }
+            }
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !editState && item && !isRewritingRef.current) {
+                const callbacks = rewriteCallbacksRef.current;
+                if (isMultiTurn) {
+                    const msg = item.messages?.[activeMessageIndex];
+                    if (!msg) return;
+                    const isUser = msg.role === ChatRole.User;
+
+                    if (e.key === 'q' || e.key === 'Q') {
+                        e.preventDefault();
+                        if (isUser) {
+                            callbacks.onRewriteQuery?.(item, activeMessageIndex);
+                        }
+                    } else if (e.key === 'r' || e.key === 'R') {
+                        e.preventDefault();
+                        if (!isUser) {
+                            callbacks.onRewriteMessageReasoning?.(item, activeMessageIndex);
+                        }
+                    } else if (e.key === 'a' || e.key === 'A') {
+                        e.preventDefault();
+                        if (!isUser) {
+                            callbacks.onRewriteMessage?.(item, activeMessageIndex);
+                        }
+                    } else if (e.key === 'b' || e.key === 'B') {
+                        e.preventDefault();
+                        if (!isUser) {
+                            callbacks.onRewriteMessageBoth?.(item, activeMessageIndex);
+                        }
+                    }
+                } else {
+                    if (e.key === 'r' || e.key === 'R') {
+                        e.preventDefault();
+                        callbacks.onRewriteField(item, VerifierRewriteTarget.Reasoning);
+                    } else if (e.key === 'a' || e.key === 'A') {
+                        e.preventDefault();
+                        callbacks.onRewriteField(item, VerifierRewriteTarget.Answer);
+                    } else if (e.key === 'b' || e.key === 'B') {
+                        e.preventDefault();
+                        callbacks.onRewriteField(item, VerifierRewriteTarget.Both);
+                    }
+                }
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, editState, activeSection, item, isMultiTurn]);
+    }, [isOpen, editState, activeSection, item, isMultiTurn, rewritingField, activeMessageIndex]);
 
     // Focus trap
     useEffect(() => {
@@ -370,6 +467,8 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                             onEditChange={(val) => setEditState(prev => prev ? { ...prev, value: val } : null)}
                             onEditSave={handleSaveEdit}
                             onEditCancel={() => setEditState(null)}
+                            onRewrite={() => onRewriteField(item, VerifierRewriteTarget.Answer)}
+                            isRewriting={rewritingField?.itemId === item.id && rewritingField?.field === VerifierRewriteTarget.Answer}
                             rewritingField={rewritingField}
                             streamingContent={streamingContent}
                         />
@@ -382,6 +481,8 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                             expandedMessages={expandedMessages}
                             messageRewriteDropdownIndex={messageRewriteDropdownIndex}
                             messageRewriteStates={messageRewriteStates}
+                            activeMessageIndex={activeMessageIndex}
+                            onActiveMessageChange={setActiveMessageIndex}
                             onEditStart={handleStartEdit}
                             onEditChange={(val) => setEditState(prev => prev ? { ...prev, value: val } : null)}
                             onEditSave={handleSaveEdit}
@@ -403,6 +504,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                     sessionUid={item.sessionUid}
                     isDeep={!!item.deepMetadata}
                     hasUnsavedChanges={item.hasUnsavedChanges}
+                    isMultiTurn={isMultiTurn}
                 />
             </div>
         </div>,

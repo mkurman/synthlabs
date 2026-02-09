@@ -846,7 +846,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
                     {/* Only render text bubble if there is content or if it's currently streaming */}
                     {(msg.content?.trim() || (isStreaming && idx === messages.length - 1)) && (
-                        <div className={`relative group px-4 py-2 rounded-2xl text-[14px] break-words break-all ${isUser
+                        <div className={`relative group px-4 py-2 rounded-2xl text-[14px] break-words break-all w-full ${isUser
                             ? 'bg-blue-600 text-white whitespace-pre-wrap'
                             : 'bg-slate-900/60 text-slate-100 border border-slate-700/70'
                             }`}>
@@ -868,8 +868,8 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                             });
                                         }}
                                         className={`p-1.5 rounded-md transition-all duration-150 hover:scale-110 active:scale-95 flex items-center gap-1 ${copiedMsgIdx === idx
-                                                ? 'text-emerald-400 bg-emerald-500/10'
-                                                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                                            ? 'text-emerald-400 bg-emerald-500/10'
+                                            : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
                                             }`}
                                         title={copiedMsgIdx === idx ? "Copied!" : "Copy"}
                                     >
@@ -1046,13 +1046,12 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
             {/* Summarization Status Banner */}
             {summarizationStatus !== 'idle' && (
-                <div className={`px-4 py-2 flex items-center gap-2 border-b transition-all duration-300 ${
-                    summarizationStatus === 'error'
+                <div className={`px-4 py-2 flex items-center gap-2 border-b transition-all duration-300 ${summarizationStatus === 'error'
                         ? 'bg-rose-950/30 border-rose-900/50'
                         : summarizationStatus === 'complete'
                             ? 'bg-emerald-950/30 border-emerald-900/50'
                             : 'bg-sky-950/30 border-sky-900/50'
-                }`}>
+                    }`}>
                     {summarizationStatus === 'starting' && (
                         <>
                             <Loader2 size={14} className="text-sky-400 animate-spin" />

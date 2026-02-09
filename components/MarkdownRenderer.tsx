@@ -11,11 +11,12 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
     return (
         <div className={`markdown-content ${className}`}>
             <style>{`
+                .markdown-content { word-wrap: break-word; overflow-wrap: break-word; }
                 .markdown-content h1 { font-size: 1.25rem; font-weight: bold; margin-top: 1rem; margin-bottom: 0.5rem; color: #f1f5f9; }
                 .markdown-content h2 { font-size: 1.125rem; font-weight: bold; margin-top: 0.75rem; margin-bottom: 0.5rem; color: #f1f5f9; }
                 .markdown-content h3 { font-size: 1rem; font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.25rem; color: #e2e8f0; }
                 .markdown-content h4 { font-size: 0.875rem; font-weight: 600; margin-top: 0.5rem; margin-bottom: 0.25rem; color: #e2e8f0; }
-                .markdown-content p { margin-bottom: 0.5rem; line-height: 1.625; }
+                .markdown-content p { margin-bottom: 0.5rem; line-height: 1.625; word-wrap: break-word; overflow-wrap: break-word; }
                 .markdown-content p:last-child { margin-bottom: 0; }
                 .markdown-content ul { list-style-type: disc; padding-left: 1rem; margin-bottom: 0.5rem; }
                 .markdown-content ol { list-style-type: decimal; padding-left: 1rem; margin-bottom: 0.5rem; }

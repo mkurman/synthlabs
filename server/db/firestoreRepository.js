@@ -31,7 +31,14 @@ export class FirestoreRepository extends DbRepository {
         }
         const pageLimit = Math.min(limit, 200);
         const snapshot = await query.limit(pageLimit).get();
-        const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const items = await Promise.all(
+            snapshot.docs.map(async (doc) => {
+                const sessionData = { id: doc.id, ...doc.data() };
+                const sessionUid = sessionData.sessionUid || doc.id;
+                sessionData.tags = await this.getSessionTags(sessionUid);
+                return sessionData;
+            })
+        );
         const hasMore = snapshot.docs.length === pageLimit;
         const nextCursor = hasMore && snapshot.docs.length > 0
             ? snapshot.docs[snapshot.docs.length - 1].id
@@ -383,6 +390,107 @@ export class FirestoreRepository extends DbRepository {
     }
 
     async runMigrations() {
-        // No-op for Firestore — schema-less
+    }
+
+    async listTags() {
+        const snapshot = await this.db.collection('session_tags').orderBy('createdAt').get();
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    }
+
+    async getTagByName(name) {
+        const snapshot = await this.db.collection('session_tags')
+            .where('name', '==', name.toLowerCase())
+            .limit(1)
+            .get();
+        if (snapshot.empty) return null;
+        const doc = snapshot.docs[0];
+        return { id: doc.id, ...doc.data() };
+    }
+
+    async createTag(data) {
+        const docRef = await this.db.collection('session_tags').add(data);
+        return { id: docRef.id, ...data };
+    }
+
+    async deleteTag(uid) {
+        const snapshot = await this.db.collection('session_tags')
+            .where('uid', '==', uid)
+            .limit(1)
+            .get();
+        if (!snapshot.empty) {
+            await snapshot.docs[0].ref.delete();
+        }
+        const mappingsSnapshot = await this.db.collection('session_tag_mappings')
+            .where('tagUid', '==', uid)
+            .get();
+        const batch = this.db.batch();
+        mappingsSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+    }
+
+    async getSessionTags(sessionUid) {
+        const mappingsSnapshot = await this.db.collection('session_tag_mappings')
+            .where('sessionUid', '==', sessionUid)
+            .orderBy('createdAt', 'asc')
+            .get();
+        if (mappingsSnapshot.empty) return [];
+
+        const mappings = mappingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (mappings.length === 0) return [];
+
+        const tags = [];
+        for (const mapping of mappings) {
+            const tagSnapshot = await this.db.collection('session_tags')
+                .where('uid', '==', mapping.tagUid)
+                .limit(1)
+                .get();
+            if (!tagSnapshot.empty) {
+                const doc = tagSnapshot.docs[0];
+                tags.push({ id: doc.id, ...doc.data() });
+            }
+        }
+        return tags;
+    }
+
+    async addTagsToSession(sessionUid, tagUids) {
+        const batch = this.db.batch();
+        const now = new Date().toISOString();
+        
+        for (const tagUid of tagUids) {
+            const existingSnapshot = await this.db.collection('session_tag_mappings')
+                .where('sessionUid', '==', sessionUid)
+                .where('tagUid', '==', tagUid)
+                .limit(1)
+                .get();
+            
+            if (existingSnapshot.empty) {
+                const docRef = this.db.collection('session_tag_mappings').doc();
+                batch.set(docRef, {
+                    sessionUid,
+                    tagUid,
+                    createdAt: now
+                });
+            }
+        }
+        
+        await batch.commit();
+    }
+
+    async removeTagsFromSession(sessionUid, tagUids) {
+        const batch = this.db.batch();
+        
+        for (const tagUid of tagUids) {
+            const snapshot = await this.db.collection('session_tag_mappings')
+                .where('sessionUid', '==', sessionUid)
+                .where('tagUid', '==', tagUid)
+                .limit(1)
+                .get();
+            
+            if (!snapshot.empty) {
+                batch.delete(snapshot.docs[0].ref);
+            }
+        }
+        
+        await batch.commit();
     }
 }

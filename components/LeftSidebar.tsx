@@ -16,6 +16,7 @@ interface LeftSidebarProps {
     onSessionSelect: (id: string) => void;
     onSessionRename: (id: string, newName: string) => void;
     onSessionDelete: (id: string) => void;
+    onOpenInVerifier?: (id: string) => void;
     onRefreshSessions: () => void;
     onOpenSettings: () => void;
     currentEnvironment: Environment;
@@ -37,6 +38,7 @@ export default function LeftSidebar({
     onSessionSelect,
     onSessionRename,
     onSessionDelete,
+    onOpenInVerifier,
     onRefreshSessions,
     onOpenSettings,
     currentEnvironment,
@@ -111,6 +113,7 @@ export default function LeftSidebar({
                     onSessionSelect={onSessionSelect}
                     onSessionRename={onSessionRename}
                     onSessionDelete={onSessionDelete}
+                    onOpenInVerifier={onOpenInVerifier}
                     filters={sessionFilters}
                     onFiltersChange={onSessionFiltersChange}
                     onLoadMore={onLoadMoreSessions}
