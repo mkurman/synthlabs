@@ -10,6 +10,7 @@ import { OllamaModel } from '../services/externalApiService';
 import { ModelListProvider, SynthLogItem, StreamingConversationState } from '../types';
 import { OutputField } from '../interfaces/types/PromptSchema';
 import { OutputFieldName } from '../interfaces/enums/OutputFieldName';
+import { SessionTag } from '../interfaces/services/SessionConfig';
 
 interface UseAppViewPropsInput {
     sessionName: string | null;
@@ -178,8 +179,11 @@ interface UseAppViewPropsInput {
     rewritingField?: { itemId: string; field: LogFeedRewriteTarget } | null;
     streamingContent?: string;
     onRewrite?: (itemId: string, field: LogFeedRewriteTarget) => void;
-    // Score change prop
     onScoreChange?: (itemId: string, score: number) => void;
+    tags?: SessionTag[];
+    availableTags?: SessionTag[];
+    onTagsChange?: (tags: SessionTag[]) => void;
+    onCreateTag?: (name: string) => Promise<SessionTag | null>;
 }
 
 export function useAppViewProps(input: UseAppViewPropsInput) {
@@ -315,7 +319,12 @@ export function useAppViewProps(input: UseAppViewPropsInput) {
         onConverterInputChange,
         sourceFileInputRef: input.sourceFileInputRef,
         onLoadSourceFile: input.onLoadSourceFile,
-        onDataSourceModeChange: input.onDataSourceModeChange
+        onDataSourceModeChange: input.onDataSourceModeChange,
+        sessionUid: input.sessionUid,
+        tags: input.tags,
+        availableTags: input.availableTags,
+        onTagsChange: input.onTagsChange,
+        onCreateTag: input.onCreateTag
     }), [input, onConverterInputChange]);
 
     const feedProps: FeedAnalyticsPanelProps = useMemo(() => ({

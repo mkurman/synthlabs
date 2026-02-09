@@ -127,7 +127,13 @@ export class CockroachRepository extends DbRepository {
         }
 
         const result = await this.pool.query(query, params);
-        const items = result.rows.map(r => this._toSession(r));
+        const items = await Promise.all(
+            result.rows.map(async (r) => {
+                const session = this._toSession(r);
+                session.tags = await this.getSessionTags(session.sessionUid || session.id);
+                return session;
+            })
+        );
         const hasMore = items.length === pageLimit;
         const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].id : null;
         return { items, nextCursor, hasMore };
@@ -624,6 +630,94 @@ export class CockroachRepository extends DbRepository {
         return updated;
     }
 
+    // ─── Tags ───────────────────────────────────────────────────
+
+    async listTags() {
+        const result = await this.pool.query(
+            'SELECT id, uid, name, created_at FROM session_tags ORDER BY created_at ASC'
+        );
+        return result.rows.map(row => ({
+            id: row.id,
+            uid: row.uid,
+            name: row.name,
+            createdAt: row.created_at
+        }));
+    }
+
+    async getTagByName(name) {
+        const result = await this.pool.query(
+            'SELECT id, uid, name, created_at FROM session_tags WHERE name = $1',
+            [name.toLowerCase()]
+        );
+        if (result.rows.length === 0) return null;
+        const row = result.rows[0];
+        return {
+            id: row.id,
+            uid: row.uid,
+            name: row.name,
+            createdAt: row.created_at
+        };
+    }
+
+    async createTag(data) {
+        const { uid, name, createdAt } = data;
+        const result = await this.pool.query(
+            'INSERT INTO session_tags (uid, name, created_at) VALUES ($1, $2, $3) RETURNING id, uid, name, created_at',
+            [uid, name, createdAt]
+        );
+        const row = result.rows[0];
+        return {
+            id: row.id,
+            uid: row.uid,
+            name: row.name,
+            createdAt: row.created_at
+        };
+    }
+
+    async deleteTag(uid) {
+        await this.pool.query('DELETE FROM session_tag_mappings WHERE tag_uid = $1', [uid]);
+        await this.pool.query('DELETE FROM session_tags WHERE uid = $1', [uid]);
+    }
+
+    async getSessionTags(sessionUid) {
+        const result = await this.pool.query(
+            `SELECT t.id, t.uid, t.name, t.created_at
+             FROM session_tags t
+             JOIN session_tag_mappings m ON t.uid = m.tag_uid
+             WHERE m.session_uid = $1
+             ORDER BY m.created_at ASC`,
+            [sessionUid]
+        );
+        return result.rows.map(row => ({
+            id: row.id,
+            uid: row.uid,
+            name: row.name,
+            createdAt: row.created_at
+        }));
+    }
+
+    async addTagsToSession(sessionUid, tagUids) {
+        for (const tagUid of tagUids) {
+            try {
+                await this.pool.query(
+                    'INSERT INTO session_tag_mappings (session_uid, tag_uid) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                    [sessionUid, tagUid]
+                );
+            } catch (e) {
+                console.warn(`[addTagsToSession] Failed to add tag ${tagUid} to session ${sessionUid}:`, e.message);
+            }
+        }
+    }
+
+    async removeTagsFromSession(sessionUid, tagUids) {
+        for (const tagUid of tagUids) {
+            await this.pool.query(
+                'DELETE FROM session_tag_mappings WHERE session_uid = $1 AND tag_uid = $2',
+                [sessionUid, tagUid]
+            );
+        }
+    }
+
     // ─── Utility ────────────────────────────────────────────────
 
     async testConnection() {
@@ -636,9 +730,20 @@ export class CockroachRepository extends DbRepository {
     }
 
     async runMigrations() {
-        const sqlPath = path.join(__dirname, 'migrations', '001_initial_schema.sql');
-        const sql = fs.readFileSync(sqlPath, 'utf-8');
-        await this.pool.query(sql);
-        console.log('[CockroachDB] Migrations applied successfully');
+        const migrationsDir = path.join(__dirname, 'migrations');
+        const migrationFiles = ['001_initial_schema.sql', '002_add_tags.sql'];
+
+        for (const filename of migrationFiles) {
+            const sqlPath = path.join(migrationsDir, filename);
+            try {
+                const sql = fs.readFileSync(sqlPath, 'utf-8');
+                await this.pool.query(sql);
+                console.log(`[CockroachDB] Applied migration: ${filename}`);
+            } catch (error) {
+                console.error(`[CockroachDB] Failed to apply migration ${filename}:`, error.message);
+                throw error;
+            }
+        }
+        console.log('[CockroachDB] All migrations applied successfully');
     }
 }

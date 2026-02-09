@@ -1,10 +1,13 @@
 
 import { useState, useRef, useMemo, useCallback, useEffect } from 'react';
+import { Plus } from 'lucide-react';
 import { VerifierItem, ExternalProvider, ProviderType } from '../../../types';
-import { OutputFieldName, StreamingField, VerifierRewriteTarget } from '../../../interfaces/enums';
+import { OutputFieldName, StreamingField, VerifierRewriteTarget, CreatorMode, EngineMode, Environment } from '../../../interfaces/enums';
 import { VerifierPanelTab } from '../../../interfaces/enums/VerifierPanelTab';
 import { VerifierViewMode } from '../../../interfaces/enums/VerifierViewMode';
 import { VerifierDataSource } from '../../../interfaces/enums/VerifierDataSource';
+import { SessionStatus } from '../../../interfaces/enums/SessionStatus';
+import { StorageMode } from '../../../interfaces/enums/StorageMode';
 import * as FirebaseService from '../../../services/firebaseService';
 import * as VerifierRewriterService from '../../../services/verifierRewriterService';
 import { SettingsService } from '../../../services/settingsService';
@@ -26,6 +29,9 @@ import { useVerifierDbActions } from '../../../hooks/useVerifierDbActions';
 import { useVerifierInlineEditing } from '../../../hooks/useVerifierInlineEditing';
 import { useHuggingFaceData } from '../../../hooks/useHuggingFaceData';
 import { useVerifierHfImport } from '../../../hooks/useVerifierHfImport';
+import { useTags } from '../../../hooks/useTags';
+import { useSessionTags } from '../../../hooks/useSessionTags';
+import { SessionTag } from '../../../interfaces/services/SessionConfig';
 import { normalizeImportItem } from '../../../services/verifierImportService';
 import { normalizeItemsReasoning } from '../../../utils/messageNormalizer';
 import ImportTab from '../ImportTab';
@@ -58,9 +64,12 @@ interface VerifierPanelProps {
     onSessionSelect: (session: SessionData) => Promise<void>;
     onJobCreated?: (jobId: string, type: string) => void;
     refreshTrigger?: number;
+    onActiveSessionChange?: (session: { name: string | null; sessionId: string | null; isAllSessionsMode: boolean } | null) => void;
+    onRenameRef?: React.MutableRefObject<((newName: string) => Promise<void>) | null>;
+    initialSessionId?: string | null;
 }
 
-export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen, onChatToggle, onSessionSelect, onJobCreated, refreshTrigger }: VerifierPanelProps) {
+export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen, onChatToggle, onSessionSelect, onJobCreated, refreshTrigger, onActiveSessionChange, onRenameRef, initialSessionId }: VerifierPanelProps) {
     const [data, _setData] = useState<VerifierItem[]>([]);
     
     // Wrapped setData that normalizes reasoning from think tags
@@ -97,6 +106,37 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const [orphanSyncProgress, setOrphanSyncProgress] = useState<FirebaseService.OrphanSyncProgress | null>(null);
     const [selectedSessionFilter, setSelectedSessionFilter] = useState<string>('all'); // 'all', 'current', 'custom', or session ID
     const [customSessionId, setCustomSessionId] = useState('');
+
+    // Session Name State
+    const [activeSessionName, setActiveSessionName] = useState<string | null>(null);
+    const [isAllSessionsMode, setIsAllSessionsMode] = useState(false);
+    const [activeSessionIdForData, setActiveSessionIdForData] = useState<string | null>(null);
+    const hasLoadedInitialSessionRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        if (onActiveSessionChange) {
+            onActiveSessionChange({
+                name: activeSessionName,
+                sessionId: activeSessionIdForData,
+                isAllSessionsMode
+            });
+        }
+    }, [activeSessionName, activeSessionIdForData, isAllSessionsMode, onActiveSessionChange]);
+
+    const { tags: availableTags, createTag } = useTags();
+    const { tags: sessionTags, addTags, removeTags } = useSessionTags(activeSessionIdForData || null);
+    const handleTagsChange = useCallback(async (newTags: SessionTag[]) => {
+        const currentTagUids = sessionTags.map((t: SessionTag) => t.uid);
+        const newTagUids = newTags.map((t: SessionTag) => t.uid);
+        const tagsToRemove = currentTagUids.filter((uid: string) => !newTagUids.includes(uid));
+        const tagsToAdd = newTagUids.filter((uid: string) => !currentTagUids.includes(uid));
+        if (tagsToRemove.length > 0) {
+            await removeTags(tagsToRemove);
+        }
+        if (tagsToAdd.length > 0) {
+            await addTags(tagsToAdd);
+        }
+    }, [sessionTags, addTags, removeTags]);
 
     // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
@@ -165,9 +205,9 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const [showUnsavedOnly, setShowUnsavedOnly] = useState(false);
     const [filterScore, setFilterScore] = useState<number | null>(null); // null = all
 
-    // Export State
-    const [hfToken, setHfToken] = useState('');
-    const [hfRepo, setHfRepo] = useState('');
+    // Export State - initialize from settings
+    const [hfToken, setHfToken] = useState(() => SettingsService.getSettings().huggingFaceToken || '');
+    const [hfRepo, setHfRepo] = useState(() => SettingsService.getSettings().huggingFaceDefaultRepo || '');
     const [hfFormat, setHfFormat] = useState<'jsonl' | 'parquet'>('parquet'); // Default to Parquet
     const [isUploading, setIsUploading] = useState(false);
     const [exportColumns, setExportColumns] = useState<Record<string, boolean>>({});
@@ -415,7 +455,29 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         }
     }, [autoSaveEnabled, dataSource, handleDbUpdate]);
 
-    const { handleDbImport, handleFetchMore } = useVerifierDbImport({
+    const updateSessionNameFromFilter = useCallback((filter: string, sessions: SessionData[]) => {
+        if (filter === 'all') {
+            setActiveSessionName(null);
+            setIsAllSessionsMode(true);
+            setActiveSessionIdForData(null);
+        } else if (filter === 'current') {
+            const session = sessions.find(s => s.sessionUid === currentSessionUid || s.id === currentSessionUid);
+            setActiveSessionName(session?.name || 'Current Session');
+            setIsAllSessionsMode(false);
+            setActiveSessionIdForData(currentSessionUid);
+        } else if (filter === 'custom') {
+            setActiveSessionName(customSessionId || 'Custom Session');
+            setIsAllSessionsMode(false);
+            setActiveSessionIdForData(customSessionId);
+        } else {
+            const session = sessions.find(s => s.id === filter || s.sessionUid === filter);
+            setActiveSessionName(session?.name || 'Unknown Session');
+            setIsAllSessionsMode(false);
+            setActiveSessionIdForData(session?.id || null);
+        }
+    }, [currentSessionUid, customSessionId]);
+
+    const { handleDbImport: originalHandleDbImport, handleFetchMore: originalHandleFetchMore } = useVerifierDbImport({
         currentSessionUid,
         selectedSessionFilter,
         customSessionId,
@@ -435,6 +497,15 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
             setCustomSessionId('');
         }
     });
+
+    const handleDbImport = useCallback(async () => {
+        await originalHandleDbImport();
+        updateSessionNameFromFilter(selectedSessionFilter, availableSessions);
+    }, [originalHandleDbImport, selectedSessionFilter, availableSessions, updateSessionNameFromFilter]);
+
+    const handleFetchMore = useCallback(async (start: number, end: number) => {
+        await originalHandleFetchMore(start, end);
+    }, [originalHandleFetchMore]);
 
     const refreshSessionsList = useCallback(async (): Promise<SessionData[]> => {
         if (!FirebaseService.isFirebaseConfigured()) {
@@ -459,7 +530,75 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         }
         await FirebaseService.saveSessionToFirebase(session, trimmedName);
         setAvailableSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name: trimmedName, updatedAt: Date.now() } : s));
-    }, [availableSessions]);
+        if (activeSessionIdForData === sessionId) {
+            setActiveSessionName(trimmedName);
+        }
+    }, [availableSessions, activeSessionIdForData]);
+
+    const handleRenameActiveSession = useCallback(async (newName: string): Promise<void> => {
+        if (!activeSessionIdForData) {
+            toast.error('No active session to rename');
+            return;
+        }
+        try {
+            await renameSession(activeSessionIdForData, newName);
+            toast.success(`Session renamed to "${newName}"`);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Failed to rename session');
+        }
+    }, [activeSessionIdForData, renameSession]);
+
+    useEffect(() => {
+        if (onRenameRef) {
+            onRenameRef.current = handleRenameActiveSession;
+        }
+        return () => {
+            if (onRenameRef) {
+                onRenameRef.current = null;
+            }
+        };
+    }, [handleRenameActiveSession, onRenameRef]);
+
+    const handleCreateSessionFromItems = useCallback(async (): Promise<void> => {
+        if (data.length === 0) {
+            toast.error('No items to create session from');
+            return;
+        }
+        const newName = prompt('Enter a name for the new session:', `Session from ${data.length} items`);
+        if (!newName || !newName.trim()) return;
+
+        try {
+            const timestamp = Date.now();
+            const newSession: SessionData = {
+                id: `local-${timestamp}`,
+                sessionUid: `local-${timestamp}`,
+                name: newName.trim(),
+                updatedAt: timestamp,
+                itemCount: data.length,
+                status: SessionStatus.Idle,
+                storageMode: StorageMode.Local,
+                version: 1,
+                createdAt: new Date().toISOString(),
+                config: {
+                    appMode: CreatorMode.Generator,
+                    engineMode: EngineMode.Regular,
+                    environment: Environment.Development,
+                    provider: ProviderType.External,
+                    concurrency: 1,
+                    rowsToFetch: data.length,
+                }
+            };
+
+            await FirebaseService.saveSessionToFirebase(newSession, newName.trim());
+            setAvailableSessions(prev => [newSession, ...prev]);
+            setActiveSessionName(newName.trim());
+            setActiveSessionIdForData(newSession.id);
+            setIsAllSessionsMode(false);
+            toast.success(`Created new session "${newName.trim()}" with ${data.length} items`);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Failed to create session');
+        }
+    }, [data]);
 
     const handleLoadSessionById = useCallback(async (sessionId: string): Promise<void> => {
         if (!FirebaseService.isFirebaseConfigured()) {
@@ -474,8 +613,39 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         if (!session) {
             throw new Error(`Session ${sessionId} not found.`);
         }
-        await onSessionSelect(session);
-    }, [availableSessions, onSessionSelect]);
+
+        setIsImporting(true);
+        try {
+            const items = await FirebaseService.fetchAllLogs(100, sessionId, true);
+            if (items.length === 0) {
+                toast.info('No items found in session.');
+            } else {
+                const normalizedItems = items.map(normalizeImportItem);
+                analyzeDuplicates(normalizedItems);
+                setData(normalizedItems);
+                setDataSource(VerifierDataSource.Database);
+                setActiveTab(VerifierPanelTab.Review);
+            }
+
+            setActiveSessionName(session.name);
+            setActiveSessionIdForData(session.id);
+            setIsAllSessionsMode(false);
+            setSelectedSessionFilter(sessionId);
+            setCustomSessionId('');
+            setCurrentPage(1);
+        } finally {
+            setIsImporting(false);
+        }
+    }, [availableSessions]);
+
+    useEffect(() => {
+        if (initialSessionId && hasLoadedInitialSessionRef.current !== initialSessionId) {
+            hasLoadedInitialSessionRef.current = initialSessionId;
+            handleLoadSessionById(initialSessionId).catch(err => {
+                toast.error(`Failed to load session: ${err.message}`);
+            });
+        }
+    }, [initialSessionId]);
 
     const handleLoadSessionRows = useCallback(async (sessionId: string, offset: number, limit: number): Promise<VerifierItem[]> => {
         if (!FirebaseService.isFirebaseConfigured()) {
@@ -839,6 +1009,21 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
             {/* REVIEW TAB */}
             {activeTab === VerifierPanelTab.Review && (
                 <div className="flex-1 flex flex-col gap-4 animate-in fade-in">
+                    {isAllSessionsMode && data.length > 0 && (
+                        <div className="bg-slate-900/60 border border-slate-800/70 rounded-lg p-3 mb-4">
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm text-white">All Sessions View</span>
+                                <button
+                                    onClick={handleCreateSessionFromItems}
+                                    className="flex items-center gap-1 px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/30 text-sky-400 text-xs rounded border border-sky-600/30 transition-colors"
+                                >
+                                    <Plus className="w-3 h-3" />
+                                    Save as New Session
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     <VerifierReviewConfigPanels
                         isRewriterPanelOpen={isRewriterPanelOpen}
                         setIsRewriterPanelOpen={setIsRewriterPanelOpen}

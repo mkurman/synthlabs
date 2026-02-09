@@ -1,25 +1,38 @@
 import React, { useRef } from 'react';
 import { Archive, Bookmark, Upload, Save, CloudDownload, CloudUpload } from 'lucide-react';
 import { Environment } from '../../interfaces/enums';
+import { SessionTag } from '../../interfaces/services/SessionConfig';
+import TagSelector from '../TagSelector';
 
 interface SessionConfigPanelProps {
   sessionName: string | null;
+  sessionUid?: string | null;
   environment: Environment;
   onLoadSession: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onSaveSession: () => void;
   onCloudLoadOpen: () => void;
   onCloudSave: () => void;
+  tags?: SessionTag[];
+  availableTags?: SessionTag[];
+  onTagsChange?: (tags: SessionTag[]) => void;
+  onCreateTag?: (name: string) => Promise<SessionTag | null>;
 }
 
 export default function SessionConfigPanel({
   sessionName,
+  sessionUid,
   environment,
   onLoadSession,
   onSaveSession,
   onCloudLoadOpen,
-  onCloudSave
+  onCloudSave,
+  tags = [],
+  availableTags = [],
+  onTagsChange,
+  onCreateTag
 }: SessionConfigPanelProps) {
   const sessionFileInputRef = useRef<HTMLInputElement>(null);
+  const showTagSelector = sessionUid && onTagsChange;
 
   return (
     <div className="bg-slate-950/70 rounded-xl border border-slate-800/70 p-3 px-4 flex flex-col gap-3 group hover:border-sky-500/30 transition-colors">
@@ -55,6 +68,21 @@ export default function SessionConfigPanel({
           <Save className="w-3 h-3" /> Save File
         </button>
       </div>
+
+      {showTagSelector && (
+        <div className="pt-2 border-t border-slate-800/70">
+          <label className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-1.5 block">
+            Tags
+          </label>
+          <TagSelector
+            availableTags={availableTags}
+            selectedTags={tags}
+            onChange={onTagsChange!}
+            onCreateTag={onCreateTag}
+            placeholder="Add tags..."
+          />
+        </div>
+      )}
 
       {environment === Environment.Production && (
         <div className="flex gap-2 pt-2 border-t border-slate-800/70 animate-in fade-in slide-in-from-top-1">

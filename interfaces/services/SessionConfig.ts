@@ -40,6 +40,7 @@ export interface SessionData {
     version: number;
     /** Verification status for the session */
     verificationStatus?: SessionVerificationStatus;
+    tags?: SessionTag[];
     /** ISO timestamp when session was created */
     createdAt: string;
     /** Unique session identifier for tracking logs */
@@ -49,6 +50,12 @@ export interface SessionData {
     timestamp?: number; // backward compatibility
     /** Session configuration */
     config: SessionConfig;
+}
+
+export interface SessionTag {
+    uid: string;
+    name: string;
+    createdAt?: string;
 }
 
 export interface SessionSummary {

@@ -4,9 +4,11 @@ import { ProgressStats } from '../../types';
 import { DataSource, Environment, CreatorMode } from '../../interfaces/enums';
 import { PrefetchState } from '../../services/hfPrefetchService';
 import { TaskType } from '../../interfaces/enums';
+import { SessionTag } from '../../interfaces/services/SessionConfig';
 
 interface SidebarSessionPanelProps {
     sessionName: string | null;
+    sessionUid?: string | null;
     environment: Environment;
     onLoadSession: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onSaveSession: () => void;
@@ -37,10 +39,15 @@ interface SidebarSessionPanelProps {
     onSyncAll: () => void;
     onRetryAllFailed: () => void;
     onStartNewSession: () => void;
+    tags?: SessionTag[];
+    availableTags?: SessionTag[];
+    onTagsChange?: (tags: SessionTag[]) => void;
+    onCreateTag?: (name: string) => Promise<SessionTag | null>;
 }
 
 export default function SidebarSessionPanel({
     sessionName,
+    sessionUid,
     environment,
     onLoadSession,
     onSaveSession,
@@ -70,17 +77,26 @@ export default function SidebarSessionPanel({
     unsavedCount,
     onSyncAll,
     onRetryAllFailed,
-    onStartNewSession
+    onStartNewSession,
+    tags = [],
+    availableTags = [],
+    onTagsChange,
+    onCreateTag
 }: SidebarSessionPanelProps) {
     return (
         <>
             <SessionConfigPanel
                 sessionName={sessionName}
+                sessionUid={sessionUid}
                 environment={environment}
                 onLoadSession={onLoadSession}
                 onSaveSession={onSaveSession}
                 onCloudLoadOpen={onCloudLoadOpen}
                 onCloudSave={onCloudSave}
+                tags={tags}
+                availableTags={availableTags}
+                onTagsChange={onTagsChange}
+                onCreateTag={onCreateTag}
             />
 
             <ControlPanel

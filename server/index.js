@@ -39,11 +39,19 @@ import { registerGetScoreDistributionRoute } from './routes/sessions/getScoreDis
 import { registerGenerateRoutes } from './routes/ai/generate.js';
 import { registerChatRoutes } from './routes/ai/chat.js';
 import { registerRewriteStreamRoutes } from './routes/ai/rewrite.js';
+import {
+    registerListTagsRoute,
+    registerCreateTagRoute,
+    registerDeleteTagRoute,
+    registerGetSessionTagsRoute,
+    registerAddTagsToSessionRoute,
+    registerRemoveTagsFromSessionRoute
+} from './routes/tags/index.js';
 import { decryptKey } from './utils/keyEncryption.js';
 import { loadConfig } from './utils/backendConfig.js';
 
 const isProd = process.env.NODE_ENV === 'production';
-const defaultPort = isProd ? 8788 : 8787;
+const defaultPort = isProd ? 8900 : 8787;
 const PORT = Number(process.env.PORT || defaultPort);
 const PORT_RANGE = Number(process.env.PORT_RANGE || 10);
 
@@ -116,7 +124,13 @@ const createApp = async () => {
     registerRerunJobRoute(app, { getJob });
     registerGetScoreDistributionRoute(app, { repo });
 
-    // AI streaming routes
+    registerListTagsRoute(app, { repo });
+    registerCreateTagRoute(app, { repo });
+    registerDeleteTagRoute(app, { repo });
+    registerGetSessionTagsRoute(app, { repo });
+    registerAddTagsToSessionRoute(app, { repo });
+    registerRemoveTagsFromSessionRoute(app, { repo });
+
     registerGenerateRoutes(app, { decryptKey });
     registerChatRoutes(app, { decryptKey });
     registerRewriteStreamRoutes(app, { decryptKey });

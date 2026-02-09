@@ -1,15 +1,22 @@
-import { Dispatch, ReactNode, SetStateAction, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { AppMode } from '../interfaces/enums/AppMode';
 import { confirmService } from '../services/confirmService';
 import { Sparkles, ShieldCheck } from 'lucide-react';
+import { SessionTag } from '../interfaces/services/SessionConfig';
+import TagSelector from './TagSelector';
 
 interface ModeNavbarProps {
     currentMode: AppMode;
     onModeChange: (mode: AppMode) => void;
     sessionName: string | null;
-    onSessionNameChange: Dispatch<SetStateAction<string | null>>;
+    onSessionNameChange: (name: string | null) => void | Promise<void>;
     isDirty: boolean;
     jobMonitorBadge?: ReactNode;
+    tags?: SessionTag[];
+    availableTags?: SessionTag[];
+    onTagsChange?: (tags: SessionTag[]) => void;
+    onCreateTag?: (name: string) => Promise<SessionTag | null>;
+    isVerifierAllSessionsMode?: boolean;
 }
 
 export default function ModeNavbar({
@@ -18,7 +25,12 @@ export default function ModeNavbar({
     sessionName,
     onSessionNameChange,
     isDirty,
-    jobMonitorBadge
+    jobMonitorBadge,
+    tags = [],
+    availableTags = [],
+    onTagsChange,
+    onCreateTag,
+    isVerifierAllSessionsMode = false
 }: ModeNavbarProps) {
     const [draftSessionName, setDraftSessionName] = useState<string>(sessionName || '');
 
@@ -66,32 +78,62 @@ export default function ModeNavbar({
                 </button>
             </div>
 
-            {/* Session Name Display */}
-            <div className="flex items-center px-2">
-                <span className="text-slate-300 text-xs uppercase tracking-wider mr-2">Session</span>
-                <input
-                    type="text"
-                    value={draftSessionName}
-                    onChange={(e) => {
-                        const nextName = e.target.value;
-                        setDraftSessionName(nextName);
-                        onSessionNameChange(nextName);
-                    }}
-                    placeholder="Untitled Session"
-                    className="bg-transparent border-b border-transparent hover:border-slate-700/70 focus:border-sky-500 focus:outline-none text-slate-100 text-sm transition-colors py-1 px-1 w-56"
-                    disabled={false}
-                />
-                {isDirty && (
-                    <span className="ml-2 text-[10px] text-amber-300 font-semibold px-2 py-0.5 bg-amber-950/40 rounded-full border border-amber-900/40">
-                        Unsaved
-                    </span>
-                )}
-                {jobMonitorBadge && (
-                    <div className="relative ml-3">
-                        {jobMonitorBadge}
-                    </div>
-                )}
-            </div>
+            {sessionName && (
+                <div className="flex items-center justify-end px-2 w-full">
+                    <span className="text-slate-300 text-xs uppercase tracking-wider mr-2">Session</span>
+                    <input
+                        type="text"
+                        value={draftSessionName}
+                        onChange={(e) => setDraftSessionName(e.target.value)}
+                        onBlur={() => {
+                            const trimmed = draftSessionName.trim();
+                            if (trimmed !== sessionName) {
+                                onSessionNameChange(trimmed);
+                            }
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                const trimmed = draftSessionName.trim();
+                                if (trimmed !== sessionName) {
+                                    onSessionNameChange(trimmed);
+                                }
+                                (e.target as HTMLInputElement).blur();
+                            }
+                        }}
+                        placeholder="Untitled Session"
+                        className="bg-transparent border-b border-transparent hover:border-slate-700/70 focus:border-sky-500 focus:outline-none text-slate-100 text-sm transition-colors py-1 px-1 w-56"
+                        disabled={false}
+                    />
+                    {isDirty && (
+                        <span className="ml-2 text-[10px] text-amber-300 font-semibold px-2 py-0.5 bg-amber-950/40 rounded-full border border-amber-900/40">
+                            Unsaved
+                        </span>
+                    )}
+
+                    {onTagsChange && !isVerifierAllSessionsMode && (
+                        <div className="ml-4 w-100">
+                            <TagSelector
+                                availableTags={availableTags}
+                                selectedTags={tags}
+                                onChange={onTagsChange}
+                                onCreateTag={onCreateTag}
+                                placeholder="Add tags..."
+                            />
+                        </div>
+                    )}
+                    {isVerifierAllSessionsMode && (
+                        <div className="ml-4 text-[10px] text-slate-500">
+                            Save as new session to enable tagging
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {jobMonitorBadge && (
+                <div className="relative ml-3">
+                    {jobMonitorBadge}
+                </div>
+            )}
         </nav>
     );
 }

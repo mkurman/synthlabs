@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Check, X } from 'lucide-react';
+import { Bot, Check, X, Sparkles, Loader2 } from 'lucide-react';
 import { VerifierItem } from '../../../../types';
 import { VerifierRewriteTarget } from '../../../../interfaces/enums';
 import AutoResizeTextarea from '../../../AutoResizeTextarea';
@@ -13,6 +13,8 @@ interface DetailAnswerSectionProps {
     onEditChange: (value: string) => void;
     onEditSave: () => void;
     onEditCancel: () => void;
+    onRewrite?: () => void;
+    isRewriting?: boolean;
     rewritingField?: { itemId: string; field: VerifierRewriteTarget } | null;
     streamingContent?: string;
 }
@@ -24,6 +26,8 @@ export const DetailAnswerSection: React.FC<DetailAnswerSectionProps> = ({
     onEditChange,
     onEditSave,
     onEditCancel,
+    onRewrite,
+    isRewriting,
     rewritingField,
     streamingContent
 }) => {
@@ -65,12 +69,28 @@ export const DetailAnswerSection: React.FC<DetailAnswerSectionProps> = ({
                             </button>
                         </>
                     ) : (
-                        <button
-                            onClick={() => onEditStart('answer', item.answer || '')}
-                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
-                        >
-                            Edit
-                        </button>
+                        <>
+                            <button
+                                onClick={() => onEditStart('answer', item.answer || '')}
+                                className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                            >
+                                Edit
+                            </button>
+                            {onRewrite && (
+                                <button
+                                    onClick={onRewrite}
+                                    disabled={isRewriting}
+                                    className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-sky-400 hover:bg-sky-900/30 rounded disabled:opacity-50"
+                                >
+                                    {isRewriting ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                        <Sparkles className="w-3.5 h-3.5" />
+                                    )}
+                                    Rewrite
+                                </button>
+                            )}
+                        </>
                     )}
                 </div>
             </div>

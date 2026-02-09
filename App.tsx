@@ -68,6 +68,9 @@ import { useSessionAnalytics } from './hooks/useSessionAnalytics';
 // Job Monitor
 import { useJobMonitor } from './hooks/useJobMonitor';
 import JobMonitorBadge from './components/JobMonitorBadge';
+import { useTags } from './hooks/useTags';
+import { useSessionTags } from './hooks/useSessionTags';
+import { SessionTag } from './interfaces/services/SessionConfig';
 import JobMonitorPanel from './components/panels/JobMonitorPanel';
 import JobDetailModal from './components/modals/JobDetailModal';
 
@@ -115,6 +118,40 @@ export default function App() {
     const [sessionUid, setSessionUid] = useState<string>('');
     const sessionUidRef = useSyncedRef(sessionUid);
     const forceStartFromBeginningRef = useRef(false);
+
+    const { tags: availableTags, createTag } = useTags();
+    const { tags: sessionTags, addTags, removeTags } = useSessionTags(sessionUid || null);
+    const handleTagsChange = useCallback(async (newTags: SessionTag[]) => {
+        const currentTagUids = sessionTags.map((t: SessionTag) => t.uid);
+        const newTagUids = newTags.map((t: SessionTag) => t.uid);
+        const tagsToRemove = currentTagUids.filter((uid: string) => !newTagUids.includes(uid));
+        const tagsToAdd = newTagUids.filter((uid: string) => !currentTagUids.includes(uid));
+        if (tagsToRemove.length > 0) {
+            await removeTags(tagsToRemove);
+        }
+        if (tagsToAdd.length > 0) {
+            await addTags(tagsToAdd);
+        }
+    }, [sessionTags, addTags, removeTags]);
+
+    const [verifierSession, setVerifierSession] = useState<{ name: string | null; sessionId: string | null; isAllSessionsMode: boolean } | null>(null);
+    const { tags: verifierSessionTags, addTags: addVerifierTags, removeTags: removeVerifierTags } = useSessionTags(verifierSession?.sessionId || null);
+    const handleVerifierTagsChange = useCallback(async (newTags: SessionTag[]) => {
+        if (!verifierSession?.sessionId || verifierSession.isAllSessionsMode) return;
+        const currentTagUids = verifierSessionTags.map((t: SessionTag) => t.uid);
+        const newTagUids = newTags.map((t: SessionTag) => t.uid);
+        const tagsToRemove = currentTagUids.filter((uid: string) => !newTagUids.includes(uid));
+        const tagsToAdd = newTagUids.filter((uid: string) => !currentTagUids.includes(uid));
+        if (tagsToRemove.length > 0) {
+            await removeVerifierTags(tagsToRemove);
+        }
+        if (tagsToAdd.length > 0) {
+            await addVerifierTags(tagsToAdd);
+        }
+    }, [verifierSessionTags, addVerifierTags, removeVerifierTags, verifierSession]);
+
+    const verifierRenameRef = useRef<((newName: string) => Promise<void>) | null>(null);
+
     const [pendingRouteSessionId, setPendingRouteSessionId] = useState<string | null>(null);
     const loadingRouteSessionRef = useRef<string | null>(null);
 
@@ -1388,7 +1425,11 @@ export default function App() {
                 feedRewriter.handleRewrite(itemId, field, currentValue || '');
             }
         },
-        onScoreChange: handleScoreChange
+        onScoreChange: handleScoreChange,
+        tags: sessionTags,
+        availableTags,
+        onTagsChange: handleTagsChange,
+        onCreateTag: createTag
     });
 
     return (
@@ -1473,6 +1514,17 @@ export default function App() {
                                 setAppView(AppView.Creator);
                             }
                         }}
+                        onOpenInVerifier={async (id) => {
+                            const session = sessionsList.find(s => s.id === id);
+                            if (session && session.itemCount > 0) {
+                                setVerifierSession({
+                                    name: session.name,
+                                    sessionId: session.id,
+                                    isAllSessionsMode: false
+                                });
+                                setAppView(AppView.Verifier);
+                            }
+                        }}
                         onSessionRename={async (id, name) => {
                             if (sessionManager && sessionManager.renameSession) {
                                 sessionManager.renameSession(id, name);
@@ -1509,9 +1561,21 @@ export default function App() {
                             <ModeNavbar
                                 currentMode={appView as any}
                                 onModeChange={(mode: any) => handleAppViewChange(mode)}
-                                sessionName={sessionName}
-                                onSessionNameChange={setSessionName}
+                                sessionName={appView === AppView.Verifier ? (verifierSession?.name || null) : sessionName}
+                                onSessionNameChange={appView === AppView.Verifier 
+                                    ? async (name) => {
+                                        if (name && verifierRenameRef.current) {
+                                            await verifierRenameRef.current(name);
+                                        }
+                                        setVerifierSession(prev => prev ? { ...prev, name: name as string } : null);
+                                    }
+                                    : setSessionName}
                                 isDirty={environment === Environment.Production && getUnsavedCount() > 0}
+                                tags={appView === AppView.Verifier ? verifierSessionTags : sessionTags}
+                                availableTags={availableTags}
+                                onTagsChange={appView === AppView.Verifier ? handleVerifierTagsChange : handleTagsChange}
+                                onCreateTag={createTag}
+                                isVerifierAllSessionsMode={appView === AppView.Verifier ? verifierSession?.isAllSessionsMode : false}
                                 jobMonitorBadge={
                                     <div className="relative">
                                         <JobMonitorBadge
@@ -1540,6 +1604,9 @@ export default function App() {
                                 <div className="h-full overflow-hidden">
                                     <VerifierPanel
                                         currentSessionUid={sessionUid}
+                                        onActiveSessionChange={setVerifierSession}
+                                        onRenameRef={verifierRenameRef}
+                                        initialSessionId={verifierSession?.sessionId || null}
                                         modelConfig={{
                                             provider,
                                             externalProvider,
