@@ -29,7 +29,7 @@
     "dotenv": "^16.4.5",
     "express": "^5.1.0",
     "firebase-admin": "^13.0.2",
-    "hyparquet": "1.24.0",
+    "hyparquet": "1.24.1",
     "hyparquet-writer": "^0.11.2",
     "json-repair-js": "^1.0.0",
     "lucide-react": "^0.561.0",
