@@ -1,5 +1,5 @@
 import { JobStatus } from '../../jobs/jobStore.js';
-import { extractMessageParts } from '../../../utils/thinkTagParser.ts';
+import { extractMessageParts } from '../../utils/thinkTagParser.js';
 import { extractResumeState, canResumeJob } from '../../jobs/jobResume.js';
 
 /**

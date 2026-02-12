@@ -20,6 +20,10 @@ export interface OllamaModelListResponse {
   models: OllamaModel[];
 }
 
+export interface OllamaVersionResponse {
+  version: string;
+}
+
 export async function fetchOllamaModels(baseUrl: string = 'http://localhost:11434'): Promise<OllamaModel[]> {
   try {
     const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/tags`;
@@ -55,12 +59,31 @@ export async function fetchOllamaModels(baseUrl: string = 'http://localhost:1143
   }
 }
 
+export async function fetchOllamaVersion(baseUrl: string = 'http://localhost:11434'): Promise<string | null> {
+  try {
+    const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/version`;
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(1000),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data: OllamaVersionResponse = await response.json();
+    return data.version || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function checkOllamaStatus(baseUrl: string = 'http://localhost:11434'): Promise<boolean> {
   try {
     const url = `${baseUrl.replace(/\/v1\/?$/, '')}/api/tags`;
     const response = await fetch(url, {
       method: 'GET',
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(1000),
     });
     return response.ok;
   } catch {
