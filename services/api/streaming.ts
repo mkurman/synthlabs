@@ -1,6 +1,10 @@
 import { ExternalProvider, ApiType } from '../../types';
 import { logger } from '../../utils/logger';
 
+/** Providers that use the Anthropic Messages API format */
+const isAnthropicCompatible = (provider: ExternalProvider): boolean =>
+  provider === ExternalProvider.Anthropic || provider === ExternalProvider.MiniMax;
+
 export async function processStreamResponse(
   response: Response,
   provider: ExternalProvider,
@@ -73,7 +77,7 @@ export async function processStreamResponse(
               usageData = json.usage;
             }
 
-            if (provider === ExternalProvider.Anthropic) {
+            if (isAnthropicCompatible(provider)) {
               if (json.type === 'content_block_delta') {
                 chunk = json.delta?.text || '';
               } else if (json.delta?.text) {
@@ -180,7 +184,7 @@ export async function processStreamResponse(
         try {
           const json = JSON.parse(trimmed.slice(dataStart));
           let chunk = '';
-          if (provider === ExternalProvider.Anthropic) {
+          if (isAnthropicCompatible(provider)) {
             chunk = json.delta?.text || json.content?.[0]?.text || '';
           } else if (isResponsesApi) {
             const item = json.item || json.delta;

@@ -1,26 +1,27 @@
 /**
- * Simple OpenAI-compatible chat completions caller for backend jobs.
- * Supports any provider with an OpenAI-compatible API (OpenAI, Together, OpenRouter, etc.)
+ * Chat completions caller for backend jobs using official SDKs.
+ * Uses @anthropic-ai/sdk for Anthropic-compatible providers,
+ * and openai SDK for OpenAI-compatible providers.
  */
+import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 2000;
 
+/** Providers that use the Anthropic Messages API format */
+const ANTHROPIC_COMPATIBLE = new Set(['anthropic', 'minimax']);
+
+const isAnthropicCompatible = (provider) => ANTHROPIC_COMPATIBLE.has(provider);
+
 /**
- * Normalise the base URL so it ends with a usable chat completions path.
- * Handles cases like:
- *   - https://api.openai.com/v1          → https://api.openai.com/v1/chat/completions
- *   - https://api.openai.com/v1/         → https://api.openai.com/v1/chat/completions
- *   - https://api.together.xyz           → https://api.together.xyz/v1/chat/completions
- *   - https://custom.host/custom/path    → https://custom.host/custom/path/chat/completions
+ * Normalise the base URL for the OpenAI SDK.
+ * The SDK appends /chat/completions, so strip it if present.
  */
-const buildEndpoint = (baseUrl) => {
+const normaliseOpenAIBaseUrl = (baseUrl) => {
     let url = baseUrl.replace(/\/+$/, '');
-    if (url.endsWith('/chat/completions')) return url;
-    if (!url.endsWith('/v1')) {
-        url += '/v1';
-    }
-    return `${url}/chat/completions`;
+    url = url.replace(/\/chat\/completions$/, '');
+    return url;
 };
 
 /**
@@ -28,10 +29,11 @@ const buildEndpoint = (baseUrl) => {
  *
  * @param {object} options
  * @param {string} options.baseUrl      – Provider base URL (e.g. https://api.openai.com/v1)
- * @param {string} options.apiKey       – Bearer token
+ * @param {string} options.apiKey       – API key
  * @param {string} options.model        – Model identifier
  * @param {string} options.systemPrompt – System message
  * @param {string} options.userPrompt   – User message
+ * @param {string} [options.provider]   – Provider identifier (e.g. 'anthropic', 'minimax')
  * @param {number} [options.maxTokens]  – Max completion tokens (default: 4096)
  * @param {number} [options.temperature] – Temperature (default: 0.3)
  * @param {number} [options.maxRetries] – Retry count (default: 2)
@@ -44,47 +46,69 @@ export async function callChatCompletion({
     model,
     systemPrompt,
     userPrompt,
+    provider = '',
     maxTokens = 4096,
     temperature = 0.3,
     maxRetries = DEFAULT_MAX_RETRIES,
     retryDelay = DEFAULT_RETRY_DELAY_MS,
 }) {
-    const endpoint = buildEndpoint(baseUrl);
-    const body = {
-        model,
-        messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-        ],
-        max_tokens: maxTokens,
-        temperature,
-    };
-
     let lastError = null;
+
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`,
-                },
-                body: JSON.stringify(body),
-            });
+            if (isAnthropicCompatible(provider)) {
+                const client = new Anthropic({
+                    apiKey,
+                    baseURL: baseUrl.replace(/\/+$/, ''),
+                });
 
-            if (!response.ok) {
-                const text = await response.text().catch(() => '');
-                throw new Error(`API returned ${response.status}: ${text.slice(0, 500)}`);
-            }
+                const response = await client.messages.create({
+                    model,
+                    max_tokens: maxTokens,
+                    temperature,
+                    system: systemPrompt,
+                    messages: [{ role: 'user', content: userPrompt }],
+                });
 
-            const data = await response.json();
-            const content = data.choices?.[0]?.message?.content;
-            if (content === undefined || content === null) {
-                throw new Error('No content in API response');
+                const content = response.content?.[0]?.type === 'text'
+                    ? response.content[0].text
+                    : null;
+
+                if (content === undefined || content === null) {
+                    throw new Error('No content in Anthropic API response');
+                }
+                return content;
+            } else {
+                const client = new OpenAI({
+                    apiKey: apiKey || 'ollama-local',
+                    baseURL: normaliseOpenAIBaseUrl(baseUrl),
+                });
+
+                const response = await client.chat.completions.create({
+                    model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt },
+                    ],
+                    max_tokens: maxTokens,
+                    temperature,
+                });
+
+                const content = response.choices?.[0]?.message?.content;
+                if (content === undefined || content === null) {
+                    throw new Error('No content in OpenAI API response');
+                }
+                return content;
             }
-            return content;
         } catch (error) {
             lastError = error;
+
+            // Don't retry on auth errors
+            const status = error?.status || error?.statusCode;
+            if (status && status >= 400 && status < 500 && status !== 429) {
+                throw error;
+            }
+
             if (attempt < maxRetries) {
                 await new Promise((r) => setTimeout(r, retryDelay));
             }

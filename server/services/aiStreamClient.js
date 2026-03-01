@@ -1,7 +1,10 @@
 /**
- * Streaming AI client for backend SSE proxying
- * Supports OpenAI, Anthropic, OpenRouter, Ollama, and custom providers
+ * Streaming AI client for backend SSE proxying.
+ * Uses official SDKs: @anthropic-ai/sdk for Anthropic-compatible,
+ * openai for OpenAI-compatible providers.
  */
+import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 2000;
@@ -15,89 +18,120 @@ export const Providers = {
     OPENROUTER: 'openrouter',
     OLLAMA: 'ollama',
     GEMINI: 'gemini',
+    MINIMAX: 'minimax',
     OTHER: 'other',
 };
 
+/** Providers that use the Anthropic Messages API format */
+const ANTHROPIC_COMPATIBLE = new Set([Providers.ANTHROPIC, Providers.MINIMAX]);
+const isAnthropicCompatible = (provider) => ANTHROPIC_COMPATIBLE.has(provider);
+
 /**
- * Build the API endpoint URL based on provider
+ * Normalise base URL for Anthropic SDK.
+ * The SDK appends /v1/messages internally, so strip trailing /v1 if present.
  */
-const buildEndpoint = (baseUrl, provider) => {
+const normaliseAnthropicBaseUrl = (baseUrl) => {
     let url = baseUrl.replace(/\/+$/, '');
-
-    if (provider === Providers.ANTHROPIC) {
-        if (!url.endsWith('/messages')) {
-            url += '/v1/messages';
-        }
-        return url;
-    }
-
-    if (provider === Providers.OLLAMA) {
-        if (!url.includes('/api/')) {
-            url += '/api/chat';
-        }
-        return url;
-    }
-
-    // OpenAI-compatible (OpenAI, OpenRouter, Together, etc.)
-    if (url.endsWith('/chat/completions')) return url;
-    if (!url.endsWith('/v1')) {
-        url += '/v1';
-    }
-    return `${url}/chat/completions`;
+    if (url.endsWith('/v1')) url = url.slice(0, -3);
+    return url;
 };
 
 /**
- * Build headers based on provider
+ * Normalise base URL for OpenAI SDK.
+ * The SDK appends /chat/completions internally, so strip it if present.
  */
-const buildHeaders = (apiKey, provider) => {
-    const headers = {
-        'Content-Type': 'application/json',
+const normaliseOpenAIBaseUrl = (baseUrl) => {
+    let url = baseUrl.replace(/\/+$/, '');
+    url = url.replace(/\/chat\/completions$/, '');
+    return url;
+};
+
+/**
+ * Stream via Anthropic SDK (for Anthropic/MiniMax providers)
+ */
+async function streamAnthropic({
+    baseUrl, apiKey, model, messages, onChunk, signal,
+    maxTokens, temperature, maxRetries,
+}) {
+    const client = new Anthropic({
+        apiKey,
+        baseURL: normaliseAnthropicBaseUrl(baseUrl),
+        maxRetries,
+        timeout: 120000,
+    });
+
+    const systemMessage = messages.find(m => m.role === 'system');
+    const nonSystemMessages = messages.filter(m => m.role !== 'system');
+
+    const stream = await client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        temperature,
+        system: systemMessage?.content || '',
+        messages: nonSystemMessages.map(m => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content,
+        })),
+        stream: true,
+    }, { signal });
+
+    let accumulated = '';
+    let usageData = null;
+    let firstChunk = true;
+
+    for await (const event of stream) {
+        if (signal?.aborted) break;
+
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+            const text = event.delta.text || '';
+            accumulated += text;
+
+            if (firstChunk && text) {
+                console.log('[aiStreamClient] First Anthropic chunk:', text.slice(0, 100));
+                firstChunk = false;
+            }
+
+            const shouldStop = onChunk(text, accumulated, '', usageData, null);
+            if (shouldStop === false) break;
+        } else if (event.type === 'message_start' && event.message?.usage) {
+            usageData = {
+                input_tokens: event.message.usage.input_tokens || 0,
+                output_tokens: 0,
+            };
+        } else if (event.type === 'message_delta') {
+            if (event.usage) {
+                usageData = {
+                    ...usageData,
+                    output_tokens: event.usage.output_tokens || 0,
+                };
+                onChunk('', accumulated, '', usageData, null);
+            }
+        }
+    }
+
+    return {
+        content: accumulated,
+        reasoning: '',
+        usage: usageData,
+        toolCalls: null,
     };
-
-    if (provider === Providers.ANTHROPIC) {
-        headers['x-api-key'] = apiKey;
-        headers['anthropic-version'] = '2023-06-01';
-    } else if (provider !== Providers.OLLAMA) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-
-    return headers;
-};
+}
 
 /**
- * Build request payload based on provider
+ * Stream via OpenAI SDK (for OpenAI, OpenRouter, Ollama, Gemini, etc.)
  */
-const buildPayload = (messages, options, provider) => {
-    const { model, maxTokens = 4096, temperature = 0.7, tools, responseFormat } = options;
+async function streamOpenAI({
+    baseUrl, apiKey, model, messages, onChunk, signal,
+    maxTokens, temperature, tools, responseFormat, maxRetries, provider,
+}) {
+    const client = new OpenAI({
+        apiKey: apiKey || 'ollama-local',
+        baseURL: normaliseOpenAIBaseUrl(baseUrl),
+        maxRetries,
+        timeout: 120000,
+    });
 
-    if (provider === Providers.ANTHROPIC) {
-        const systemMessage = messages.find(m => m.role === 'system');
-        const nonSystemMessages = messages.filter(m => m.role !== 'system');
-
-        return {
-            model,
-            max_tokens: maxTokens,
-            temperature,
-            stream: true,
-            system: systemMessage?.content || '',
-            messages: nonSystemMessages.map(m => ({
-                role: m.role === 'assistant' ? 'assistant' : 'user',
-                content: m.content,
-            })),
-        };
-    }
-
-    if (provider === Providers.OLLAMA) {
-        return {
-            model,
-            messages,
-            stream: true,
-            options: { temperature },
-        };
-    }
-
-    // OpenAI-compatible
-    const payload = {
+    const params = {
         model,
         messages,
         max_tokens: maxTokens,
@@ -107,85 +141,103 @@ const buildPayload = (messages, options, provider) => {
     };
 
     if (tools && tools.length > 0) {
-        payload.tools = tools;
+        params.tools = tools;
     }
 
     if (responseFormat === 'json') {
-        payload.response_format = { type: 'json_object' };
+        params.response_format = { type: 'json_object' };
     }
 
-    return payload;
-};
+    const stream = await client.chat.completions.create(params, { signal });
 
-/**
- * Parse a streaming chunk based on provider
- * @returns {{ content: string, reasoningContent: string, toolCalls: any[], usage: any, done: boolean }}
- */
-const parseStreamChunk = (json, provider) => {
-    const result = {
-        content: '',
-        reasoningContent: '',
-        toolCalls: null,
-        usage: null,
-        done: false,
+    let accumulated = '';
+    let reasoningAccumulated = '';
+    let isInReasoning = false;
+    let usageData = null;
+    let allToolCalls = {};
+    let firstChunk = true;
+
+    for await (const chunk of stream) {
+        if (signal?.aborted) break;
+
+        if (chunk.usage) usageData = chunk.usage;
+
+        const choice = chunk.choices?.[0];
+        const delta = choice?.delta;
+        if (!delta && !chunk.usage) continue;
+
+        if (firstChunk && delta) {
+            console.log('[aiStreamClient] First OpenAI chunk delta:', JSON.stringify(delta).slice(0, 200));
+            firstChunk = false;
+        }
+
+        // Handle reasoning content (models like DeepSeek, Qwen)
+        const reasoning = delta?.reasoning_content || delta?.reasoning;
+        if (reasoning) {
+            if (!isInReasoning) {
+                isInReasoning = true;
+                accumulated += '<think>';
+            }
+            accumulated += reasoning;
+            reasoningAccumulated += reasoning;
+        }
+
+        // Handle regular content
+        if (delta?.content) {
+            if (isInReasoning) {
+                isInReasoning = false;
+                accumulated += '</think>';
+            }
+            accumulated += delta.content;
+        }
+
+        // Handle tool calls
+        if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? 0;
+                if (!allToolCalls[idx]) {
+                    allToolCalls[idx] = { id: tc.id || '', name: '', args: '' };
+                }
+                if (tc.id) allToolCalls[idx].id = tc.id;
+                if (tc.function?.name) allToolCalls[idx].name += tc.function.name;
+                if (tc.function?.arguments) allToolCalls[idx].args += tc.function.arguments;
+            }
+        }
+
+        // Call the chunk callback
+        if (delta?.content || reasoning || chunk.usage) {
+            const chunkText = reasoning || delta?.content || '';
+            const toolCallsArray = Object.values(allToolCalls);
+            const shouldStop = onChunk(
+                chunkText,
+                accumulated,
+                reasoningAccumulated,
+                usageData,
+                toolCallsArray.length > 0 ? toolCallsArray : null
+            );
+            if (shouldStop === false) break;
+        }
+    }
+
+    // Close any open reasoning tag
+    if (isInReasoning) accumulated += '</think>';
+
+    // Format tool calls
+    const toolCallsArray = Object.values(allToolCalls).map(tc => {
+        try {
+            return { id: tc.id, name: tc.name, arguments: JSON.parse(tc.args || '{}') };
+        } catch {
+            return { id: tc.id, name: tc.name, arguments: tc.args };
+        }
+    });
+
+    return {
+        content: accumulated,
+        reasoning: reasoningAccumulated,
+        usage: usageData,
+        toolCalls: toolCallsArray.length > 0 ? toolCallsArray : null,
     };
-
-    if (provider === Providers.ANTHROPIC) {
-        if (json.type === 'content_block_delta') {
-            result.content = json.delta?.text || '';
-        } else if (json.type === 'message_delta' && json.delta?.stop_reason) {
-            result.done = true;
-        } else if (json.type === 'message_stop') {
-            result.done = true;
-        }
-        if (json.usage) {
-            result.usage = json.usage;
-        }
-        return result;
-    }
-
-    if (provider === Providers.OLLAMA) {
-        if (json.message?.content) {
-            result.content = json.message.content;
-        }
-        if (json.done) {
-            result.done = true;
-        }
-        return result;
-    }
-
-    // OpenAI-compatible
-    if (json.usage) {
-        result.usage = json.usage;
-    }
-
-    const choice = json.choices?.[0];
-    if (!choice) return result;
-
-    if (choice.finish_reason) {
-        result.done = true;
-    }
-
-    const delta = choice.delta;
-    if (!delta) return result;
-
-    // Handle reasoning content (for models that support it)
-    if (delta.reasoning_content || delta.reasoning) {
-        result.reasoningContent = delta.reasoning_content || delta.reasoning;
-    }
-
-    // Handle regular content
-    if (delta.content) {
-        result.content = delta.content;
-    }
-
-    // Handle tool calls
-    if (delta.tool_calls) {
-        result.toolCalls = delta.tool_calls;
-    }
-
-    return result;
-};
+}
 
 /**
  * Stream a chat completion from an AI provider
@@ -221,242 +273,20 @@ export async function streamChatCompletion({
     maxRetries = DEFAULT_MAX_RETRIES,
     retryDelay = DEFAULT_RETRY_DELAY_MS,
 }) {
-    const endpoint = buildEndpoint(baseUrl, provider);
-    const headers = buildHeaders(apiKey, provider);
-    const payload = buildPayload(messages, { model, maxTokens, temperature, tools, responseFormat }, provider);
-
-    console.log('[aiStreamClient] Starting request to:', endpoint);
-    console.log('[aiStreamClient] Provider:', provider, '| Model:', model);
+    console.log('[aiStreamClient] Provider:', provider, '| Model:', model, '| BaseUrl:', baseUrl);
     console.log('[aiStreamClient] Messages:', messages.length, '| Tools:', tools?.length || 0);
 
-    let lastError = null;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        console.log('[aiStreamClient] Attempt', attempt + 1, 'of', maxRetries + 1);
-        try {
-            // Check if already aborted
-            if (signal?.aborted) {
-                console.log('[aiStreamClient] Signal already aborted before fetch');
-                throw new DOMException('Aborted', 'AbortError');
-            }
-
-            console.log('[aiStreamClient] Sending fetch request to:', endpoint);
-
-            // Create a combined abort controller for timeout + external signal
-            const timeoutMs = 120000; // 2 minute timeout for initial response
-            const fetchController = new AbortController();
-            const timeoutId = setTimeout(() => {
-                console.log('[aiStreamClient] Request timeout after', timeoutMs, 'ms');
-                fetchController.abort();
-            }, timeoutMs);
-
-            // If external signal aborts, abort the fetch too
-            const abortHandler = () => {
-                console.log('[aiStreamClient] External signal aborted, aborting fetch');
-                fetchController.abort();
-            };
-            if (signal) {
-                signal.addEventListener('abort', abortHandler, { once: true });
-            }
-
-            console.log('[aiStreamClient] Starting fetch now...');
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(payload),
-                signal: fetchController.signal,
-            });
-
-            clearTimeout(timeoutId);
-            if (signal) {
-                signal.removeEventListener('abort', abortHandler);
-            }
-            console.log('[aiStreamClient] Response status:', response.status);
-
-            if (!response.ok) {
-                const text = await response.text().catch(() => '');
-                console.log('[aiStreamClient] Error response:', text.slice(0, 200));
-                const error = new Error(`API returned ${response.status}: ${text.slice(0, 500)}`);
-                error.status = response.status;
-                throw error;
-            }
-
-            const reader = response.body?.getReader();
-            if (!reader) {
-                throw new Error('No response body for streaming');
-            }
-            console.log('[aiStreamClient] Got reader, starting stream...');
-
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let accumulated = '';
-            let reasoningAccumulated = '';
-            let isInReasoning = false;
-            let usageData = null;
-            let allToolCalls = {};
-            let stopped = false;
-
-            try {
-                while (!stopped) {
-                    if (signal?.aborted) {
-                        reader.cancel();
-                        throw new DOMException('Aborted', 'AbortError');
-                    }
-
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-
-                    for (const line of lines) {
-                        const trimmed = line.trim();
-                        if (!trimmed || trimmed === 'data: [DONE]') continue;
-
-                        // Handle SSE data prefix
-                        let jsonStr = '';
-                        if (trimmed.startsWith('data: ')) {
-                            jsonStr = trimmed.slice(6);
-                        } else if (provider === Providers.OLLAMA && trimmed.startsWith('{')) {
-                            jsonStr = trimmed;
-                        } else {
-                            continue;
-                        }
-
-                        try {
-                            const json = JSON.parse(jsonStr);
-
-                            // Log raw response for debugging
-                            if (accumulated.length === 0) {
-                                console.log('[aiStreamClient] First chunk raw JSON:', JSON.stringify(json).slice(0, 500));
-                            }
-
-                            const parsed = parseStreamChunk(json, provider);
-
-                            // Log what was parsed
-                            if (accumulated.length === 0 && (parsed.content || parsed.toolCalls)) {
-                                console.log('[aiStreamClient] Parsed first chunk:', {
-                                    contentLen: parsed.content?.length || 0,
-                                    reasoningLen: parsed.reasoningContent?.length || 0,
-                                    hasToolCalls: !!parsed.toolCalls,
-                                    done: parsed.done
-                                });
-                            }
-
-                            // Track usage
-                            if (parsed.usage) {
-                                usageData = parsed.usage;
-                            }
-
-                            // Handle reasoning content (wrap in <think> tags)
-                            if (parsed.reasoningContent) {
-                                if (!isInReasoning) {
-                                    isInReasoning = true;
-                                    accumulated += '<think>';
-                                }
-                                accumulated += parsed.reasoningContent;
-                                reasoningAccumulated += parsed.reasoningContent;
-                            }
-
-                            // Handle regular content
-                            if (parsed.content) {
-                                // Close reasoning tag if we were in reasoning mode
-                                if (isInReasoning) {
-                                    isInReasoning = false;
-                                    accumulated += '</think>';
-                                }
-                                accumulated += parsed.content;
-                            }
-
-                            // Handle tool calls
-                            if (parsed.toolCalls) {
-                                for (const tc of parsed.toolCalls) {
-                                    const idx = tc.index ?? 0;
-                                    if (!allToolCalls[idx]) {
-                                        allToolCalls[idx] = { id: tc.id || '', name: '', args: '' };
-                                    }
-                                    if (tc.id) allToolCalls[idx].id = tc.id;
-                                    if (tc.function?.name) allToolCalls[idx].name += tc.function.name;
-                                    if (tc.function?.arguments) allToolCalls[idx].args += tc.function.arguments;
-                                }
-                            }
-
-                            // Call the chunk callback
-                            if (parsed.content || parsed.reasoningContent || parsed.usage) {
-                                const chunk = parsed.reasoningContent || parsed.content || '';
-                                const toolCallsArray = Object.values(allToolCalls);
-                                const shouldStop = onChunk(
-                                    chunk,
-                                    accumulated,
-                                    reasoningAccumulated,
-                                    usageData,
-                                    toolCallsArray.length > 0 ? toolCallsArray : null
-                                );
-                                if (shouldStop === false) {
-                                    stopped = true;
-                                    reader.cancel();
-                                    break;
-                                }
-                            }
-                        } catch (parseErr) {
-                            // Skip unparseable chunks
-                            console.warn('Failed to parse stream chunk:', jsonStr.slice(0, 100));
-                        }
-                    }
-                }
-            } finally {
-                reader.releaseLock();
-            }
-
-            // Close any open reasoning tag
-            if (isInReasoning) {
-                accumulated += '</think>';
-            }
-
-            // Format tool calls
-            const toolCallsArray = Object.values(allToolCalls).map(tc => {
-                try {
-                    return {
-                        id: tc.id,
-                        name: tc.name,
-                        arguments: JSON.parse(tc.args || '{}'),
-                    };
-                } catch {
-                    return {
-                        id: tc.id,
-                        name: tc.name,
-                        arguments: tc.args,
-                    };
-                }
-            });
-
-            return {
-                content: accumulated,
-                reasoning: reasoningAccumulated,
-                usage: usageData,
-                toolCalls: toolCallsArray.length > 0 ? toolCallsArray : null,
-            };
-        } catch (error) {
-            lastError = error;
-
-            // Don't retry on abort
-            if (error.name === 'AbortError') {
-                throw error;
-            }
-
-            // Don't retry on 4xx errors (except 429)
-            if (error.status && error.status >= 400 && error.status < 500 && error.status !== 429) {
-                throw error;
-            }
-
-            if (attempt < maxRetries) {
-                await new Promise(r => setTimeout(r, retryDelay));
-            }
-        }
+    if (isAnthropicCompatible(provider)) {
+        return streamAnthropic({
+            baseUrl, apiKey, model, messages, onChunk, signal,
+            maxTokens, temperature, maxRetries,
+        });
+    } else {
+        return streamOpenAI({
+            baseUrl, apiKey, model, messages, onChunk, signal,
+            maxTokens, temperature, tools, responseFormat, maxRetries, provider,
+        });
     }
-
-    throw lastError || new Error('streamChatCompletion failed after retries');
 }
 
 /**

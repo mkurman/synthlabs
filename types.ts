@@ -112,6 +112,8 @@ export interface SessionListFilters {
   appMode: CreatorMode | null;
   engineMode: EngineMode | null;
   model: string;
+  verificationStatus: 'all' | 'verified' | 'unreviewed' | 'garbage';
+  tags: string[];
 }
 
 export type StreamPhase = 'writer' | 'rewriter' | 'user_followup' | 'regular';

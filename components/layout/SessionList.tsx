@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { SessionData } from '../../types';
+import { SessionData } from '../../interfaces';
 import { SessionSort } from '../../interfaces/enums/SessionSort';
 import SessionItem from './SessionItem';
 
@@ -22,15 +22,15 @@ export default function SessionList({
         const sorted = [...sessions];
 
         switch (sortBy) {
-            case SessionSort.Recent:
+            case SessionSort.DateDesc:
                 return sorted.sort((a, b) => b.updatedAt - a.updatedAt);
-            case SessionSort.Oldest:
-                return sorted.sort((a, b) => a.createdAt - b.createdAt);
+            case SessionSort.DateAsc:
+                return sorted.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
             case SessionSort.NameAsc:
                 return sorted.sort((a, b) => a.name.localeCompare(b.name));
             case SessionSort.NameDesc:
                 return sorted.sort((a, b) => b.name.localeCompare(a.name));
-            case SessionSort.ItemCount:
+            case SessionSort.LogCountDesc:
                 return sorted.sort((a, b) => b.itemCount - a.itemCount);
             default:
                 return sorted;

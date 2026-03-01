@@ -42,7 +42,7 @@ export const DetailReasoningSection: React.FC<DetailReasoningSectionProps> = ({
     const parsedAnswer = parseThinkTagsForDisplay(item.answer || '');
     console.log('[DetailReasoningSection] parsedAnswer.hasThinkTags:', parsedAnswer.hasThinkTags);
     console.log('[DetailReasoningSection] parsedAnswer.reasoning:', parsedAnswer.reasoning?.substring(0, 50) || '(empty)');
-    const displayReasoning = sanitizeReasoningContent(item.reasoning || parsedAnswer.reasoning || '');
+    const displayReasoning = sanitizeReasoningContent(item.reasoning ?? parsedAnswer.reasoning ?? '');
     console.log('[DetailReasoningSection] displayReasoning:', displayReasoning?.substring(0, 50) || '(empty)');
 
     const isRewritingThis = rewritingField?.itemId === item.id && 

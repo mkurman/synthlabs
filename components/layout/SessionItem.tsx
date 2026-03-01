@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Edit2, Check, X, Tag } from 'lucide-react';
+import { Edit2, Check, X, Tag, CheckCircle2, Trash2 } from 'lucide-react';
 import { SessionData } from '../../interfaces';
 import { SessionStatus } from '../../interfaces/enums/SessionStatus';
+import { SessionVerificationStatus } from '../../interfaces/enums/SessionVerificationStatus';
 
 interface SessionItemProps {
     session: SessionData;
@@ -135,6 +136,18 @@ export default function SessionItem({
                 <span className={`px-1.5 py-0.5 rounded bg-${statusColor}-600/30 text-${statusColor}-400`}>
                     {session.status}
                 </span>
+                {session.verificationStatus === SessionVerificationStatus.Verified && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Verified
+                    </span>
+                )}
+                {session.verificationStatus === SessionVerificationStatus.Garbage && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-600/30">
+                        <Trash2 className="w-3 h-3" />
+                        Garbage
+                    </span>
+                )}
                 <span className="text-slate-400">{session.itemCount} items</span>
                 {firstTag && (
                     <>

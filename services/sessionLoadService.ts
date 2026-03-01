@@ -286,6 +286,17 @@ const applySessionFilters = (sessions: SessionData[], filters: SessionListFilter
             const model = (session.config?.externalModel || '').toLowerCase();
             if (!model.includes(modelTerm)) return false;
         }
+        // Filter by verification status
+        if (filters.verificationStatus && filters.verificationStatus !== 'all') {
+            const sessionStatus = session.verificationStatus || 'unreviewed';
+            if (sessionStatus !== filters.verificationStatus) return false;
+        }
+        // Filter by tags
+        if (filters.tags && filters.tags.length > 0) {
+            const sessionTagUids = (session.tags || []).map(t => t.uid).filter(Boolean);
+            const hasMatchingTag = filters.tags.some(tagUid => sessionTagUids.includes(tagUid));
+            if (!hasMatchingTag) return false;
+        }
         return true;
     });
 };

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus, Menu, X } from 'lucide-react';
-import { SessionData } from '../../types';
+import { SessionData } from '../../interfaces';
 import { AppView } from '../../interfaces/enums';
 import { SessionSort } from '../../interfaces/enums/SessionSort';
 import SessionList from './SessionList';
@@ -108,11 +108,11 @@ export default function SessionSidebar({
                         onChange={(e) => onSortChange(e.target.value as SessionSort)}
                         className="w-full bg-slate-950/60 border border-slate-800/70 rounded-lg px-3 py-2 text-xs text-white focus:border-sky-500/50 outline-none"
                     >
-                        <option value={SessionSort.Recent}>Most Recent</option>
-                        <option value={SessionSort.Oldest}>Oldest First</option>
+                        <option value={SessionSort.DateDesc}>Most Recent</option>
+                        <option value={SessionSort.DateAsc}>Oldest First</option>
                         <option value={SessionSort.NameAsc}>Name (A-Z)</option>
                         <option value={SessionSort.NameDesc}>Name (Z-A)</option>
-                        <option value={SessionSort.ItemCount}>Item Count</option>
+                        <option value={SessionSort.LogCountDesc}>Item Count</option>
                     </select>
                 </div>
 

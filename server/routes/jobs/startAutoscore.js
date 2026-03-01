@@ -26,12 +26,13 @@ const parseScore = (text) => {
 /**
  * Process a single log item: call AI, parse score, update via repo.
  */
-const scoreOneItem = async ({ log, repo, baseUrl, apiKey, model, maxRetries, retryDelay }) => {
+const scoreOneItem = async ({ log, repo, baseUrl, apiKey, model, provider, maxRetries, retryDelay }) => {
     const userPrompt = buildScoringUserPrompt(log);
     const result = await callChatCompletion({
         baseUrl,
         apiKey,
         model,
+        provider,
         systemPrompt: SCORING_SYSTEM_PROMPT,
         userPrompt,
         maxTokens: 64,
@@ -219,7 +220,7 @@ export const registerStartAutoscoreRoute = (app, { repo, createJob, updateJob, g
 
                     // Run batch concurrently
                     const results = await Promise.allSettled(
-                        batch.map(log => scoreOneItem({ log, repo, baseUrl, apiKey, model, maxRetries, retryDelay }))
+                        batch.map(log => scoreOneItem({ log, repo, baseUrl, apiKey, model, provider: params.provider, maxRetries, retryDelay }))
                     );
 
                     // Collect results

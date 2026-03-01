@@ -53,6 +53,7 @@ export enum ExternalProvider {
   Chutes = 'chutes',
   Gemini = 'gemini',
   HuggingFace = 'huggingface',
+  MiniMax = 'minimax',
   Other = 'other'
 }
 

@@ -187,7 +187,9 @@ export default function App() {
         maxRows: null,
         appMode: null,
         engineMode: null,
-        model: ''
+        model: '',
+        verificationStatus: 'all',
+        tags: []
     });
     const [hasMoreSessions, setHasMoreSessions] = useState(false);
     const [isLoadingMoreSessions, setIsLoadingMoreSessions] = useState(false);
@@ -1553,6 +1555,7 @@ export default function App() {
                         isLoadingMoreSessions={isLoadingMoreSessions}
                         themeMode={themeMode}
                         onThemeModeChange={handleThemeModeChange}
+                        availableTags={availableTags}
                     />
                 }
                 mainContent={

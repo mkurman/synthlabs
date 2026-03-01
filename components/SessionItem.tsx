@@ -1,8 +1,9 @@
 import { useRef, useState, useEffect } from 'react';
-import { Trash2, Edit2, Cloud, HardDrive, Tag, ShieldCheck } from 'lucide-react';
+import { Trash2, Edit2, Cloud, HardDrive, Tag, ShieldCheck, CheckCircle2, Flag } from 'lucide-react';
 import { confirmService } from '../services/confirmService';
 import { SessionData, StorageMode } from '../interfaces';
 import { Environment } from '../interfaces/enums';
+import { SessionVerificationStatus } from '../interfaces/enums/SessionVerificationStatus';
 
 interface SessionItemProps {
     session: SessionData;
@@ -92,9 +93,17 @@ export default function SessionItem({
                     />
                 ) : (
                     <div className="flex flex-col">
-                        <h3 className={`text-sm font-semibold truncate ${isActive ? 'text-white' : 'text-slate-200'}`}>
-                            {session.name || 'Untitled Session'}
-                        </h3>
+                        <div className="flex items-center gap-2">
+                            <h3 className={`text-sm font-semibold truncate ${isActive ? 'text-white' : 'text-slate-200'}`}>
+                                {session.name || 'Untitled Session'}
+                            </h3>
+                            {session.verificationStatus === SessionVerificationStatus.Verified && (
+                                <span title="Verified"><CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /></span>
+                            )}
+                            {session.verificationStatus === SessionVerificationStatus.Garbage && (
+                                <span title="Garbage"><Flag className="w-4 h-4 text-red-400 flex-shrink-0" /></span>
+                            )}
+                        </div>
                         <div className="flex items-center gap-2 mt-1">
                             <div className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${session.storageMode === StorageMode.Cloud ? 'border-sky-700/50 bg-sky-950/40 text-sky-300' : 'border-slate-700/70 bg-slate-950/50 text-slate-300'}`}>
                                 {environment === Environment.Production ? <Cloud className="w-2.5 h-2.5" /> : <HardDrive className="w-2.5 h-2.5" />}

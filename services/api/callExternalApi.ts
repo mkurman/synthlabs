@@ -1,4 +1,8 @@
 import { ExternalProvider, ApiType, ChatRole } from '../../types';
+
+/** Providers that use the Anthropic Messages API format */
+const isAnthropicCompatible = (provider: ExternalProvider): boolean =>
+  provider === ExternalProvider.Anthropic || provider === ExternalProvider.MiniMax;
 import { PROVIDERS, JSON_OUTPUT_FALLBACK } from '../../constants';
 import { logger } from '../../utils/logger';
 import { SettingsService } from '../settingsService';
@@ -79,7 +83,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     const isAnthropicFormat = baseUrl.includes('/messages');
     const alreadyHasChatPath = baseUrl.includes('/chat/completions');
     const alreadyHasResponsesPath = baseUrl.includes('/responses');
-    const alreadyHasPath = alreadyHasChatPath || alreadyHasResponsesPath || isAnthropicFormat;
+    const alreadyHasPath = alreadyHasChatPath || alreadyHasResponsesPath || isAnthropicFormat || isAnthropicCompatible(provider);
 
     if (!alreadyHasPath) {
       if (isResponsesApi) {
@@ -102,7 +106,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
     'Content-Type': 'application/json'
   };
 
-  if (provider === ExternalProvider.Anthropic) {
+  if (isAnthropicCompatible(provider)) {
     headers['x-api-key'] = safeApiKey;
     headers['anthropic-version'] = '2023-06-01';
   } else if (provider === ExternalProvider.Ollama && !safeApiKey) {
@@ -117,7 +121,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
   let payload: any = {};
   const shouldStream = Boolean(stream && onStreamChunk);
 
-  if (provider === ExternalProvider.Anthropic) {
+  if (isAnthropicCompatible(provider)) {
     url = `${baseUrl}/messages`;
     payload = {
       model,
@@ -273,7 +277,7 @@ export const callExternalApi = async (config: ExternalApiConfig): Promise<any> =
         });
       }
 
-      if (provider === ExternalProvider.Anthropic) {
+      if (isAnthropicCompatible(provider)) {
         const content = data.content?.[0]?.text || "";
         return parseJsonContent(content, { requiredFields: selectedFields });
       } else if (isResponsesApi) {

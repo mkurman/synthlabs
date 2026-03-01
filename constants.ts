@@ -96,6 +96,11 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Google Gemini',
     description: 'Gemini models via OpenAI-compatible API'
   },
+  'minimax': {
+    url: 'https://api.minimax.io/anthropic',
+    name: 'MiniMax',
+    description: 'MiniMax models via Anthropic-compatible API'
+  },
   'other': {
     url: '',
     name: 'Custom Endpoint',
@@ -141,127 +146,131 @@ import { ExternalProvider, ProviderType, ProviderModel, ModelListProvider } from
  * Hardcoded models for providers without API endpoint
  */
 export const HARDCODED_MODELS: Partial<Record<ModelListProvider, ProviderModel[]>> = {
-    [ProviderType.Gemini]: [
-        { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ExternalProvider.OpenAI },
-        { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Exp)', provider: ExternalProvider.OpenAI },
-        { id: 'gemini-2.0-pro-exp', name: 'Gemini 2.0 Pro (Exp)', provider: ExternalProvider.OpenAI },
-        { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: ExternalProvider.OpenAI },
-        { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: ExternalProvider.OpenAI },
-    ],
-    [ExternalProvider.Anthropic]: [
-        { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: ExternalProvider.Anthropic },
-        { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', provider: ExternalProvider.Anthropic },
-        { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', provider: ExternalProvider.Anthropic },
-        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet v2', provider: ExternalProvider.Anthropic },
-        { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', provider: ExternalProvider.Anthropic },
-        { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: ExternalProvider.Anthropic },
-        { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', provider: ExternalProvider.Anthropic },
-        { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', provider: ExternalProvider.Anthropic },
-    ],
-    [ExternalProvider.HuggingFace]: [
-        { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.HuggingFace },
-        { id: 'meta-llama/Llama-3.1-70B-Instruct', name: 'Llama 3.1 70B', provider: ExternalProvider.HuggingFace },
-        { id: 'meta-llama/Llama-3.1-8B-Instruct', name: 'Llama 3.1 8B', provider: ExternalProvider.HuggingFace },
-        { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', name: 'Mixtral 8x7B', provider: ExternalProvider.HuggingFace },
-        { id: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B v0.3', provider: ExternalProvider.HuggingFace },
-        { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: ExternalProvider.HuggingFace },
-        { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen 2.5 7B', provider: ExternalProvider.HuggingFace },
-        { id: 'google/gemma-2-27b-it', name: 'Gemma 2 27B', provider: ExternalProvider.HuggingFace },
-        { id: 'google/gemma-2-9b-it', name: 'Gemma 2 9B', provider: ExternalProvider.HuggingFace },
-    ],
-    [ExternalProvider.Kimi]: [
-        { id: 'moonshot-v1-8k', name: 'Moonshot v1 8K', provider: ExternalProvider.Kimi, context_length: 8192 },
-        { id: 'moonshot-v1-32k', name: 'Moonshot v1 32K', provider: ExternalProvider.Kimi, context_length: 32768 },
-        { id: 'moonshot-v1-128k', name: 'Moonshot v1 128K', provider: ExternalProvider.Kimi, context_length: 131072 },
-    ],
-    [ExternalProvider.ZAi]: [
-        { id: 'glm-4-plus', name: 'GLM-4 Plus', provider: ExternalProvider.ZAi },
-        { id: 'glm-4-0520', name: 'GLM-4 0520', provider: ExternalProvider.ZAi },
-        { id: 'glm-4-air', name: 'GLM-4 Air', provider: ExternalProvider.ZAi },
-        { id: 'glm-4-airx', name: 'GLM-4 AirX', provider: ExternalProvider.ZAi },
-        { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: ExternalProvider.ZAi },
-    ],
-    [ExternalProvider.Qwen]: [
-        { id: 'qwen-turbo', name: 'Qwen Turbo', provider: ExternalProvider.Qwen },
-        { id: 'qwen-plus', name: 'Qwen Plus', provider: ExternalProvider.Qwen },
-        { id: 'qwen-max', name: 'Qwen Max', provider: ExternalProvider.Qwen },
-        { id: 'qwen-max-longcontext', name: 'Qwen Max Long Context', provider: ExternalProvider.Qwen },
-    ],
+  [ProviderType.Gemini]: [
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ExternalProvider.OpenAI },
+    { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (Exp)', provider: ExternalProvider.OpenAI },
+    { id: 'gemini-2.0-pro-exp', name: 'Gemini 2.0 Pro (Exp)', provider: ExternalProvider.OpenAI },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: ExternalProvider.OpenAI },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: ExternalProvider.OpenAI },
+  ],
+  [ExternalProvider.Anthropic]: [
+    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: ExternalProvider.Anthropic },
+    { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', provider: ExternalProvider.Anthropic },
+    { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', provider: ExternalProvider.Anthropic },
+    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet v2', provider: ExternalProvider.Anthropic },
+    { id: 'claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet', provider: ExternalProvider.Anthropic },
+    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: ExternalProvider.Anthropic },
+    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', provider: ExternalProvider.Anthropic },
+    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', provider: ExternalProvider.Anthropic },
+  ],
+  [ExternalProvider.MiniMax]: [
+    { id: 'MiniMax-M1-80k', name: 'MiniMax M1 80K', provider: ExternalProvider.MiniMax },
+    { id: 'MiniMax-M1-40k', name: 'MiniMax M1 40K', provider: ExternalProvider.MiniMax },
+  ],
+  [ExternalProvider.HuggingFace]: [
+    { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.HuggingFace },
+    { id: 'meta-llama/Llama-3.1-70B-Instruct', name: 'Llama 3.1 70B', provider: ExternalProvider.HuggingFace },
+    { id: 'meta-llama/Llama-3.1-8B-Instruct', name: 'Llama 3.1 8B', provider: ExternalProvider.HuggingFace },
+    { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', name: 'Mixtral 8x7B', provider: ExternalProvider.HuggingFace },
+    { id: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B v0.3', provider: ExternalProvider.HuggingFace },
+    { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: ExternalProvider.HuggingFace },
+    { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen 2.5 7B', provider: ExternalProvider.HuggingFace },
+    { id: 'google/gemma-2-27b-it', name: 'Gemma 2 27B', provider: ExternalProvider.HuggingFace },
+    { id: 'google/gemma-2-9b-it', name: 'Gemma 2 9B', provider: ExternalProvider.HuggingFace },
+  ],
+  [ExternalProvider.Kimi]: [
+    { id: 'moonshot-v1-8k', name: 'Moonshot v1 8K', provider: ExternalProvider.Kimi, context_length: 8192 },
+    { id: 'moonshot-v1-32k', name: 'Moonshot v1 32K', provider: ExternalProvider.Kimi, context_length: 32768 },
+    { id: 'moonshot-v1-128k', name: 'Moonshot v1 128K', provider: ExternalProvider.Kimi, context_length: 131072 },
+  ],
+  [ExternalProvider.ZAi]: [
+    { id: 'glm-4-plus', name: 'GLM-4 Plus', provider: ExternalProvider.ZAi },
+    { id: 'glm-4-0520', name: 'GLM-4 0520', provider: ExternalProvider.ZAi },
+    { id: 'glm-4-air', name: 'GLM-4 Air', provider: ExternalProvider.ZAi },
+    { id: 'glm-4-airx', name: 'GLM-4 AirX', provider: ExternalProvider.ZAi },
+    { id: 'glm-4-flash', name: 'GLM-4 Flash', provider: ExternalProvider.ZAi },
+  ],
+  [ExternalProvider.Qwen]: [
+    { id: 'qwen-turbo', name: 'Qwen Turbo', provider: ExternalProvider.Qwen },
+    { id: 'qwen-plus', name: 'Qwen Plus', provider: ExternalProvider.Qwen },
+    { id: 'qwen-max', name: 'Qwen Max', provider: ExternalProvider.Qwen },
+    { id: 'qwen-max-longcontext', name: 'Qwen Max Long Context', provider: ExternalProvider.Qwen },
+  ],
 };
 
 /**
  * Default fallback models for providers with /models endpoint (used when API call fails)
  */
 export const DEFAULT_FALLBACK_MODELS: Partial<Record<ModelListProvider, ProviderModel[]>> = {
-    [ExternalProvider.OpenAI]: [
-        { id: 'gpt-4o', name: 'GPT-4o', provider: ExternalProvider.OpenAI, context_length: 128000 },
-        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: ExternalProvider.OpenAI, context_length: 128000 },
-        { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: ExternalProvider.OpenAI, context_length: 128000 },
-        { id: 'gpt-4', name: 'GPT-4', provider: ExternalProvider.OpenAI, context_length: 8192 },
-        { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: ExternalProvider.OpenAI, context_length: 16385 },
-        { id: 'o1', name: 'o1', provider: ExternalProvider.OpenAI, context_length: 200000 },
-        { id: 'o1-mini', name: 'o1 Mini', provider: ExternalProvider.OpenAI, context_length: 128000 },
-        { id: 'o1-preview', name: 'o1 Preview', provider: ExternalProvider.OpenAI, context_length: 128000 },
-    ],
-    [ExternalProvider.Groq]: [
-        { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', provider: ExternalProvider.Groq, context_length: 128000 },
-        { id: 'llama-3.1-70b-versatile', name: 'Llama 3.1 70B', provider: ExternalProvider.Groq, context_length: 128000 },
-        { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', provider: ExternalProvider.Groq, context_length: 128000 },
-        { id: 'llama3-70b-8192', name: 'Llama 3 70B', provider: ExternalProvider.Groq, context_length: 8192 },
-        { id: 'llama3-8b-8192', name: 'Llama 3 8B', provider: ExternalProvider.Groq, context_length: 8192 },
-        { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', provider: ExternalProvider.Groq, context_length: 32768 },
-        { id: 'gemma2-9b-it', name: 'Gemma 2 9B', provider: ExternalProvider.Groq, context_length: 8192 },
-    ],
-    [ExternalProvider.Together]: [
-        { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B Turbo', provider: ExternalProvider.Together, context_length: 128000 },
-        { id: 'meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo', name: 'Llama 3.1 405B Turbo', provider: ExternalProvider.Together, context_length: 128000 },
-        { id: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', name: 'Llama 3.1 70B Turbo', provider: ExternalProvider.Together, context_length: 128000 },
-        { id: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo', name: 'Llama 3.1 8B Turbo', provider: ExternalProvider.Together, context_length: 128000 },
-        { id: 'Qwen/Qwen2.5-72B-Instruct-Turbo', name: 'Qwen 2.5 72B Turbo', provider: ExternalProvider.Together, context_length: 32768 },
-        { id: 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B', name: 'DeepSeek R1 Distill 70B', provider: ExternalProvider.Together },
-        { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3', provider: ExternalProvider.Together },
-        { id: 'mistralai/Mixtral-8x22B-Instruct-v0.1', name: 'Mixtral 8x22B', provider: ExternalProvider.Together, context_length: 65536 },
-    ],
-    [ExternalProvider.Cerebras]: [
-        { id: 'llama3.1-70b', name: 'Llama 3.1 70B', provider: ExternalProvider.Cerebras, context_length: 128000 },
-        { id: 'llama3.1-8b', name: 'Llama 3.1 8B', provider: ExternalProvider.Cerebras, context_length: 128000 },
-        { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: ExternalProvider.Cerebras, context_length: 128000 },
-    ],
-    [ExternalProvider.Featherless]: [
-        { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.Featherless },
-        { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: ExternalProvider.Featherless },
-        { id: 'Qwen/QwQ-32B-Preview', name: 'QwQ 32B', provider: ExternalProvider.Featherless },
-        { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B', name: 'DeepSeek R1 Distill 32B', provider: ExternalProvider.Featherless },
-        { id: 'mistralai/Mistral-Nemo-Instruct-2407', name: 'Mistral Nemo', provider: ExternalProvider.Featherless },
-    ],
-    [ExternalProvider.QwenDeepInfra]: [
-        { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: ExternalProvider.QwenDeepInfra },
-        { id: 'Qwen/QwQ-32B-Preview', name: 'QwQ 32B', provider: ExternalProvider.QwenDeepInfra },
-        { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.QwenDeepInfra },
-        { id: 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B', name: 'DeepSeek R1 Distill 70B', provider: ExternalProvider.QwenDeepInfra },
-    ],
-    [ExternalProvider.OpenRouter]: [
-        { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', provider: ExternalProvider.OpenRouter },
-        { id: 'anthropic/claude-opus-4', name: 'Claude Opus 4', provider: ExternalProvider.OpenRouter },
-        { id: 'anthropic/claude-3.7-sonnet', name: 'Claude 3.7 Sonnet', provider: ExternalProvider.OpenRouter },
-        { id: 'openai/gpt-4o', name: 'GPT-4o', provider: ExternalProvider.OpenRouter },
-        { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: ExternalProvider.OpenRouter },
-        { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.OpenRouter },
-        { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', provider: ExternalProvider.OpenRouter },
-    ],
-    [ExternalProvider.Ollama]: [
-        { id: 'llama3.2', name: 'Llama 3.2', provider: ExternalProvider.Ollama },
-        { id: 'llama3.1', name: 'Llama 3.1', provider: ExternalProvider.Ollama },
-        { id: 'llama3', name: 'Llama 3', provider: ExternalProvider.Ollama },
-        { id: 'mistral', name: 'Mistral', provider: ExternalProvider.Ollama },
-        { id: 'mixtral', name: 'Mixtral', provider: ExternalProvider.Ollama },
-        { id: 'qwen2.5', name: 'Qwen 2.5', provider: ExternalProvider.Ollama },
-        { id: 'phi4', name: 'Phi-4', provider: ExternalProvider.Ollama },
-        { id: 'deepseek-r1', name: 'DeepSeek R1', provider: ExternalProvider.Ollama },
-    ],
-    [ExternalProvider.Other]: [
-        { id: 'custom-model', name: 'Custom Model', provider: ExternalProvider.Other },
-    ],
+  [ExternalProvider.OpenAI]: [
+    { id: 'gpt-4o', name: 'GPT-4o', provider: ExternalProvider.OpenAI, context_length: 128000 },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: ExternalProvider.OpenAI, context_length: 128000 },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: ExternalProvider.OpenAI, context_length: 128000 },
+    { id: 'gpt-4', name: 'GPT-4', provider: ExternalProvider.OpenAI, context_length: 8192 },
+    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: ExternalProvider.OpenAI, context_length: 16385 },
+    { id: 'o1', name: 'o1', provider: ExternalProvider.OpenAI, context_length: 200000 },
+    { id: 'o1-mini', name: 'o1 Mini', provider: ExternalProvider.OpenAI, context_length: 128000 },
+    { id: 'o1-preview', name: 'o1 Preview', provider: ExternalProvider.OpenAI, context_length: 128000 },
+  ],
+  [ExternalProvider.Groq]: [
+    { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', provider: ExternalProvider.Groq, context_length: 128000 },
+    { id: 'llama-3.1-70b-versatile', name: 'Llama 3.1 70B', provider: ExternalProvider.Groq, context_length: 128000 },
+    { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', provider: ExternalProvider.Groq, context_length: 128000 },
+    { id: 'llama3-70b-8192', name: 'Llama 3 70B', provider: ExternalProvider.Groq, context_length: 8192 },
+    { id: 'llama3-8b-8192', name: 'Llama 3 8B', provider: ExternalProvider.Groq, context_length: 8192 },
+    { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', provider: ExternalProvider.Groq, context_length: 32768 },
+    { id: 'gemma2-9b-it', name: 'Gemma 2 9B', provider: ExternalProvider.Groq, context_length: 8192 },
+  ],
+  [ExternalProvider.Together]: [
+    { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B Turbo', provider: ExternalProvider.Together, context_length: 128000 },
+    { id: 'meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo', name: 'Llama 3.1 405B Turbo', provider: ExternalProvider.Together, context_length: 128000 },
+    { id: 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo', name: 'Llama 3.1 70B Turbo', provider: ExternalProvider.Together, context_length: 128000 },
+    { id: 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo', name: 'Llama 3.1 8B Turbo', provider: ExternalProvider.Together, context_length: 128000 },
+    { id: 'Qwen/Qwen2.5-72B-Instruct-Turbo', name: 'Qwen 2.5 72B Turbo', provider: ExternalProvider.Together, context_length: 32768 },
+    { id: 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B', name: 'DeepSeek R1 Distill 70B', provider: ExternalProvider.Together },
+    { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3', provider: ExternalProvider.Together },
+    { id: 'mistralai/Mixtral-8x22B-Instruct-v0.1', name: 'Mixtral 8x22B', provider: ExternalProvider.Together, context_length: 65536 },
+  ],
+  [ExternalProvider.Cerebras]: [
+    { id: 'llama3.1-70b', name: 'Llama 3.1 70B', provider: ExternalProvider.Cerebras, context_length: 128000 },
+    { id: 'llama3.1-8b', name: 'Llama 3.1 8B', provider: ExternalProvider.Cerebras, context_length: 128000 },
+    { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: ExternalProvider.Cerebras, context_length: 128000 },
+  ],
+  [ExternalProvider.Featherless]: [
+    { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.Featherless },
+    { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: ExternalProvider.Featherless },
+    { id: 'Qwen/QwQ-32B-Preview', name: 'QwQ 32B', provider: ExternalProvider.Featherless },
+    { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B', name: 'DeepSeek R1 Distill 32B', provider: ExternalProvider.Featherless },
+    { id: 'mistralai/Mistral-Nemo-Instruct-2407', name: 'Mistral Nemo', provider: ExternalProvider.Featherless },
+  ],
+  [ExternalProvider.QwenDeepInfra]: [
+    { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: ExternalProvider.QwenDeepInfra },
+    { id: 'Qwen/QwQ-32B-Preview', name: 'QwQ 32B', provider: ExternalProvider.QwenDeepInfra },
+    { id: 'meta-llama/Llama-3.3-70B-Instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.QwenDeepInfra },
+    { id: 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B', name: 'DeepSeek R1 Distill 70B', provider: ExternalProvider.QwenDeepInfra },
+  ],
+  [ExternalProvider.OpenRouter]: [
+    { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', provider: ExternalProvider.OpenRouter },
+    { id: 'anthropic/claude-opus-4', name: 'Claude Opus 4', provider: ExternalProvider.OpenRouter },
+    { id: 'anthropic/claude-3.7-sonnet', name: 'Claude 3.7 Sonnet', provider: ExternalProvider.OpenRouter },
+    { id: 'openai/gpt-4o', name: 'GPT-4o', provider: ExternalProvider.OpenRouter },
+    { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: ExternalProvider.OpenRouter },
+    { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.OpenRouter },
+    { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', provider: ExternalProvider.OpenRouter },
+  ],
+  [ExternalProvider.Ollama]: [
+    { id: 'llama3.2', name: 'Llama 3.2', provider: ExternalProvider.Ollama },
+    { id: 'llama3.1', name: 'Llama 3.1', provider: ExternalProvider.Ollama },
+    { id: 'llama3', name: 'Llama 3', provider: ExternalProvider.Ollama },
+    { id: 'mistral', name: 'Mistral', provider: ExternalProvider.Ollama },
+    { id: 'mixtral', name: 'Mixtral', provider: ExternalProvider.Ollama },
+    { id: 'qwen2.5', name: 'Qwen 2.5', provider: ExternalProvider.Ollama },
+    { id: 'phi4', name: 'Phi-4', provider: ExternalProvider.Ollama },
+    { id: 'deepseek-r1', name: 'DeepSeek R1', provider: ExternalProvider.Ollama },
+  ],
+  [ExternalProvider.Other]: [
+    { id: 'custom-model', name: 'Custom Model', provider: ExternalProvider.Other },
+  ],
 };
 
 // ============================================================================
@@ -274,80 +283,80 @@ export const DEFAULT_FALLBACK_MODELS: Partial<Record<ModelListProvider, Provider
  * Format: partial model ID match -> context limit in tokens
  */
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-    // OpenAI models
-    'gpt-4o': 128000,
-    'gpt-4o-mini': 128000,
-    'gpt-4-turbo': 128000,
-    'gpt-4-32k': 32768,
-    'gpt-4': 8192,
-    'gpt-3.5-turbo-16k': 16384,
-    'gpt-3.5-turbo': 4096,
-    'o1': 200000,
-    'o1-mini': 128000,
-    'o1-preview': 128000,
-    'o3-mini': 200000,
+  // OpenAI models
+  'gpt-4o': 128000,
+  'gpt-4o-mini': 128000,
+  'gpt-4-turbo': 128000,
+  'gpt-4-32k': 32768,
+  'gpt-4': 8192,
+  'gpt-3.5-turbo-16k': 16384,
+  'gpt-3.5-turbo': 4096,
+  'o1': 200000,
+  'o1-mini': 128000,
+  'o1-preview': 128000,
+  'o3-mini': 200000,
 
-    // Anthropic Claude models
-    'claude-opus-4': 200000,
-    'claude-sonnet-4': 200000,
-    'claude-3.7-sonnet': 200000,
-    'claude-3-5-sonnet': 200000,
-    'claude-3-5-haiku': 200000,
-    'claude-3-opus': 200000,
-    'claude-3-sonnet': 200000,
-    'claude-3-haiku': 200000,
-    'claude-2': 100000,
+  // Anthropic Claude models
+  'claude-opus-4': 200000,
+  'claude-sonnet-4': 200000,
+  'claude-3.7-sonnet': 200000,
+  'claude-3-5-sonnet': 200000,
+  'claude-3-5-haiku': 200000,
+  'claude-3-opus': 200000,
+  'claude-3-sonnet': 200000,
+  'claude-3-haiku': 200000,
+  'claude-2': 100000,
 
-    // Google Gemini models
-    'gemini-2.0-flash': 1000000,
-    'gemini-2.0-pro': 1000000,
-    'gemini-1.5-pro': 2000000,
-    'gemini-1.5-flash': 1000000,
-    'gemini-1.0-pro': 32768,
+  // Google Gemini models
+  'gemini-2.0-flash': 1000000,
+  'gemini-2.0-pro': 1000000,
+  'gemini-1.5-pro': 2000000,
+  'gemini-1.5-flash': 1000000,
+  'gemini-1.0-pro': 32768,
 
-    // Meta Llama models
-    'llama-3.3-70b': 128000,
-    'llama-3.1-405b': 128000,
-    'llama-3.1-70b': 128000,
-    'llama-3.1-8b': 128000,
-    'llama-3-70b': 8192,
-    'llama-3-8b': 8192,
-    'llama-2-70b': 4096,
-    'llama-2-13b': 4096,
-    'llama-2-7b': 4096,
+  // Meta Llama models
+  'llama-3.3-70b': 128000,
+  'llama-3.1-405b': 128000,
+  'llama-3.1-70b': 128000,
+  'llama-3.1-8b': 128000,
+  'llama-3-70b': 8192,
+  'llama-3-8b': 8192,
+  'llama-2-70b': 4096,
+  'llama-2-13b': 4096,
+  'llama-2-7b': 4096,
 
-    // Mistral models
-    'mixtral-8x22b': 65536,
-    'mixtral-8x7b': 32768,
-    'mistral-large': 128000,
-    'mistral-medium': 32768,
-    'mistral-small': 32768,
-    'mistral-7b': 32768,
-    'mistral-nemo': 128000,
+  // Mistral models
+  'mixtral-8x22b': 65536,
+  'mixtral-8x7b': 32768,
+  'mistral-large': 128000,
+  'mistral-medium': 32768,
+  'mistral-small': 32768,
+  'mistral-7b': 32768,
+  'mistral-nemo': 128000,
 
-    // Qwen models
-    'qwen2.5-72b': 131072,
-    'qwen2.5-32b': 131072,
-    'qwen2.5-14b': 131072,
-    'qwen2.5-7b': 131072,
-    'qwq-32b': 32768,
-    'qwen-max': 32768,
-    'qwen-plus': 131072,
-    'qwen-turbo': 131072,
+  // Qwen models
+  'qwen2.5-72b': 131072,
+  'qwen2.5-32b': 131072,
+  'qwen2.5-14b': 131072,
+  'qwen2.5-7b': 131072,
+  'qwq-32b': 32768,
+  'qwen-max': 32768,
+  'qwen-plus': 131072,
+  'qwen-turbo': 131072,
 
-    // DeepSeek models
-    'deepseek-v3': 65536,
-    'deepseek-r1': 65536,
-    'deepseek-chat': 65536,
-    'deepseek-coder': 16384,
+  // DeepSeek models
+  'deepseek-v3': 65536,
+  'deepseek-r1': 65536,
+  'deepseek-chat': 65536,
+  'deepseek-coder': 16384,
 
-    // Other models
-    'gemma-2-27b': 8192,
-    'gemma-2-9b': 8192,
-    'phi-4': 16384,
-    'phi-3': 128000,
-    'command-r-plus': 128000,
-    'command-r': 128000,
+  // Other models
+  'gemma-2-27b': 8192,
+  'gemma-2-9b': 8192,
+  'phi-4': 16384,
+  'phi-3': 128000,
+  'command-r-plus': 128000,
+  'command-r': 128000,
 };
 
 /**
@@ -359,23 +368,23 @@ export const DEFAULT_CONTEXT_LIMIT = 8192;
  * Get context limit for a model by matching partial model ID.
  */
 export function getModelContextLimit(modelId: string): number {
-    if (!modelId) return DEFAULT_CONTEXT_LIMIT;
+  if (!modelId) return DEFAULT_CONTEXT_LIMIT;
 
-    const normalizedId = modelId.toLowerCase();
+  const normalizedId = modelId.toLowerCase();
 
-    // Try exact match first
-    if (MODEL_CONTEXT_LIMITS[normalizedId]) {
-        return MODEL_CONTEXT_LIMITS[normalizedId];
+  // Try exact match first
+  if (MODEL_CONTEXT_LIMITS[normalizedId]) {
+    return MODEL_CONTEXT_LIMITS[normalizedId];
+  }
+
+  // Try partial match (model ID contains key)
+  for (const [key, limit] of Object.entries(MODEL_CONTEXT_LIMITS)) {
+    if (normalizedId.includes(key.toLowerCase())) {
+      return limit;
     }
+  }
 
-    // Try partial match (model ID contains key)
-    for (const [key, limit] of Object.entries(MODEL_CONTEXT_LIMITS)) {
-        if (normalizedId.includes(key.toLowerCase())) {
-            return limit;
-        }
-    }
-
-    return DEFAULT_CONTEXT_LIMIT;
+  return DEFAULT_CONTEXT_LIMIT;
 }
 
 // ============================================================================
@@ -383,25 +392,25 @@ export function getModelContextLimit(modelId: string): number {
 // ============================================================================
 
 export enum ContextCompactionStrategy {
-    /** Remove oldest messages first (keep recent context) */
-    TruncateOld = 'truncate-old',
-    /** Keep first message (system) + last N messages, remove middle */
-    TruncateMiddle = 'truncate-middle',
-    /** Summarize older messages using LLM (preserves key info) */
-    Summarize = 'summarize',
-    /** No compaction - let API handle truncation */
-    None = 'none',
+  /** Remove oldest messages first (keep recent context) */
+  TruncateOld = 'truncate-old',
+  /** Keep first message (system) + last N messages, remove middle */
+  TruncateMiddle = 'truncate-middle',
+  /** Summarize older messages using LLM (preserves key info) */
+  Summarize = 'summarize',
+  /** No compaction - let API handle truncation */
+  None = 'none',
 }
 
 export interface ContextCompactionConfig {
-    /** Strategy to use for compaction */
-    strategy: ContextCompactionStrategy;
-    /** Reserve this many tokens for the response */
-    responseReserve: number;
-    /** Buffer percentage below context limit to trigger compaction (0.8 = 80%) */
-    triggerThreshold: number;
-    /** For truncate-middle: how many recent messages to preserve */
-    keepRecentMessages: number;
-    /** For summarize: the prompt to use for summarization */
-    summarizePrompt: string;
+  /** Strategy to use for compaction */
+  strategy: ContextCompactionStrategy;
+  /** Reserve this many tokens for the response */
+  responseReserve: number;
+  /** Buffer percentage below context limit to trigger compaction (0.8 = 80%) */
+  triggerThreshold: number;
+  /** For truncate-middle: how many recent messages to preserve */
+  keepRecentMessages: number;
+  /** For summarize: the prompt to use for summarization */
+  summarizePrompt: string;
 }

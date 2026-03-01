@@ -163,7 +163,7 @@ const buildRewriteUserPrompt = (log, field) => {
 /**
  * Rewrite a single message in a conversation
  */
-const rewriteMessage = async ({ messages, messageIndex, field, baseUrl, apiKey, model, maxRetries, retryDelay, customSystemPrompt, fieldPrompts }) => {
+const rewriteMessage = async ({ messages, messageIndex, field, baseUrl, apiKey, model, provider, maxRetries, retryDelay, customSystemPrompt, fieldPrompts }) => {
     const message = messages[messageIndex];
     const { reasoning, answer } = parseMessageContent(message);
 
@@ -195,6 +195,7 @@ const rewriteMessage = async ({ messages, messageIndex, field, baseUrl, apiKey, 
         baseUrl,
         apiKey,
         model,
+        provider,
         systemPrompt,
         userPrompt,
         maxTokens: 8192,
@@ -209,7 +210,7 @@ const rewriteMessage = async ({ messages, messageIndex, field, baseUrl, apiKey, 
 /**
  * Process a single log item with conversational data (messages array)
  */
-const rewriteConversationalItem = async ({ log, fields, repo, baseUrl, apiKey, model, maxRetries, retryDelay, customSystemPrompt, fieldPrompts }) => {
+const rewriteConversationalItem = async ({ log, fields, repo, baseUrl, apiKey, model, provider, maxRetries, retryDelay, customSystemPrompt, fieldPrompts }) => {
     const messages = [...log.messages]; // Clone to modify
     const fieldResults = [];
     let anyUpdates = false;
@@ -239,6 +240,7 @@ const rewriteConversationalItem = async ({ log, fields, repo, baseUrl, apiKey, m
                     baseUrl,
                     apiKey,
                     model,
+                    provider,
                     maxRetries,
                     retryDelay,
                     customSystemPrompt,
@@ -308,7 +310,7 @@ const rewriteConversationalItem = async ({ log, fields, repo, baseUrl, apiKey, m
 /**
  * Process a single log item with flat data (query/reasoning/answer fields)
  */
-const rewriteFlatItem = async ({ log, fields, repo, baseUrl, apiKey, model, maxRetries, retryDelay, customSystemPrompt, fieldPrompts }) => {
+const rewriteFlatItem = async ({ log, fields, repo, baseUrl, apiKey, model, provider, maxRetries, retryDelay, customSystemPrompt, fieldPrompts }) => {
     const updates = {};
     const fieldResults = [];
 
@@ -323,6 +325,7 @@ const rewriteFlatItem = async ({ log, fields, repo, baseUrl, apiKey, model, maxR
                 baseUrl,
                 apiKey,
                 model,
+                provider,
                 systemPrompt,
                 userPrompt,
                 maxTokens: 8192,
@@ -587,7 +590,7 @@ export const registerStartRewriteRoute = (app, { repo, createJob, updateJob, get
 
                     // Run batch concurrently
                     const results = await Promise.allSettled(
-                        batch.map(log => rewriteOneItem({ log, fields: validFields, repo, baseUrl, apiKey, model: resolvedModel, maxRetries, retryDelay, customSystemPrompt: resolvedSystemPrompt, fieldPrompts: resolvedFieldPrompts }))
+                        batch.map(log => rewriteOneItem({ log, fields: validFields, repo, baseUrl, apiKey, model: resolvedModel, provider: resolvedProvider, maxRetries, retryDelay, customSystemPrompt: resolvedSystemPrompt, fieldPrompts: resolvedFieldPrompts }))
                     );
 
                     // Collect results

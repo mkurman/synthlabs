@@ -245,6 +245,8 @@ export const fetchSessions = async (filters?: SessionListFilters, cursor?: strin
         if (filters.appMode) params.set('appMode', filters.appMode);
         if (filters.engineMode) params.set('engineMode', filters.engineMode);
         if (filters.model) params.set('model', filters.model);
+        if (filters.verificationStatus && filters.verificationStatus !== 'all') params.set('verificationStatus', filters.verificationStatus);
+        if (filters.tags && filters.tags.length > 0) params.set('tags', filters.tags.join(','));
     }
     if (cursor) params.set('cursor', cursor);
     if (limit) params.set('limit', String(limit));

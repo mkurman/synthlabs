@@ -23,6 +23,7 @@
     "electron:build:mac": "vite build && npm run bundle:server && electron-builder --mac"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
     "@google/genai": "^1.33.0",
     "@huggingface/hub": "0.15.1",
     "cors": "^2.8.5",
@@ -33,6 +34,7 @@
     "hyparquet-writer": "^0.11.2",
     "json-repair-js": "^1.0.0",
     "lucide-react": "^0.561.0",
+    "openai": "^6.21.0",
     "pg": "^8.18.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

@@ -470,6 +470,8 @@ export const SettingsService = {
                 return env.VITE_ZAI_API_KEY || '';
             case 'chutes':
                 return env.VITE_CHUTES_API_KEY || '';
+            case 'minimax':
+                return env.VITE_MINIMAX_API_KEY || '';
             case 'huggingface':
                 return settings.huggingFaceToken || env.VITE_HF_TOKEN || '';
             case 'ollama':

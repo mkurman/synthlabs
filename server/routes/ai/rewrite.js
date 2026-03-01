@@ -27,6 +27,9 @@ const ALLOWED_FIELDS = ['query', 'reasoning', 'answer'];
  */
 const mapProvider = (provider) => {
     const normalized = (provider || '').toLowerCase();
+    if (normalized.includes('minimax')) {
+        return Providers.MINIMAX;
+    }
     if (normalized.includes('anthropic') || normalized.includes('claude')) {
         return Providers.ANTHROPIC;
     }
