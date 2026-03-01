@@ -27,6 +27,9 @@ const getAppViewFromHash = (hash: string): AppView | null => {
   if (normalized === AppView.Verifier) {
     return AppView.Verifier;
   }
+  if (normalized === AppView.BatchDebugger) {
+    return AppView.BatchDebugger;
+  }
   return null;
 };
 

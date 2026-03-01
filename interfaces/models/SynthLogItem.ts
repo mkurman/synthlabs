@@ -1,5 +1,6 @@
 import { LogItemStatus } from '../enums';
 import { ChatMessage } from './ChatMessage';
+import type { ReplayConfig } from '../types/ReplayConfig';
 
 export interface SynthLogItem {
   id: string;
@@ -52,4 +53,11 @@ export interface SynthLogItem {
   duplicateGroupId?: string;
   isDiscarded?: boolean;
   verifiedTimestamp?: string;
+  replayAnswer?: string;
+  replayReasoning?: string;
+  replayTimestamp?: string;
+  replayModelUsed?: string;
+  replayError?: string;
+  replayDuration?: number;
+  replayConfig?: ReplayConfig;
 }

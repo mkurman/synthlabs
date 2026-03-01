@@ -1,5 +1,5 @@
 import { ReactNode, useState, useEffect } from 'react';
-import { PanelRightOpen, PanelLeftOpen, X, Cpu } from 'lucide-react';
+import { PanelRightOpen, PanelLeftOpen, X } from 'lucide-react';
 
 interface LayoutContainerProps {
     leftSidebar: ReactNode;
@@ -131,34 +131,38 @@ export default function LayoutContainer({
                         </button>
                     )}
 
-                    {/* Right Sidebar slide-over panel */}
-                    <div
-                        className={`
-                            fixed inset-y-0 right-0 z-40 w-[320px] bg-slate-950/90 border-l border-slate-800/70 transition-transform duration-300 ease-in-out shadow-2xl backdrop-blur-xl
-                            ${isRightSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
-                        `}
-                    >
-                        {rightSidebar}
-                        {onRightSidebarToggle && (
-                            <button
-                                onClick={() => onRightSidebarToggle(false)}
-                                className="absolute top-4 right-4 p-2 text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-lg transition-colors"
-                                title="Close panel"
+                    {rightSidebar && (
+                        <>
+                            {/* Right Sidebar slide-over panel */}
+                            <div
+                                className={`
+                                    fixed inset-y-0 right-0 z-40 w-[320px] bg-slate-950/90 border-l border-slate-800/70 transition-transform duration-300 ease-in-out shadow-2xl backdrop-blur-xl
+                                    ${isRightSidebarOpen ? 'translate-x-0' : 'translate-x-full'}
+                                `}
                             >
-                                <X className="w-4 h-4" />
-                            </button>
-                        )}
-                    </div>
+                                {rightSidebar}
+                                {onRightSidebarToggle && (
+                                    <button
+                                        onClick={() => onRightSidebarToggle(false)}
+                                        className="absolute top-4 right-4 p-2 text-slate-300 hover:text-white hover:bg-slate-900/60 rounded-lg transition-colors"
+                                        title="Close panel"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </button>
+                                )}
+                            </div>
 
-                    {/* Floating button to open right sidebar when closed */}
-                    {!isRightSidebarOpen && onRightSidebarToggle && (
-                        <button
-                            onClick={() => onRightSidebarToggle(true)}
-                            className="fixed bottom-4 right-4 z-30 p-3 bg-sky-600 hover:bg-sky-500 text-white rounded-full shadow-lg transition-all hover:scale-105"
-                            title="Open controls panel"
-                        >
-                            <PanelRightOpen className="w-5 h-5" />
-                        </button>
+                            {/* Floating button to open right sidebar when closed */}
+                            {!isRightSidebarOpen && onRightSidebarToggle && (
+                                <button
+                                    onClick={() => onRightSidebarToggle(true)}
+                                    className="fixed bottom-4 right-4 z-30 p-3 bg-sky-600 hover:bg-sky-500 text-white rounded-full shadow-lg transition-all hover:scale-105"
+                                    title="Open controls panel"
+                                >
+                                    <PanelRightOpen className="w-5 h-5" />
+                                </button>
+                            )}
+                        </>
                     )}
                 </main>
             </div>

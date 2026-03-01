@@ -24,7 +24,7 @@ export interface IndexedDBItem {
  * Open IndexedDB connection
  */
 export async function openSessionDatabase(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
+    const openDB = (): Promise<IDBDatabase> => new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
         request.onerror = () => {
@@ -55,6 +55,23 @@ export async function openSessionDatabase(): Promise<IDBDatabase> {
             }
         };
     });
+
+    const db = await openDB();
+
+    // If stores are missing (corrupt/stale DB), delete and recreate
+    const hasAllStores = db.objectStoreNames.contains(SESSIONS_STORE) && db.objectStoreNames.contains(ITEMS_STORE);
+    if (!hasAllStores) {
+        db.close();
+        await new Promise<void>((resolve, reject) => {
+            const deleteRequest = indexedDB.deleteDatabase(DB_NAME);
+            deleteRequest.onsuccess = () => resolve();
+            deleteRequest.onerror = () => reject(deleteRequest.error);
+            deleteRequest.onblocked = () => resolve();
+        });
+        return openDB();
+    }
+
+    return db;
 }
 
 /**

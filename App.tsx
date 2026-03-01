@@ -58,7 +58,8 @@ import LeftSidebar from './components/LeftSidebar';
 import RightSidebar from './components/RightSidebar';
 import ModeNavbar from './components/ModeNavbar';
 import CreatorControls from './components/creator/CreatorControls';
-import { sessionLoadService, SessionSummary } from './services/sessionLoadService';
+import BatchPromptDebugger from './components/BatchPromptDebugger';
+import { sessionLoadService } from './services/sessionLoadService';
 
 // Session Management
 import { useSessionManager } from './hooks/useSessionManager';
@@ -414,6 +415,7 @@ export default function App() {
     const [retryingIds, setRetryingIds] = useState<Set<string>>(new Set());
     // DB save tracking state
     const [savingToDbIds, setSavingToDbIds] = useState<Set<string>>(new Set());
+    const [replayingIds, setReplayingIds] = useState<Set<string>>(new Set());
 
     // UI State for Deep Config
     const [activeDeepTab, setActiveDeepTab] = useState<DeepPhase>(DeepPhase.Meta);
@@ -1145,6 +1147,9 @@ export default function App() {
         retryAllFailed,
         syncAllUnsavedToDb,
         saveItemToDb,
+        deterministicReplay,
+        acceptReplay,
+        dismissReplay,
         startNewSession
     } = useGenerationActions({
         buildGenerationConfig,
@@ -1157,6 +1162,7 @@ export default function App() {
         updateDbStats,
         setRetryingIds,
         setSavingToDbIds,
+        setReplayingIds,
         dataSourceMode,
         hfConfig,
         manualFileName,
@@ -1401,9 +1407,13 @@ export default function App() {
         onRetry: retryItem,
         onRetrySave: retrySave,
         onSaveToDb: saveItemToDb,
+        onDeterministicReplay: deterministicReplay,
+        onAcceptReplay: acceptReplay,
+        onDismissReplay: dismissReplay,
         onDelete: handleDeleteLog,
         onHalt: haltStreamingItem,
         retryingIds,
+        replayingIds,
         savingIds: savingToDbIds,
         streamingConversations: streamingConversationsRef.current,
         streamingVersion: streamingConversationsVersion,
@@ -1624,6 +1634,10 @@ export default function App() {
                                         refreshTrigger={jobCompletionCounter}
                                     />
                                 </div>
+                            ) : appView === AppView.BatchDebugger ? (
+                                <div className="h-full overflow-y-auto">
+                                    <BatchPromptDebugger />
+                                </div>
                             ) : (
                                 <div className="h-full overflow-y-auto">
                                     <FeedAnalyticsPanel {...feedProps} />
@@ -1651,6 +1665,8 @@ export default function App() {
                                 </div>
                             )}
                         </RightSidebar>
+                    ) : appView === AppView.BatchDebugger ? (
+                        null
                     ) : (
                         <RightSidebar>
                             <CreatorControls

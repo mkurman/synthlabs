@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { ApiType, ExternalProvider, OllamaStatus, ProviderType } from '../../interfaces/enums';
 import { ModelListProvider } from '../../types';
-import { OllamaModel } from '../../services/externalApiService';
+import { OllamaModel, fetchOllamaVersion } from '../../services/externalApiService';
 import { formatOllamaModelSize } from '../../services/ollamaService';
 import ModelSelector from '../ModelSelector';
 import { ApiType as ApiTypeEnum, ExternalProvider as ExternalProviderEnum, ProviderType as ProviderTypeEnum } from '../../interfaces/enums';
+import { PROVIDERS } from '../../constants';
 
 interface ProviderConfigPanelProps {
     provider: ProviderType;
@@ -54,8 +55,71 @@ export default function ProviderConfigPanel({
     modelSelectorPlaceholder,
     defaultCustomBaseUrl
 }: ProviderConfigPanelProps) {
+    const [gpuName, setGpuName] = useState<string>('Checking...');
+    const [ollamaVersion, setOllamaVersion] = useState<string | null>(null);
+
+    useEffect(() => {
+        let mounted = true;
+        const loadOllamaInfo = async () => {
+            if (externalProvider !== ExternalProviderEnum.Ollama) {
+                setGpuName('Checking...');
+                setOllamaVersion(null);
+                return;
+            }
+
+            const version = await fetchOllamaVersion();
+            if (mounted) {
+                setOllamaVersion(version);
+            }
+
+            if (typeof navigator === 'undefined') {
+                if (mounted) setGpuName('Unavailable');
+                return;
+            }
+
+            const gpuApi = (navigator as Navigator & {
+                gpu?: { requestAdapter: () => Promise<{ name?: string } | null> };
+            }).gpu;
+            if (!gpuApi) {
+                if (mounted) setGpuName('WebGPU not available');
+                return;
+            }
+
+            try {
+                const adapter = await gpuApi.requestAdapter();
+                if (mounted) {
+                    setGpuName(adapter?.name || 'GPU');
+                }
+            } catch {
+                if (mounted) {
+                    setGpuName('Unavailable');
+                }
+            }
+        };
+
+        loadOllamaInfo();
+        return () => {
+            mounted = false;
+        };
+    }, [externalProvider]);
+
     return (
         <div className="animate-in fade-in slide-in-from-left-2 duration-300 space-y-4">
+            <div className="space-y-1">
+                <label className="text-[10px] text-slate-400 font-bold uppercase">Provider</label>
+                <select
+                    value={providerSelectValue}
+                    onChange={(e) => onProviderSelect(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-white focus:border-sky-500 outline-none"
+                >
+                    {externalProviders.map((p) => (
+                        <option key={p} value={p}>
+                            {PROVIDERS[p]?.name || p}
+                        </option>
+                    ))}
+                </select>
+            </div>
+
             {provider === ProviderTypeEnum.External && (
                 <div className="space-y-1">
                     <label className="text-[10px] text-slate-400 font-bold uppercase">API Type</label>
@@ -78,7 +142,7 @@ export default function ProviderConfigPanel({
                         {externalProvider === ExternalProviderEnum.Ollama && (
                             <div className="flex items-center gap-2">
                                 <span className={`text-[9px] ${ollamaStatus === OllamaStatus.Online ? 'text-emerald-400' : ollamaStatus === OllamaStatus.Offline ? 'text-red-400' : 'text-yellow-400'}`}>
-                                    {ollamaStatus === OllamaStatus.Online ? `● ${ollamaModels.length} models` : ollamaStatus === OllamaStatus.Offline ? '● Offline' : '● Checking...'}
+                                    {ollamaStatus === OllamaStatus.Online ? `● ${ollamaModels.length} models` : ollamaStatus === OllamaStatus.Offline ? '● Not Found' : '● Checking...'}
                                 </span>
                                 <button
                                     onClick={onRefreshOllamaModels}
@@ -101,7 +165,7 @@ export default function ProviderConfigPanel({
                             >
                                 <option value="">
                                     {ollamaStatus === OllamaStatus.Checking ? 'Loading models...' :
-                                        ollamaStatus === OllamaStatus.Offline ? 'Ollama is offline' :
+                                        ollamaStatus === OllamaStatus.Offline ? 'Ollama not found' :
                                             ollamaModels.length === 0 ? 'No models found' : 'Select a model'}
                                 </option>
                                 {ollamaModels.map(model => (
@@ -118,7 +182,7 @@ export default function ProviderConfigPanel({
                                             onClick={() => onExternalModelChange(model.name)}
                                             className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${externalModel === model.name
                                                 ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300'
-                                                : 'bg-slate-900/60 border-slate-700/70 text-slate-300 hover-border-emerald-600 hover:text-emerald-400'
+                                                : 'bg-slate-900/60 border-slate-700/70 text-slate-300 hover:border-emerald-600 hover:text-emerald-400'
                                                 }`}
                                         >
                                             {model.name.includes(':') ? model.name.split(':')[0] : model.name}
@@ -127,10 +191,27 @@ export default function ProviderConfigPanel({
                                 </div>
                             )}
                             {ollamaStatus === OllamaStatus.Offline && (
-                                <p className="text-[9px] text-red-400/80">
-                                    Start Ollama: <code className="bg-slate-900/60 px-1 rounded">ollama serve</code>
-                                </p>
+                                <div className="space-y-1 rounded-md border border-red-900/40 bg-red-950/20 px-2 py-1.5">
+                                    <p className="text-[10px] text-red-300 font-semibold">Ollama Not Found</p>
+                                    <p className="text-[9px] text-red-300/80">
+                                        Ollama could not be reached. Ensure it is installed and running.
+                                    </p>
+                                    <p className="text-[9px] text-red-300/80">
+                                        Start Ollama: <code className="bg-slate-900/60 px-1 rounded">ollama serve</code>
+                                    </p>
+                                </div>
                             )}
+                            <div className="space-y-1 rounded-md border border-slate-800/70 bg-slate-950/60 px-2 py-1.5">
+                                <div className="text-[10px] font-semibold text-slate-300">Ollama Runtime</div>
+                                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                                    <span>Ollama Version</span>
+                                    <span>{ollamaVersion || 'Unknown'}</span>
+                                </div>
+                                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                                    <span>GPU</span>
+                                    <span className="truncate max-w-[200px] text-right">{gpuName}</span>
+                                </div>
+                            </div>
                         </div>
                     ) : (
                         <ModelSelector
