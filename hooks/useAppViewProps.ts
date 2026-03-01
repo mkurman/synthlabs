@@ -159,9 +159,13 @@ interface UseAppViewPropsInput {
     onRetry: (id: string) => void;
     onRetrySave: (id: string) => void;
     onSaveToDb: (id: string) => void;
+    onDeterministicReplay: (id: string) => void;
+    onAcceptReplay: (id: string) => void;
+    onDismissReplay: (id: string) => void;
     onDelete: (id: string) => void;
     onHalt: (id: string) => void;
     retryingIds: Set<string>;
+    replayingIds: Set<string>;
     savingIds: Set<string>;
     streamingConversations?: Map<string, StreamingConversationState>;
     streamingVersion: number;
@@ -337,9 +341,13 @@ export function useAppViewProps(input: UseAppViewPropsInput) {
         onRetry: input.onRetry,
         onRetrySave: input.onRetrySave,
         onSaveToDb: input.onSaveToDb,
+        onDeterministicReplay: input.onDeterministicReplay,
+        onAcceptReplay: input.onAcceptReplay,
+        onDismissReplay: input.onDismissReplay,
         onDelete: input.onDelete,
         onHalt: input.onHalt,
         retryingIds: input.retryingIds,
+        replayingIds: input.replayingIds,
         savingIds: input.savingIds,
         isProdMode: input.environment === Environment.Production,
         streamingConversations: input.logFilter === LogFilter.Live ? input.streamingConversations : undefined,

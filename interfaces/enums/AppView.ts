@@ -1,4 +1,5 @@
 export enum AppView {
   Creator = 'creator',
-  Verifier = 'verifier'
+  Verifier = 'verifier',
+  BatchDebugger = 'batch-debugger'
 }

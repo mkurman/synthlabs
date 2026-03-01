@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { SettingsService, AppSettings, StepModelConfig, DeepModeDefaults, DEFAULT_WORKFLOW_DEFAULTS } from '../services/settingsService';
 import { EngineMode, SettingsPanelTab, ApiSubTab } from '../interfaces/enums';
 
@@ -51,11 +51,11 @@ export function useSettingsState(onSettingsChanged?: () => void): UseSettingsSta
     const [availablePromptSets, setAvailablePromptSets] = useState<string[]>([]);
     const [promptMetadata, setPromptMetadata] = useState<Record<string, { name?: string; description?: string; symbols?: string[]; features?: string[] }>>({});
 
-    const loadSettings = () => {
+    const loadSettings = useCallback(() => {
         setSettings(SettingsService.getSettings());
         setSaved(false);
         setConfirmClear(false);
-    };
+    }, []);
 
     const handleSave = async () => {
         await SettingsService.saveSettingsAsync(settings);
