@@ -1,10 +1,16 @@
 import { SessionTag } from '../interfaces/services/SessionConfig';
+import { getBackendUrl } from './backendClient';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
+const buildUrl = async (path: string): Promise<string> => {
+    const base = await getBackendUrl();
+    if (!base) throw new Error('Backend URL is not configured.');
+    return `${base.replace(/\/+$/, '')}${path}`;
+};
 
 export const tagService = {
     async listTags(): Promise<SessionTag[]> {
-        const response = await fetch(`${API_BASE_URL}/api/tags`);
+        const url = await buildUrl('/api/tags');
+        const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Failed to fetch tags: ${response.statusText}`);
         }
@@ -13,7 +19,8 @@ export const tagService = {
     },
 
     async createTag(name: string): Promise<SessionTag> {
-        const response = await fetch(`${API_BASE_URL}/api/tags`, {
+        const url = await buildUrl('/api/tags');
+        const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name })
@@ -30,7 +37,8 @@ export const tagService = {
     },
 
     async deleteTag(uid: string): Promise<void> {
-        const response = await fetch(`${API_BASE_URL}/api/tags/${uid}`, {
+        const url = await buildUrl(`/api/tags/${uid}`);
+        const response = await fetch(url, {
             method: 'DELETE'
         });
         if (!response.ok) {
@@ -39,7 +47,8 @@ export const tagService = {
     },
 
     async getSessionTags(sessionUid: string): Promise<SessionTag[]> {
-        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionUid}/tags`);
+        const url = await buildUrl(`/api/sessions/${sessionUid}/tags`);
+        const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Failed to fetch session tags: ${response.statusText}`);
         }
@@ -48,7 +57,8 @@ export const tagService = {
     },
 
     async addTagsToSession(sessionUid: string, tagUids: string[]): Promise<SessionTag[]> {
-        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionUid}/tags`, {
+        const url = await buildUrl(`/api/sessions/${sessionUid}/tags`);
+        const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tagUids })
@@ -61,7 +71,8 @@ export const tagService = {
     },
 
     async removeTagsFromSession(sessionUid: string, tagUids: string[]): Promise<SessionTag[]> {
-        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionUid}/tags`, {
+        const url = await buildUrl(`/api/sessions/${sessionUid}/tags`);
+        const response = await fetch(url, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tagUids })

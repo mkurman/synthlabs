@@ -90,6 +90,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const [importLimit, setImportLimit] = useState<number>(100);
     const [isLimitEnabled, setIsLimitEnabled] = useState(true);
     const [isImporting, setIsImporting] = useState(false);
+    const [hasMoreRows, setHasMoreRows] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [hfRowsToFetch, setHfRowsToFetch] = useState<number>(100);
     const [hfSkipRows, setHfSkipRows] = useState<number>(0);
@@ -152,15 +153,31 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const [detailItem, setDetailItem] = useState<VerifierItem | null>(null);
     const [isDetailOpen, setIsDetailOpen] = useState(false);
     const [detailSaving, setDetailSaving] = useState(false);
-    
+    const lastDetailIndexRef = useRef<number>(0);
+
+    // Track the current detail item's index so we know where to go after deletion
+    useEffect(() => {
+        if (isDetailOpen && detailItem) {
+            const idx = data.findIndex(i => i.id === detailItem.id);
+            if (idx >= 0) lastDetailIndexRef.current = idx;
+        }
+    }, [isDetailOpen, detailItem?.id, data]);
+
     // Sync detailItem with current data when panel is open and data changes
     useEffect(() => {
         if (isDetailOpen && detailItem) {
             const updatedItem = data.find(i => i.id === detailItem.id);
             if (updatedItem) {
-                console.log('[VerifierPanel] Sync effect - updating detailItem from data:', updatedItem.id);
-                console.log('[VerifierPanel] Sync effect - query:', updatedItem.query?.substring(0, 50));
                 setDetailItem(updatedItem);
+            } else {
+                // Item was deleted — navigate to nearest item using last known position
+                if (data.length === 0) {
+                    setIsDetailOpen(false);
+                    setDetailItem(null);
+                } else {
+                    const nextIndex = Math.min(lastDetailIndexRef.current, data.length - 1);
+                    setDetailItem(data[nextIndex]);
+                }
             }
         }
     }, [data, isDetailOpen, detailItem?.id]);
@@ -300,6 +317,8 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     });
     const [itemStates, setItemStates] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
     const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
+    // Snapshots of items before auto-save modifications, for rollback
+    const autoSaveSnapshotsRef = useRef<Map<string, VerifierItem>>(new Map());
 
     // Autoscore Config State
     const [isAutoscorePanelOpen, setIsAutoscorePanelOpen] = useState(false);
@@ -438,12 +457,16 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const handleDetailSave = useCallback(async (item: VerifierItem, updates: Partial<VerifierItem>) => {
         setDetailSaving(true);
         try {
+            // Snapshot before first auto-save so rollback can restore the original
+            if (autoSaveEnabled && dataSource === VerifierDataSource.Database) {
+                if (!autoSaveSnapshotsRef.current.has(item.id)) {
+                    autoSaveSnapshotsRef.current.set(item.id, { ...item });
+                }
+            }
+
             const updatedItem = { ...item, ...updates, hasUnsavedChanges: true };
-            console.log('[VerifierPanel] handleDetailSave - updating item:', item.id, 'updates:', Object.keys(updates));
-            console.log('[VerifierPanel] old query:', item.query?.substring(0, 50));
-            console.log('[VerifierPanel] new query:', updatedItem.query?.substring(0, 50));
             setData(prev => prev.map(i => i.id === item.id ? updatedItem : i));
-            
+
             if (autoSaveEnabled && dataSource === VerifierDataSource.Database) {
                 await handleDbUpdate(updatedItem);
             }
@@ -489,6 +512,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         setData,
         setDataSource,
         setActiveTab,
+        setHasMoreRows,
         toast,
         confirmService,
         onSessionDeleted: (sessionId: string) => {
@@ -501,6 +525,12 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const handleDbImport = useCallback(async () => {
         await originalHandleDbImport();
         updateSessionNameFromFilter(selectedSessionFilter, availableSessions);
+        // Mark this session as already loaded so the initialSessionId effect
+        // doesn't re-fetch with a different limit when the ID propagates back
+        const session = availableSessions.find(s => s.id === selectedSessionFilter || s.sessionUid === selectedSessionFilter);
+        if (session?.id) {
+            hasLoadedInitialSessionRef.current = session.id;
+        }
     }, [originalHandleDbImport, selectedSessionFilter, availableSessions, updateSessionNameFromFilter]);
 
     const handleFetchMore = useCallback(async (start: number, end: number) => {
@@ -616,15 +646,19 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
 
         setIsImporting(true);
         try {
-            const items = await FirebaseService.fetchAllLogs(100, sessionId, true);
+            const limitToUse = isLimitEnabled ? importLimit : undefined;
+            const items = await FirebaseService.fetchAllLogs(limitToUse, sessionId, true);
             if (items.length === 0) {
                 toast.info('No items found in session.');
+                setHasMoreRows(false);
             } else {
                 const normalizedItems = items.map(normalizeImportItem);
                 analyzeDuplicates(normalizedItems);
                 setData(normalizedItems);
                 setDataSource(VerifierDataSource.Database);
                 setActiveTab(VerifierPanelTab.Review);
+                const allLoaded = !isLimitEnabled || items.length < importLimit;
+                setHasMoreRows(!allLoaded);
             }
 
             setActiveSessionName(session.name);
@@ -636,7 +670,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         } finally {
             setIsImporting(false);
         }
-    }, [availableSessions]);
+    }, [availableSessions, isLimitEnabled, importLimit]);
 
     useEffect(() => {
         if (initialSessionId && hasLoadedInitialSessionRef.current !== initialSessionId) {
@@ -785,12 +819,34 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     });
 
     const handleScoreClick = useCallback((item: VerifierItem, score: number) => {
+        // Snapshot before first auto-save
+        if (autoSaveEnabled && dataSource === VerifierDataSource.Database) {
+            if (!autoSaveSnapshotsRef.current.has(item.id)) {
+                autoSaveSnapshotsRef.current.set(item.id, { ...item });
+            }
+        }
         setScore(item.id, score);
         if (autoSaveEnabled && dataSource === VerifierDataSource.Database) {
             const updatedItem = { ...item, score, hasUnsavedChanges: true };
             handleDbUpdate(updatedItem);
         }
     }, [autoSaveEnabled, dataSource, handleDbUpdate, setScore]);
+
+    // Rollback: in auto-save mode, restore from snapshot; otherwise fetch from DB
+    const handleSmartRollback = useCallback(async (item: VerifierItem) => {
+        const snapshot = autoSaveSnapshotsRef.current.get(item.id);
+        if (autoSaveEnabled && snapshot) {
+            // Restore snapshot in local state
+            const restoredItem = { ...snapshot, hasUnsavedChanges: false };
+            setData((prev: VerifierItem[]) => prev.map(i => i.id === item.id ? restoredItem : i));
+            // Also persist the rollback to DB so it matches
+            await handleDbUpdate(restoredItem);
+            autoSaveSnapshotsRef.current.delete(item.id);
+            toast.success('Rolled back to pre-edit state');
+        } else {
+            await handleDbRollback(item);
+        }
+    }, [autoSaveEnabled, handleDbRollback, handleDbUpdate, setData]);
 
     const fetchMoreRows = useCallback(async () => {
         if (isImporting || isFetchingMoreRef.current) return;
@@ -1048,7 +1104,10 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                         filteredCount={filteredData.length}
                         dataSource={dataSource}
                         autoSaveEnabled={autoSaveEnabled}
-                        onToggleAutoSave={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                        onToggleAutoSave={() => {
+                            if (autoSaveEnabled) autoSaveSnapshotsRef.current.clear();
+                            setAutoSaveEnabled(!autoSaveEnabled);
+                        }}
                         onSelectAll={handleSelectAll}
                         isAllSelected={selectedItemIds.size > 0 && selectedItemIds.size === filteredData.length}
                         isPartiallySelected={selectedItemIds.size > 0 && selectedItemIds.size < filteredData.length}
@@ -1104,7 +1163,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                         handleScoreClick={handleScoreClick}
                         dataSource={dataSource}
                         handleDbUpdate={handleDbUpdate}
-                        handleDbRollback={handleDbRollback}
+                        handleDbRollback={handleSmartRollback}
                         itemStates={itemStates}
                         initiateDelete={initiateDelete}
                         toggleDiscard={toggleDiscard}
@@ -1134,6 +1193,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                         handleDeleteMessagesFromHere={handleDeleteMessagesFromHere}
                         handleFetchMore={handleFetchMore}
                         isImporting={isImporting}
+                        hasMoreRows={hasMoreRows}
                         totalPages={totalPages}
                         currentPage={currentPage}
                         setCurrentPage={setCurrentPage}
@@ -1206,10 +1266,10 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                 onDeleteMessageFromHere={(item: VerifierItem, idx: number) => handleDeleteMessagesFromHere(item.id, idx)}
                 onDeleteItem={(item) => initiateDelete([item.id])}
                 onDbUpdate={dataSource === VerifierDataSource.Database ? handleDbUpdate : undefined}
-                onDbRollback={dataSource === VerifierDataSource.Database ? handleDbRollback : undefined}
+                onDbRollback={dataSource === VerifierDataSource.Database ? handleSmartRollback : undefined}
                 onFetchMore={dataSource === VerifierDataSource.Database ? fetchMoreRows : undefined}
                 isFetchingMore={isImporting}
-                hasMoreData={dataSource === VerifierDataSource.Database}
+                hasMoreData={dataSource === VerifierDataSource.Database && hasMoreRows}
                 totalInDb={data.length}
                 onAutoscore={handleAutoscoreSingleItem}
                 isAutoscoring={isAutoscoring}
@@ -1217,6 +1277,13 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                 streamingContent={streamingContent}
                 messageRewriteStates={messageRewriteStates}
                 dataSource={dataSource || undefined}
+                autoSaveEnabled={autoSaveEnabled}
+                onToggleAutoSave={() => {
+                    setAutoSaveEnabled(prev => {
+                        if (prev) autoSaveSnapshotsRef.current.clear();
+                        return !prev;
+                    });
+                }}
             />
         </div>
     );

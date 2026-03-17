@@ -18,6 +18,7 @@ interface UseVerifierDbImportOptions {
     setData: (items: VerifierItem[]) => void;
     setDataSource: (source: VerifierDataSource | null) => void;
     setActiveTab: (tab: VerifierPanelTab) => void;
+    setHasMoreRows: (value: boolean) => void;
     toast: { error: (message: string) => void; info: (message: string) => void };
     confirmService: { confirm: (options: { title: string; message: string; confirmLabel: string; cancelLabel: string; variant: 'info' | 'warning' | 'danger' }) => Promise<boolean> };
     onSessionDeleted: (sessionId: string) => void;
@@ -35,6 +36,7 @@ export function useVerifierDbImport({
     setData,
     setDataSource,
     setActiveTab,
+    setHasMoreRows,
     toast,
     confirmService,
     onSessionDeleted
@@ -46,7 +48,7 @@ export function useVerifierDbImport({
         }
         setIsImporting(true);
         try {
-            const limitToUse = isLimitEnabled ? importLimit : 100;
+            const limitToUse = isLimitEnabled ? importLimit : undefined;
             const { sessionUid, requiresCustom } = resolveSessionFilter(
                 selectedSessionFilter,
                 currentSessionUid,
@@ -61,6 +63,7 @@ export function useVerifierDbImport({
             const items = await FirebaseService.fetchAllLogs(limitToUse, sessionUid, true);
             if (items.length === 0) {
                 toast.info('No items found matching criteria.');
+                setHasMoreRows(false);
                 if (sessionUid) {
                     const shouldDelete = await confirmService.confirm({
                         title: 'Empty session found',
@@ -80,13 +83,17 @@ export function useVerifierDbImport({
                 setData(items);
                 setDataSource(VerifierDataSource.Database);
                 setActiveTab(VerifierPanelTab.Review);
+                // If we fetched without a limit, we have everything.
+                // If we fetched with a limit and got fewer than requested, we also have everything.
+                const allLoaded = !isLimitEnabled || items.length < importLimit;
+                setHasMoreRows(!allLoaded);
             }
         } catch (e: any) {
             toast.error('Import failed: ' + e.message);
         } finally {
             setIsImporting(false);
         }
-    }, [analyzeDuplicates, confirmService, currentSessionUid, customSessionId, importLimit, isLimitEnabled, onSessionDeleted, selectedSessionFilter, setActiveTab, setData, setDataSource, setIsImporting, toast]);
+    }, [analyzeDuplicates, confirmService, currentSessionUid, customSessionId, importLimit, isLimitEnabled, onSessionDeleted, selectedSessionFilter, setActiveTab, setData, setDataSource, setHasMoreRows, setIsImporting, toast]);
 
     const handleFetchMore = useCallback(async (start: number, end: number) => {
         if (!FirebaseService.isFirebaseConfigured()) {
@@ -117,17 +124,23 @@ export function useVerifierDbImport({
 
             if (newItems.length === 0) {
                 toast.info('No more items to fetch.');
+                setHasMoreRows(false);
                 return;
             }
 
             analyzeDuplicates([...data, ...newItems]);
             setData([...data, ...newItems]);
+
+            // If we got fewer than requested, there are no more rows
+            if (newItems.length < limitToFetch) {
+                setHasMoreRows(false);
+            }
         } catch (e: any) {
             toast.error('Fetch failed: ' + e.message);
         } finally {
             setIsImporting(false);
         }
-    }, [analyzeDuplicates, currentSessionUid, customSessionId, data, importLimit, selectedSessionFilter, setData, setIsImporting, toast]);
+    }, [analyzeDuplicates, currentSessionUid, customSessionId, data, importLimit, selectedSessionFilter, setData, setHasMoreRows, setIsImporting, toast]);
 
     return { handleDbImport, handleFetchMore };
 }

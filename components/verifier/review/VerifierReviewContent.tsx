@@ -1,4 +1,4 @@
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
+import { useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import {
     ChevronLeft,
     ChevronRight,
@@ -69,9 +69,101 @@ interface VerifierReviewContentProps {
     handleDeleteMessagesFromHere: (itemId: string, messageIndex: number) => Promise<void>;
     handleFetchMore: (offset: number, limit: number) => Promise<void>;
     isImporting: boolean;
+    hasMoreRows: boolean;
     totalPages: number;
     currentPage: number;
     setCurrentPage: Dispatch<SetStateAction<number>>;
+}
+
+function Paginator({ currentPage, totalPages, setCurrentPage }: {
+    currentPage: number;
+    totalPages: number;
+    setCurrentPage: Dispatch<SetStateAction<number>>;
+}) {
+    const [isEditing, setIsEditing] = useState(false);
+    const [inputValue, setInputValue] = useState('');
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    const handleStartEdit = () => {
+        setInputValue(String(currentPage));
+        setIsEditing(true);
+        requestAnimationFrame(() => inputRef.current?.select());
+    };
+
+    const handleSubmit = () => {
+        const page = parseInt(inputValue, 10);
+        if (!isNaN(page) && page >= 1 && page <= totalPages) {
+            setCurrentPage(page);
+        }
+        setIsEditing(false);
+    };
+
+    return (
+        <div className="flex items-center justify-center gap-4 mt-2 p-3 bg-slate-950/70 rounded-xl border border-slate-800/70">
+            <button
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
+                title="First Page"
+            >
+                <ChevronsLeft className="w-5 h-5" />
+            </button>
+            <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
+                title="Previous Page"
+            >
+                <ChevronLeft className="w-5 h-5" />
+            </button>
+
+            {isEditing ? (
+                <div className="flex items-center gap-1.5 text-xs font-mono text-slate-300">
+                    <span>Page</span>
+                    <input
+                        ref={inputRef}
+                        type="number"
+                        min={1}
+                        max={totalPages}
+                        value={inputValue}
+                        onChange={e => setInputValue(e.target.value)}
+                        onKeyDown={e => {
+                            if (e.key === 'Enter') handleSubmit();
+                            if (e.key === 'Escape') setIsEditing(false);
+                        }}
+                        onBlur={handleSubmit}
+                        className="w-12 bg-slate-900 border border-amber-500/70 rounded px-1.5 py-0.5 text-center text-white font-bold text-xs outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <span>of {totalPages}</span>
+                </div>
+            ) : (
+                <button
+                    onClick={handleStartEdit}
+                    className="text-xs font-mono text-slate-300 hover:text-white hover:bg-slate-800/60 px-2 py-1 rounded transition-colors cursor-pointer"
+                    title="Click to jump to page"
+                >
+                    Page <span className="text-white font-bold">{currentPage}</span> of {totalPages}
+                </button>
+            )}
+
+            <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
+                title="Next Page"
+            >
+                <ChevronRight className="w-5 h-5" />
+            </button>
+            <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
+                title="Last Page"
+            >
+                <ChevronsRight className="w-5 h-5" />
+            </button>
+        </div>
+    );
 }
 
 export default function VerifierReviewContent({
@@ -122,6 +214,7 @@ export default function VerifierReviewContent({
     handleDeleteMessagesFromHere,
     handleFetchMore,
     isImporting,
+    hasMoreRows,
     totalPages,
     currentPage,
     setCurrentPage
@@ -174,58 +267,28 @@ export default function VerifierReviewContent({
                 </div>
 
                 {dataSource === VerifierDataSource.Database && (
-                    <div className="flex justify-center p-4 mt-2 border-t border-slate-800/70 bg-slate-950/70 rounded-xl">
-                        <button
-                            onClick={() => handleFetchMore(0, 0)}
-                            className="flex items-center gap-2 px-4 py-2 bg-slate-900/60 hover:bg-slate-800/70 text-slate-200 rounded-lg transition-colors border border-slate-700/70"
-                            disabled={isImporting}
-                        >
-                            {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                            <span>Fetch More Rows</span>
-                        </button>
+                    <div className="flex justify-center items-center gap-3 p-4 mt-2 border-t border-slate-800/70 bg-slate-950/70 rounded-xl">
+                        {hasMoreRows ? (
+                            <button
+                                onClick={() => handleFetchMore(0, 0)}
+                                className="flex items-center gap-2 px-4 py-2 bg-slate-900/60 hover:bg-slate-800/70 text-slate-200 rounded-lg transition-colors border border-slate-700/70"
+                                disabled={isImporting}
+                            >
+                                {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                                <span>Fetch More Rows</span>
+                            </button>
+                        ) : (
+                            <span className="text-xs text-slate-500">All {data.length} rows loaded</span>
+                        )}
                     </div>
                 )}
 
                 {totalPages > 1 && (
-                    <div className="flex items-center justify-center gap-4 mt-2 p-3 bg-slate-950/70 rounded-xl border border-slate-800/70">
-                        <button
-                            onClick={() => setCurrentPage(1)}
-                            disabled={currentPage === 1}
-                            className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
-                            title="First Page"
-                        >
-                            <ChevronsLeft className="w-5 h-5" />
-                        </button>
-                        <button
-                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                            disabled={currentPage === 1}
-                            className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
-                            title="Previous Page"
-                        >
-                            <ChevronLeft className="w-5 h-5" />
-                        </button>
-
-                        <span className="text-xs font-mono text-slate-300">
-                            Page <span className="text-white font-bold">{currentPage}</span> of {totalPages}
-                        </span>
-
-                        <button
-                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                            disabled={currentPage === totalPages}
-                            className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
-                            title="Next Page"
-                        >
-                            <ChevronRight className="w-5 h-5" />
-                        </button>
-                        <button
-                            onClick={() => setCurrentPage(totalPages)}
-                            disabled={currentPage === totalPages}
-                            className="p-2 rounded-lg hover:bg-slate-900/60 disabled:opacity-30 disabled:hover:bg-transparent text-slate-300 transition-colors"
-                            title="Last Page"
-                        >
-                            <ChevronsRight className="w-5 h-5" />
-                        </button>
-                    </div>
+                    <Paginator
+                        currentPage={currentPage}
+                        totalPages={totalPages}
+                        setCurrentPage={setCurrentPage}
+                    />
                 )}
             </div>
         </div>

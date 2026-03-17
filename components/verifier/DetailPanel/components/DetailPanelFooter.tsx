@@ -7,6 +7,7 @@ interface DetailPanelFooterProps {
     isDeep?: boolean;
     hasUnsavedChanges?: boolean;
     isMultiTurn?: boolean;
+    autoSaveEnabled?: boolean;
 }
 
 const ShortcutItem: React.FC<{ keys: string; description: string; variant?: 'default' | 'multi' | 'single' }> = ({ keys, description, variant = 'default' }) => {
@@ -26,7 +27,8 @@ export const DetailPanelFooter: React.FC<DetailPanelFooterProps> = ({
     sessionUid,
     isDeep,
     hasUnsavedChanges,
-    isMultiTurn
+    isMultiTurn,
+    autoSaveEnabled
 }) => {
     const [showShortcuts, setShowShortcuts] = useState(false);
 
@@ -51,6 +53,11 @@ export const DetailPanelFooter: React.FC<DetailPanelFooterProps> = ({
                         {isDeep && (
                             <span className="bg-sky-900/30 text-sky-400 px-2 py-0.5 rounded text-[10px] font-medium border border-sky-800/50">
                                 Deep
+                            </span>
+                        )}
+                        {autoSaveEnabled && (
+                            <span className="bg-emerald-900/30 text-emerald-400 px-2 py-0.5 rounded text-[10px] font-medium border border-emerald-800/50">
+                                Auto-save
                             </span>
                         )}
                         {hasUnsavedChanges && (
@@ -106,6 +113,7 @@ export const DetailPanelFooter: React.FC<DetailPanelFooterProps> = ({
                                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Editing</h4>
                                     <div className="divide-y divide-slate-800/50">
                                         <ShortcutItem keys="Ctrl + S" description="Save changes" />
+                                        <ShortcutItem keys="Ctrl + Shift + S" description="Toggle auto-save" />
                                     </div>
                                 </section>
 
@@ -113,6 +121,7 @@ export const DetailPanelFooter: React.FC<DetailPanelFooterProps> = ({
                                     <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Actions</h4>
                                     <div className="divide-y divide-slate-800/50">
                                         <ShortcutItem keys="Ctrl + Shift + A" description="Autoscore item" variant="single" />
+                                        <ShortcutItem keys="Ctrl + Shift + X" description="Trim whitespace" variant="single" />
                                         <ShortcutItem keys="Ctrl + Shift + C" description="Clear current field" variant="single" />
                                     </div>
                                 </section>
@@ -125,7 +134,7 @@ export const DetailPanelFooter: React.FC<DetailPanelFooterProps> = ({
                                                 <div className="py-2">
                                                     <span className="text-xs text-purple-400 font-medium">For Assistant messages:</span>
                                                 </div>
-                                                <ShortcutItem keys="Ctrl + R" description="Rewrite reasoning" variant="multi" />
+                                                <ShortcutItem keys="Ctrl + E" description="Rewrite reasoning" variant="multi" />
                                                 <ShortcutItem keys="Ctrl + A" description="Rewrite answer" variant="multi" />
                                                 <ShortcutItem keys="Ctrl + B" description="Rewrite both" variant="multi" />
                                                 <div className="py-2 mt-2 border-t border-slate-800">
@@ -135,7 +144,7 @@ export const DetailPanelFooter: React.FC<DetailPanelFooterProps> = ({
                                             </>
                                         ) : (
                                             <>
-                                                <ShortcutItem keys="Ctrl + R" description="Rewrite reasoning" variant="single" />
+                                                <ShortcutItem keys="Ctrl + E" description="Rewrite reasoning" variant="single" />
                                                 <ShortcutItem keys="Ctrl + A" description="Rewrite answer" variant="single" />
                                                 <ShortcutItem keys="Ctrl + B" description="Rewrite both" variant="single" />
                                             </>

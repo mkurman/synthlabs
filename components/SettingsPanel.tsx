@@ -151,7 +151,8 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                 return;
             }
             updateSetting('cockroachCaCertPem', contents);
-            setCockroachCaCertFileName(file.name || 'ca.crt');
+            const sizeKb = (contents.length / 1024).toFixed(1);
+            setCockroachCaCertFileName(`${file.name} (${sizeKb} KB loaded)`);
             setBackendApplyStatus(BackendApplyStatus.Idle);
             setBackendApplyError('');
         };
@@ -1288,7 +1289,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     <label className="text-[10px] text-slate-300 font-bold uppercase">CA Certificate</label>
                                                     <div className="flex items-center gap-2">
                                                         <div className="flex-1 bg-slate-950 border border-slate-700/70 rounded px-3 py-2 text-xs text-slate-300 font-mono">
-                                                            {cockroachCaCertFileName || (hasCockroachCaCert ? 'Uploaded certificate' : 'No certificate selected')}
+                                                            {cockroachCaCertFileName || (hasCockroachCaCert ? `Certificate loaded (${(settings.cockroachCaCertPem!.length / 1024).toFixed(1)} KB)` : 'No certificate selected')}
                                                         </div>
                                                         <label className="inline-flex items-center gap-2 px-3 py-2 rounded border border-slate-700/70 text-xs text-slate-200 hover:bg-slate-900/60 cursor-pointer">
                                                             <FolderOpen className="w-3.5 h-3.5" />

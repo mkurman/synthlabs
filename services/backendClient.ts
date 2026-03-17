@@ -317,6 +317,7 @@ export interface LogsPageResult {
     logs: unknown[];
     hasMore: boolean;
     nextCursorCreatedAt?: string | number | null;
+    totalCount?: number;
 }
 
 export const fetchLogsPage = async (

@@ -38,3 +38,5 @@ pnpm-lock*
 .backend-vault.json
 .firebase
 server-bundle
+.history
+.pnpm-store

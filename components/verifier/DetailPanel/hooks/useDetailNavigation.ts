@@ -32,6 +32,12 @@ export function useDetailNavigation({
         }
     }, [hasNext, isEditing, currentIndex, items, onNavigate]);
 
+    const goToIndex = useCallback((index: number) => {
+        if (index >= 0 && index < items.length && !isEditing) {
+            onNavigate(items[index]);
+        }
+    }, [isEditing, items, onNavigate]);
+
     useEffect(() => {
         if (!isOpen) return;
 
@@ -67,6 +73,7 @@ export function useDetailNavigation({
         hasNext,
         goToPrevious,
         goToNext,
+        goToIndex,
         totalItems: items.length
     };
 }

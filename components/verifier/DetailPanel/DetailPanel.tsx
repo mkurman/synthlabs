@@ -12,6 +12,7 @@ import DetailAnswerSection from './sections/DetailAnswerSection';
 import DetailConversationSection from './sections/DetailConversationSection';
 import { useDetailNavigation } from './hooks/useDetailNavigation';
 import { useDetailPersistence } from './hooks/useDetailPersistence';
+import { toast } from '../../../services/toastService';
 
 interface DetailPanelProps {
     item: VerifierItem | null;
@@ -41,6 +42,8 @@ interface DetailPanelProps {
     streamingContent?: string;
     messageRewriteStates?: Record<string, { field: VerifierRewriteTarget; content: string; reasoningContent?: string }>;
     dataSource?: string;
+    autoSaveEnabled?: boolean;
+    onToggleAutoSave?: () => void;
 }
 
 export const DetailPanel: React.FC<DetailPanelProps> = ({
@@ -70,7 +73,9 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
     rewritingField,
     streamingContent = '',
     messageRewriteStates = {},
-    dataSource
+    dataSource,
+    autoSaveEnabled = false,
+    onToggleAutoSave
 }) => {
     const panelRef = useRef<HTMLDivElement>(null);
     const [activeSection, setActiveSection] = useState<'query' | 'reasoning' | 'answer' | 'conversation'>('query');
@@ -105,7 +110,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
     const isMultiTurn = !!(item?.isMultiTurn && Array.isArray(item.messages) && item.messages.length > 0);
 
     // Navigation hook
-    const { currentIndex, hasPrevious, hasNext, goToPrevious, goToNext } = useDetailNavigation({
+    const { currentIndex, hasPrevious, hasNext, goToPrevious, goToNext, goToIndex } = useDetailNavigation({
         items,
         currentItem: item,
         onNavigate,
@@ -133,7 +138,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
         }
     }, [item?.id, isMultiTurn]);
 
-    // Keyboard shortcuts (ESC, Ctrl+S, Tab, Ctrl+R/A/B for rewrite)
+    // Keyboard shortcuts (ESC, Ctrl+S, Tab, Ctrl+E/A/B for rewrite)
     useEffect(() => {
         if (!isOpen) return;
 
@@ -145,7 +150,13 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                     onClose();
                 }
             }
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
+                e.preventDefault();
+                if (onToggleAutoSave) {
+                    onToggleAutoSave();
+                    toast.info(`Auto-save ${autoSaveEnabled ? 'OFF' : 'ON'}`);
+                }
+            } else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 e.preventDefault();
                 if (editState && item) {
                     handleSaveEdit();
@@ -200,6 +211,33 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                     }
                 }
             }
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'x' || e.key === 'X') && !editState && item) {
+                e.preventDefault();
+                const updates: Partial<VerifierItem> = {};
+                if (isMultiTurn) {
+                    const msg = item.messages?.[activeMessageIndex];
+                    if (msg) {
+                        const newMessages = [...item.messages!];
+                        const trimmed = { ...msg };
+                        if (typeof trimmed.content === 'string') trimmed.content = trimmed.content.trim();
+                        if (typeof trimmed.reasoning_content === 'string') trimmed.reasoning_content = trimmed.reasoning_content.trim();
+                        newMessages[activeMessageIndex] = trimmed;
+                        updates.messages = newMessages;
+                    }
+                } else {
+                    if (activeSection === 'query' && typeof item.query === 'string') {
+                        updates.query = item.query.trim();
+                    } else if (activeSection === 'reasoning') {
+                        if (typeof item.reasoning === 'string') updates.reasoning = item.reasoning.trim();
+                        if (typeof item.reasoning_content === 'string') updates.reasoning_content = item.reasoning_content.trim();
+                    } else if (activeSection === 'answer' && typeof item.answer === 'string') {
+                        updates.answer = item.answer.trim();
+                    }
+                }
+                if (Object.keys(updates).length > 0) {
+                    onSave(item, updates);
+                }
+            }
             if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !editState && item && !isRewritingRef.current) {
                 const callbacks = rewriteCallbacksRef.current;
                 if (isMultiTurn) {
@@ -212,7 +250,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                         if (isUser) {
                             callbacks.onRewriteQuery?.(item, activeMessageIndex);
                         }
-                    } else if (e.key === 'r' || e.key === 'R') {
+                    } else if (e.key === 'e' || e.key === 'E') {
                         e.preventDefault();
                         if (!isUser) {
                             callbacks.onRewriteMessageReasoning?.(item, activeMessageIndex);
@@ -229,7 +267,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                         }
                     }
                 } else {
-                    if (e.key === 'r' || e.key === 'R') {
+                    if (e.key === 'e' || e.key === 'E') {
                         e.preventDefault();
                         callbacks.onRewriteField(item, VerifierRewriteTarget.Reasoning);
                     } else if (e.key === 'a' || e.key === 'A') {
@@ -245,7 +283,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, editState, activeSection, item, isMultiTurn, rewritingField, activeMessageIndex]);
+    }, [isOpen, editState, activeSection, item, isMultiTurn, rewritingField, activeMessageIndex, autoSaveEnabled, onToggleAutoSave]);
 
     // Focus trap
     useEffect(() => {
@@ -401,6 +439,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                     isFetchingMore={isFetchingMore}
                     onPrevious={goToPrevious}
                     onNext={goToNext}
+                    onJumpToIndex={goToIndex}
                     onClose={onClose}
                     onSave={showPersistenceButtons ? handleSave : undefined}
                     onRollback={showPersistenceButtons ? handleRollback : undefined}
@@ -505,6 +544,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                     isDeep={!!item.deepMetadata}
                     hasUnsavedChanges={item.hasUnsavedChanges}
                     isMultiTurn={isMultiTurn}
+                    autoSaveEnabled={autoSaveEnabled}
                 />
             </div>
         </div>,

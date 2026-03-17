@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { X, Save, RotateCcw, ChevronLeft, ChevronRight, Loader2, Star, Download, Sparkles } from 'lucide-react';
 import { VerifierItem } from '../../../../types';
 
@@ -14,6 +14,7 @@ interface DetailPanelHeaderProps {
     isFetchingMore: boolean;
     onPrevious: () => void;
     onNext: () => void;
+    onJumpToIndex?: (index: number) => void;
     onClose: () => void;
     onSave?: () => void;
     onRollback?: () => void;
@@ -39,6 +40,7 @@ export const DetailPanelHeader: React.FC<DetailPanelHeaderProps> = ({
     isFetchingMore,
     onPrevious,
     onNext,
+    onJumpToIndex,
     onClose,
     onSave,
     onRollback,
@@ -51,6 +53,25 @@ export const DetailPanelHeader: React.FC<DetailPanelHeaderProps> = ({
     isAutoscoring,
     showPersistenceButtons
 }) => {
+    const [isJumping, setIsJumping] = useState(false);
+    const [jumpValue, setJumpValue] = useState('');
+    const jumpInputRef = useRef<HTMLInputElement>(null);
+
+    const handleStartJump = () => {
+        if (!onJumpToIndex) return;
+        setJumpValue(String(currentIndex + 1));
+        setIsJumping(true);
+        requestAnimationFrame(() => jumpInputRef.current?.select());
+    };
+
+    const handleJumpSubmit = () => {
+        const num = parseInt(jumpValue, 10);
+        if (!isNaN(num) && num >= 1 && num <= totalItems && onJumpToIndex) {
+            onJumpToIndex(num - 1);
+        }
+        setIsJumping(false);
+    };
+
     return (
         <div className="p-4 border-b border-slate-800 bg-slate-950/50 rounded-t-2xl space-y-3">
             <div className="flex items-center justify-between">
@@ -172,9 +193,34 @@ export const DetailPanelHeader: React.FC<DetailPanelHeaderProps> = ({
 
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs">
-                    <span className="font-mono text-slate-400 bg-slate-900/50 px-2 py-1 rounded">
-                        {currentIndex + 1} / {totalItems}
-                    </span>
+                    {isJumping ? (
+                        <span className="font-mono text-slate-400 bg-slate-900/50 px-1 py-0.5 rounded flex items-center gap-1">
+                            <input
+                                ref={jumpInputRef}
+                                type="number"
+                                min={1}
+                                max={totalItems}
+                                value={jumpValue}
+                                onChange={e => setJumpValue(e.target.value)}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter') handleJumpSubmit();
+                                    if (e.key === 'Escape') setIsJumping(false);
+                                    e.stopPropagation();
+                                }}
+                                onBlur={handleJumpSubmit}
+                                className="w-10 bg-slate-900 border border-amber-500/70 rounded px-1 py-0.5 text-center text-white text-xs font-mono outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                            />
+                            <span>/ {totalItems}</span>
+                        </span>
+                    ) : (
+                        <button
+                            onClick={handleStartJump}
+                            className="font-mono text-slate-400 bg-slate-900/50 px-2 py-1 rounded hover:text-white hover:bg-slate-800/60 transition-colors cursor-pointer"
+                            title="Click to jump to item"
+                        >
+                            {currentIndex + 1} / {totalItems}
+                        </button>
+                    )}
                     <span className="text-slate-500 bg-slate-900/60 px-2 py-1 rounded border border-slate-700/50">
                         Stack: {totalInStack}
                     </span>
