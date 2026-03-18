@@ -167,6 +167,7 @@ export interface AutoscoreConfig {
   model: string;
   customBaseUrl: string;
   promptSchema?: import('./interfaces/types/PromptSchema').PromptSchema;
+  systemPrompt?: string;
   concurrency: number;
   sleepTime: number;
   maxRetries: number;

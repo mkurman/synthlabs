@@ -10,6 +10,8 @@ export interface ChatMessage {
   toolCalls?: any[];
   toolCallId?: string;
   usage?: ChatUsageSummary;
+  /** Epoch ms when this message was created — used for ordering on reload */
+  createdAt?: number;
 }
 
 export interface ChatUsageSummary {

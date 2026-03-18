@@ -18,6 +18,7 @@ import { useChatScroll } from '../hooks/useChatScroll';
 import { ChatRole, ExternalProvider, ProviderType, ToolApprovalAction } from '../interfaces/enums';
 import ModelSelector from './ModelSelector';
 import MarkdownRenderer from './MarkdownRenderer';
+import { createChatMessageId } from '../utils/chatMessageId';
 
 
 
@@ -32,9 +33,11 @@ interface ChatPanelProps {
         externalApiKey: string;
     };
     toolExecutor?: ToolExecutor;
+    /** Called when the assistant starts/stops streaming (useful for UI locking) */
+    onStreamingChange?: (streaming: boolean) => void;
 }
 
-type ChatProvider = ExternalProvider | ProviderType.Gemini;
+type ChatProvider = ExternalProvider;
 
 interface PendingToolCall {
     toolCall: ToolCall;
@@ -198,10 +201,28 @@ const ToolCallView = ({
     );
 };
 
-export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: ChatPanelProps) {
+export default function ChatPanel({ data, setData, modelConfig, toolExecutor, onStreamingChange }: ChatPanelProps) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
     const [isStreaming, setIsStreaming] = useState(false);
+
+    // Track when agent is controlling UI (executing ui_* tools) — for the busy overlay
+    const agentControllingUI = useRef(false);
+    const onStreamingChangeRef = useRef(onStreamingChange);
+    onStreamingChangeRef.current = onStreamingChange;
+
+    const setAgentControllingUI = (active: boolean) => {
+        if (agentControllingUI.current !== active) {
+            agentControllingUI.current = active;
+            onStreamingChangeRef.current?.(active);
+        }
+    };
+
+    // Always release control when streaming ends
+    useEffect(() => {
+        if (!isStreaming) setAgentControllingUI(false);
+    }, [isStreaming]);
+
     const [toolsEnabled, setToolsEnabled] = useState(() => {
         const settings = SettingsService.getSettings();
         return settings.assistantDefaults?.toolsEnabled ?? true;
@@ -236,34 +257,54 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
     const [lastUsage, setLastUsage] = useState<ChatUsageSummary | null>(null);
 
     const resolveDefaultModel = (provider: ChatProvider): string => {
-        return SettingsService.getDefaultModel(provider) || (provider === ProviderType.Gemini ? 'gemini-2.0-flash-20240905' : '');
+        return SettingsService.getDefaultModel(provider) || '';
     };
+
+    const getDefaultProvider = (): ChatProvider => {
+        return modelConfig.externalProvider || ExternalProvider.OpenRouter;
+    };
+
+    /** Validate that a saved provider is still available; fall back to default if not */
+    const validateProvider = (provider: string | undefined | null): ChatProvider => {
+        if (provider && AVAILABLE_PROVIDERS.includes(provider)) {
+            return provider as ChatProvider;
+        }
+        console.warn(`[ChatPanel] Invalid or unavailable provider "${provider}", falling back to default`);
+        return getDefaultProvider();
+    };
+
+    /** Create a ChatMessage with id and createdAt already set */
+    const mkMsg = (partial: Omit<ChatMessage, 'id' | 'createdAt'>): ChatMessage => ({
+        ...partial,
+        id: createChatMessageId(),
+        createdAt: Date.now()
+    });
 
     // Model Selection State
     const [activeModel, setActiveModel] = useState<{ provider: ChatProvider; model: string; apiKey: string; customBaseUrl: string }>(() => {
         const settings = SettingsService.getSettings();
         const assistantDefaults = settings.assistantDefaults;
         if (assistantDefaults) {
+            const provider = validateProvider(assistantDefaults.provider);
             return {
-                provider: assistantDefaults.provider as ChatProvider,
-                model: assistantDefaults.model || resolveDefaultModel(assistantDefaults.provider as ChatProvider),
+                provider,
+                model: assistantDefaults.model || resolveDefaultModel(provider),
                 apiKey: assistantDefaults.apiKeyOverride || '',
                 customBaseUrl: assistantDefaults.customBaseUrl || ''
             };
         }
+        const defaultProvider = getDefaultProvider();
         return {
-            provider: modelConfig.provider === ProviderType.External ? modelConfig.externalProvider : ProviderType.Gemini,
-            model: modelConfig.provider === ProviderType.External
-                ? modelConfig.externalModel
-                : resolveDefaultModel(ProviderType.Gemini),
-            apiKey: modelConfig.provider === ProviderType.External ? modelConfig.externalApiKey : modelConfig.apiKey,
+            provider: defaultProvider,
+            model: modelConfig.externalModel || SettingsService.getDefaultModel(defaultProvider) || '',
+            apiKey: modelConfig.externalApiKey || modelConfig.apiKey || '',
             customBaseUrl: ''
         };
     });
 
     const [showModelSelector, setShowModelSelector] = useState(false);
 
-    const allProviders = [ProviderType.Gemini, ...AVAILABLE_PROVIDERS];
+    const allProviders = AVAILABLE_PROVIDERS;
 
     const handleProviderChange = (newProvider: string) => {
         const providerValue = newProvider as ChatProvider;
@@ -371,7 +412,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                 hasLoadedAssistantDefaults.current = true;
                 return;
             }
-            const provider = assistantDefaults.provider as ChatProvider;
+            const provider = validateProvider(assistantDefaults.provider);
             setActiveModel({
                 provider,
                 model: assistantDefaults.model || resolveDefaultModel(provider),
@@ -500,7 +541,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         interactionUsageRef.current = null;
         setLastUsage(null);
 
-        const newHistory = [...messages, { role: 'user', content: userMsg } as ChatMessage];
+        const newHistory = [...messages, mkMsg({ role: ChatRole.User, content: userMsg })];
         setMessages(newHistory);
         chatServiceRef.current.addUserMessage(userMsg);
 
@@ -517,7 +558,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             await processTurn();
         } catch (e) {
             console.error(e);
-            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(e) } as ChatMessage]);
+            setMessages(prev => [...prev, mkMsg({ role: ChatRole.Model, content: "Error: " + String(e) })]);
         } finally {
             setIsStreaming(false);
             abortControllerRef.current = null;
@@ -542,7 +583,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         interactionUsageRef.current = null;
         setLastUsage(null);
 
-        const newHistory = [...messages, { role: ChatRole.User, content: continueMsg } as ChatMessage];
+        const newHistory = [...messages, mkMsg({ role: ChatRole.User, content: continueMsg })];
         setMessages(newHistory);
         chatServiceRef.current.addUserMessage(continueMsg);
 
@@ -556,7 +597,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             await processTurn();
         } catch (e) {
             console.error(e);
-            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(e) } as ChatMessage]);
+            setMessages(prev => [...prev, mkMsg({ role: ChatRole.Model, content: "Error: " + String(e) })]);
         } finally {
             setIsStreaming(false);
             abortControllerRef.current = null;
@@ -586,7 +627,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         const executor = toolExecutor || toolExecutorRef.current;
         if (!chatServiceRef.current || !executor) return;
 
-        let currentAssistantMessage: ChatMessage = { role: ChatRole.Model, content: '' };
+        let currentAssistantMessage: ChatMessage = mkMsg({ role: ChatRole.Model, content: '' });
         setMessages(prev => [...prev, currentAssistantMessage]);
 
         let maxTurns = 5;
@@ -622,7 +663,9 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
                     setMessages(prev => {
                         const next = [...prev];
+                        const last = next[next.length - 1];
                         next[next.length - 1] = {
+                            ...last,
                             role: ChatRole.Model,
                             content: content,
                             reasoning: thinking,
@@ -670,11 +713,11 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
                         upsertToolMessage(tc.id, resultStr);
 
-                        chatServiceRef.current.getHistory().push({
+                        chatServiceRef.current.getHistory().push(mkMsg({
                             role: ChatRole.Tool,
                             content: resultStr,
                             toolCallId: tc.id
-                        } as ChatMessage);
+                        }));
                         continue;
                     }
 
@@ -693,6 +736,9 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
                     upsertToolMessage(tc.id, `Executing ${tc.name}...`);
 
+                    // Lock UI while agent operates on it
+                    if (tc.name.startsWith('ui_')) setAgentControllingUI(true);
+
                     let resultStr = '';
 
                     try {
@@ -705,17 +751,17 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
                     upsertToolMessage(tc.id, resultStr);
 
-                    chatServiceRef.current.getHistory().push({
+                    chatServiceRef.current.getHistory().push(mkMsg({
                         role: ChatRole.Tool,
                         content: resultStr,
                         toolCallId: tc.id
-                    } as ChatMessage);
+                    }));
                 }
                 if (pausedForApproval) {
                     return;
                 }
                 turnCount++;
-                setMessages(prev => [...prev, { role: ChatRole.Model, content: '' }]);
+                setMessages(prev => [...prev, mkMsg({ role: ChatRole.Model, content: '' })]);
             } else {
                 break;
             }
@@ -726,7 +772,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         setMessages(prev => {
             const index = prev.findIndex(m => m.role === ChatRole.Tool && m.toolCallId === toolCallId);
             if (index === -1) {
-                return [...prev, { role: ChatRole.Tool, content, toolCallId } as ChatMessage];
+                return [...prev, mkMsg({ role: ChatRole.Tool, content, toolCallId })];
             }
             const next = [...prev];
             next[index] = { ...next[index], content };
@@ -768,6 +814,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
         if (action === ToolApprovalAction.Reject) {
             resultStr = 'Tool call rejected by user.';
         } else {
+            if (toolCall.name.startsWith('ui_')) setAgentControllingUI(true);
             try {
                 const result = await executor.executeTool(toolCall.name, toolCall.args);
                 resultStr = JSON.stringify(result, null, 2);
@@ -779,11 +826,11 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
         upsertToolMessage(toolCall.id, resultStr);
 
-        chatServiceRef.current.getHistory().push({
+        chatServiceRef.current.getHistory().push(mkMsg({
             role: ChatRole.Tool,
             content: resultStr,
             toolCallId: toolCall.id
-        } as ChatMessage);
+        }));
 
         clearPendingToolCall(toolCallId);
 
@@ -791,7 +838,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             await processTurn();
         } catch (err) {
             console.error(err);
-            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(err) } as ChatMessage]);
+            setMessages(prev => [...prev, mkMsg({ role: ChatRole.Model, content: "Error: " + String(err) })]);
         } finally {
             setIsStreaming(false);
         }
@@ -809,7 +856,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
 
         return (
             <div key={idx} className={`flex gap-3 my-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className={`flex flex-col gap-2 w-full ${isUser ? 'items-end' : 'items-start'}`}>
+                <div className={`flex flex-col gap-2 ${isUser ? 'items-end' : 'w-full items-start'}`}>
                     {isModel && msg.reasoning && (
                         <div className="w-full max-w-xl">
                             <ReasoningAccordion content={msg.reasoning} />
@@ -897,7 +944,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                         interactionUsageAddedRef.current = false;
                                                         interactionUsageRef.current = null;
                                                         setLastUsage(null);
-                                                        const newHistory = [...messages, { role: ChatRole.User, content } as ChatMessage];
+                                                        const newHistory = [...messages, mkMsg({ role: ChatRole.User, content })];
                                                         setMessages(newHistory);
                                                         chatServiceRef.current.addUserMessage(content);
                                                         if (abortControllerRef.current) abortControllerRef.current.abort();
@@ -907,7 +954,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                             abortControllerRef.current = null;
                                                         }).catch(err => {
                                                             console.error(err);
-                                                            setMessages(prev => [...prev, { role: ChatRole.Model, content: "Error: " + String(err) } as ChatMessage]);
+                                                            setMessages(prev => [...prev, mkMsg({ role: ChatRole.Model, content: "Error: " + String(err) })]);
                                                             setIsStreaming(false);
                                                             abortControllerRef.current = null;
                                                         });
@@ -1047,10 +1094,10 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
             {/* Summarization Status Banner */}
             {summarizationStatus !== 'idle' && (
                 <div className={`px-4 py-2 flex items-center gap-2 border-b transition-all duration-300 ${summarizationStatus === 'error'
-                        ? 'bg-rose-950/30 border-rose-900/50'
-                        : summarizationStatus === 'complete'
-                            ? 'bg-emerald-950/30 border-emerald-900/50'
-                            : 'bg-sky-950/30 border-sky-900/50'
+                    ? 'bg-rose-950/30 border-rose-900/50'
+                    : summarizationStatus === 'complete'
+                        ? 'bg-emerald-950/30 border-emerald-900/50'
+                        : 'bg-sky-950/30 border-sky-900/50'
                     }`}>
                     {summarizationStatus === 'starting' && (
                         <>
@@ -1291,7 +1338,7 @@ export default function ChatPanel({ data, setData, modelConfig, toolExecutor }: 
                                                 />
                                             </div>
 
-                                            {activeModel.provider !== ProviderType.Gemini && activeModel.provider !== ExternalProvider.Ollama && (
+                                            {activeModel.provider !== ExternalProvider.Ollama && (
                                                 <div className="space-y-1">
                                                     <label className="text-[10px] text-slate-300">API Key (Optional override)</label>
                                                     <input

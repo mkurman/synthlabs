@@ -51,6 +51,10 @@ export async function callChatCompletion({
     temperature = 0.3,
     maxRetries = DEFAULT_MAX_RETRIES,
     retryDelay = DEFAULT_RETRY_DELAY_MS,
+    topP,
+    topK,
+    frequencyPenalty,
+    presencePenalty,
 }) {
     let lastError = null;
 
@@ -66,6 +70,8 @@ export async function callChatCompletion({
                     model,
                     max_tokens: maxTokens,
                     temperature,
+                    ...(topP != null && { top_p: topP }),
+                    ...(topK != null && { top_k: topK }),
                     system: systemPrompt,
                     messages: [{ role: 'user', content: userPrompt }],
                 });
@@ -92,6 +98,9 @@ export async function callChatCompletion({
                     ],
                     max_tokens: maxTokens,
                     temperature,
+                    ...(topP != null && { top_p: topP }),
+                    ...(frequencyPenalty != null && { frequency_penalty: frequencyPenalty }),
+                    ...(presencePenalty != null && { presence_penalty: presencePenalty }),
                 });
 
                 const content = response.choices?.[0]?.message?.content;

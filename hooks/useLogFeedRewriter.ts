@@ -2,10 +2,48 @@ import { useState, useCallback } from 'react';
 import { LogFeedRewriteTarget } from '../interfaces/enums/LogFeedRewriteTarget';
 import { RewriterConfig, callRewriterAIStreaming } from '../services/verifierRewriterService';
 import { SettingsService } from '../services/settingsService';
-import { ProviderType, ExternalProvider } from '../interfaces/enums';
+import { PromptService } from '../services/promptService';
+import { ProviderType, ExternalProvider, PromptCategory, PromptRole } from '../interfaces/enums';
 import { SynthLogItem } from '../types';
 import { extractJsonFields } from '../utils/jsonFieldExtractor';
 import { toast } from '../services/toastService';
+
+/**
+ * Build context prompt that includes all item fields, not just the target field.
+ */
+function buildRewriteContext(item: SynthLogItem, field: LogFeedRewriteTarget): string {
+    const query = item.query || '';
+    const reasoning = (item as any).reasoning_content || item.reasoning || '';
+    const answer = item.answer || '';
+
+    const fieldLabel = field === LogFeedRewriteTarget.Query ? 'query' :
+        field === LogFeedRewriteTarget.Reasoning ? 'reasoning' : 'answer';
+
+    const targetValue = field === LogFeedRewriteTarget.Query ? query :
+        field === LogFeedRewriteTarget.Reasoning ? reasoning : answer;
+
+    return `## FULL ITEM CONTEXT
+
+**Query:** ${query}
+
+**Reasoning Trace:**
+${reasoning}
+
+**Answer:**
+${answer}
+
+---
+TARGET FIELD TO REWRITE: ${fieldLabel.toUpperCase()}
+Current value of ${fieldLabel}:
+${targetValue}
+
+IMPORTANT: Respond with a VALID JSON object containing the improved text.
+
+Expected Output Format:
+{
+  "response": "The improved version..."
+}`;
+}
 
 interface UseLogFeedRewriterOptions {
     onUpdateLog: (id: string, updates: Partial<SynthLogItem>) => void;
@@ -74,53 +112,32 @@ export function useLogFeedRewriter({ onUpdateLog }: UseLogFeedRewriterOptions) {
 
     // Handle rewrite
     const handleRewrite = useCallback(async (
-        itemId: string,
-        field: LogFeedRewriteTarget,
-        currentValue: string
+        item: SynthLogItem,
+        field: LogFeedRewriteTarget
     ) => {
         if (!rewriterConfig.model || rewriterConfig.model.trim() === '') {
             toast.error('Please configure a model in Feed Rewriter Settings');
             return;
         }
 
-        setRewritingField({ itemId, field });
+        setRewritingField({ itemId: item.id, field });
         setStreamingContent('');
 
         const fieldLabel = field === LogFeedRewriteTarget.Query ? 'query' :
             field === LogFeedRewriteTarget.Reasoning ? 'reasoning' : 'answer';
 
         try {
-            const systemPrompts: Record<LogFeedRewriteTarget, string> = {
-                [LogFeedRewriteTarget.Query]: `You are an expert at improving and clarifying user queries.
-Given a user's question or request, rewrite it to be clearer, more specific, and better structured.
-Preserve the original intent while improving clarity.
-Return ONLY the improved query text in a JSON object.`,
-                [LogFeedRewriteTarget.Reasoning]: `You are an expert at improving reasoning traces.
-Given a reasoning trace, improve its clarity, logical flow, and depth of analysis.
-Maintain the key insights while making the reasoning more thorough and structured.
-Return ONLY the improved reasoning in a JSON object.`,
-                [LogFeedRewriteTarget.Answer]: `You are an expert at improving answers.
-Given an answer, improve its clarity, accuracy, and completeness.
-Maintain the core message while making the answer more comprehensive and well-structured.
-Return ONLY the improved answer in a JSON object.`
-            };
+            // Load rewriter prompt schema from the active prompt set
+            const promptSet = SettingsService.getSettings().promptSet || 'default';
+            const promptSchema = PromptService.getPromptSchema(PromptCategory.Verifier, PromptRole.Rewriter, promptSet);
 
-            const userPrompt = `Improve and rewrite this ${fieldLabel}:
-
-${currentValue}
-
-IMPORTANT: Respond with a VALID JSON object containing the improved text.
-
-Expected Output Format:
-{
-  "response": "The improved version..."
-}`;
+            const userPrompt = buildRewriteContext(item, field);
 
             const result = await callRewriterAIStreaming(
                 userPrompt,
                 {
                     ...rewriterConfig,
-                    systemPrompt: systemPrompts[field]
+                    promptSchema
                 },
                 (_chunk: string, accumulated: string) => {
                     const extracted = extractJsonFields(accumulated);
@@ -137,7 +154,7 @@ Expected Output Format:
             const finalValue = extracted.answer || result.trim();
 
             // Update the log
-            onUpdateLog(itemId, {
+            onUpdateLog(item.id, {
                 [field]: finalValue
             });
 

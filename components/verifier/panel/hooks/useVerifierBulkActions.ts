@@ -445,17 +445,19 @@ Based on the criteria above, provide a 1-5 score.`;
     ]);
 
     const handleAutoscoreSelected = useCallback(async () => {
-        const selectedItems = getSelectedItems();
-        const itemsToScore = selectedItems.filter(i => !!i.score || i.score === 0);
+        const itemsToScore = getSelectedItems();
 
         if (itemsToScore.length === 0) {
-            toast.info('No unrated items in selection.');
+            toast.info('No items selected.');
             return;
         }
 
+        const alreadyScored = itemsToScore.filter(i => i.score != null).length;
+        const suffix = alreadyScored > 0 ? ` (${alreadyScored} will be re-scored)` : '';
+
         const confirmAutoscore = await confirmService.confirm({
             title: 'Confirm autoscore?',
-            message: `Autoscore ${itemsToScore.length} unrated items from selection using ${autoscoreConfig.model}?`,
+            message: `Autoscore ${itemsToScore.length} items using ${autoscoreConfig.model}?${suffix}`,
             confirmLabel: 'Autoscore',
             cancelLabel: 'Cancel',
             variant: 'warning'
@@ -497,6 +499,8 @@ Based on the criteria above, provide a 1-5 score.`;
                     maxRetries: autoscoreConfig.maxRetries ?? 3,
                     retryDelay: autoscoreConfig.retryDelay ?? 2000,
                     force: false,
+                    systemPrompt: autoscoreConfig.systemPrompt || 'You are an expert evaluator. Score the quality of both the reasoning and answer on a scale of 1-5, where 1 is poor and 5 is excellent. Respond with ONLY an unified single digit (1-5).',
+                    generationParams: autoscoreConfig.generationParams as Record<string, unknown> | undefined,
                 });
 
                 onJobCreated?.(jobId, 'autoscore');

@@ -7,20 +7,27 @@ export type RewritableField = OutputFieldName.Query | OutputFieldName.Reasoning 
  * Builds context string from a VerifierItem for AI rewriting
  */
 export function buildItemContext(item: VerifierItem, targetField: RewritableField): string {
+    const query = item.query || '';
+    const reasoning = item.reasoning_content || item.reasoning || '';
+    const answer = item.answer || '';
+    const targetValue = targetField === OutputFieldName.Reasoning
+        ? reasoning
+        : (item[targetField] || '');
+
     return `## FULL ITEM CONTEXT
 
-**Query:** ${item.query}
+**Query:** ${query}
 
 **Reasoning Trace:**
-${item.reasoning}
+${reasoning}
 
 **Answer:**
-${item.answer}
+${answer}
 
 ---
 TARGET FIELD TO REWRITE: ${targetField.toUpperCase()}
 Current value of ${targetField}:
-${item[targetField]}
+${targetValue}
 
 IMPORTANT: Respond with a VALID JSON object.
 
@@ -68,10 +75,10 @@ export function buildItemContextPlainText(
 
     parts.push('## FULL ITEM CONTEXT');
     parts.push('');
-    parts.push(`**Query:** ${item.query}`);
+    parts.push(`**Query:** ${item.query || '(none)'}`);
     parts.push('');
     parts.push(`**Reasoning Trace:**`);
-    parts.push(context?.reasoning || item.reasoning || '(none)');
+    parts.push(context?.reasoning || item.reasoning_content || item.reasoning || '(none)');
     parts.push('');
     parts.push(`**Answer:**`);
     parts.push(item.answer || '(none)');

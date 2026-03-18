@@ -56,6 +56,7 @@ import { getInitialAppView, getInitialEnvironment, useAppRouting } from './hooks
 import LayoutContainer from './components/LayoutContainer';
 import LeftSidebar from './components/LeftSidebar';
 import RightSidebar from './components/RightSidebar';
+import AssistantDrawer from './components/AssistantDrawer';
 import ModeNavbar from './components/ModeNavbar';
 import CreatorControls from './components/creator/CreatorControls';
 import BatchPromptDebugger from './components/BatchPromptDebugger';
@@ -179,7 +180,17 @@ export default function App() {
     // --- State: Layout & Sessions ---
     const [isLeftSidebarOpen, setLeftSidebarOpen] = useState(true);
     const [isRightSidebarOpen, setRightSidebarOpen] = useState(true);
-    const [isVerifierAssistantOpen, setVerifierAssistantOpen] = useState(true);
+    const [isAssistantOpen, _setAssistantOpen] = useState(() => {
+        try { return sessionStorage.getItem('assistant_open') === '1'; } catch { return false; }
+    });
+    const setAssistantOpen: typeof _setAssistantOpen = (v) => {
+        _setAssistantOpen(prev => {
+            const next = typeof v === 'function' ? v(prev) : v;
+            try { sessionStorage.setItem('assistant_open', next ? '1' : '0'); } catch { /* noop */ }
+            return next;
+        });
+    };
+    const [agentBusy, setAgentBusy] = useState(false);
     const [sessionsList, setSessionsList] = useState<SessionData[]>([]);
     const [sessionFilters, setSessionFilters] = useState<SessionListFilters>({
         search: '',
@@ -1431,10 +1442,7 @@ export default function App() {
         onRewrite: (itemId: string, field: any) => {
             const log = visibleLogs.find(l => l.id === itemId);
             if (log) {
-                const currentValue = field === 'query' ? log.query :
-                    field === 'reasoning' ? log.reasoning :
-                        log.answer;
-                feedRewriter.handleRewrite(itemId, field, currentValue || '');
+                feedRewriter.handleRewrite(log, field);
             }
         },
         onScoreChange: handleScoreChange,
@@ -1492,17 +1500,13 @@ export default function App() {
                 }}
             />
 
+            <div className="flex h-screen w-screen overflow-hidden">
+            <div className="flex-1 min-w-0 relative">
             <LayoutContainer
                 isLeftSidebarOpen={isLeftSidebarOpen}
-                isRightSidebarOpen={appView === AppView.Verifier ? isVerifierAssistantOpen : isRightSidebarOpen}
+                isRightSidebarOpen={isRightSidebarOpen}
                 onLeftSidebarToggle={() => setLeftSidebarOpen(!isLeftSidebarOpen)}
-                onRightSidebarToggle={() => {
-                    if (appView === AppView.Verifier) {
-                        setVerifierAssistantOpen(prev => !prev);
-                    } else {
-                        setRightSidebarOpen(!isRightSidebarOpen);
-                    }
-                }}
+                onRightSidebarToggle={() => setRightSidebarOpen(!isRightSidebarOpen)}
                 leftSidebar={
                     <LeftSidebar
                         sessions={sessionsList}
@@ -1627,8 +1631,6 @@ export default function App() {
                                             apiKey: externalApiKey,
                                             externalApiKey
                                         }}
-                                        chatOpen={isVerifierAssistantOpen}
-                                        onChatToggle={setVerifierAssistantOpen}
                                         onSessionSelect={handleCloudSessionSelect}
                                         onJobCreated={jobMonitor.trackJob}
                                         refreshTrigger={jobCompletionCounter}
@@ -1647,27 +1649,7 @@ export default function App() {
                     </div>
                 }
                 rightSidebar={
-                    appView === AppView.Verifier ? (
-                        <RightSidebar>
-                            {isVerifierAssistantOpen ? (
-                                <div id="verifier-assistant" className="h-full" />
-                            ) : (
-                                <div className="h-full flex items-center justify-center">
-                                    <button
-                                        onClick={() => setVerifierAssistantOpen(true)}
-                                        className="flex flex-col items-center gap-2 text-slate-300 hover:text-white transition-colors"
-                                        title="Open assistant"
-                                    >
-                                        <div className="w-8 h-24 rounded-full bg-slate-900/60 border border-slate-800/70 flex items-center justify-center">
-                                            <span className="text-[10px] font-bold rotate-90">AI</span>
-                                        </div>
-                                    </button>
-                                </div>
-                            )}
-                        </RightSidebar>
-                    ) : appView === AppView.BatchDebugger ? (
-                        null
-                    ) : (
+                    appView === AppView.Creator ? (
                         <RightSidebar>
                             <CreatorControls
                                 {...sidebarProps}
@@ -1676,9 +1658,37 @@ export default function App() {
                                 onFeedRewriterConfigChange={feedRewriter.setRewriterConfig}
                             />
                         </RightSidebar>
-                    )
+                    ) : null
                 }
             />
+
+            {/* Agent-busy overlay — blocks user clicks while assistant operates on UI */}
+            {agentBusy && (
+                <div className="absolute inset-0 z-40 bg-black/5 flex items-end justify-center pb-8">
+                    <button
+                        onClick={() => setAgentBusy(false)}
+                        className="px-6 py-3 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-xl shadow-lg transition-all hover:scale-105 active:scale-95"
+                    >
+                        Take control
+                    </button>
+                </div>
+            )}
+            </div>
+
+            {/* Global AI assistant panel – pushes content when open */}
+            <AssistantDrawer
+                isOpen={isAssistantOpen}
+                onToggle={() => setAssistantOpen(prev => !prev)}
+                onAgentBusyChange={setAgentBusy}
+                modelConfig={{
+                    provider,
+                    externalProvider,
+                    externalModel,
+                    apiKey: externalApiKey,
+                    externalApiKey
+                }}
+            />
+            </div>
         </div>
     );
 }

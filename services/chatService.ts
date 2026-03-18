@@ -1,10 +1,11 @@
-import { ExternalProvider, ApiType, ProviderType } from '../types';
+import { ExternalProvider, ApiType } from '../types';
 import type { ChatMessage, ChatUsageSummary } from '../types';
-import * as GeminiService from './geminiService';
 import { SettingsService } from './settingsService';
 import { ToolExecutor } from './toolService';
+import { PROVIDERS } from '../constants';
 import { ChatRole } from '../interfaces/enums';
-import { isBackendAiAvailable, streamChatViaBackend } from './api/backendAiClient';
+import { streamChatViaBackend } from './api/backendAiClient';
+import { toast } from './toastService';
 import { ContextManager, ContextCompactionConfig, ContextStatus, SummarizationCallback } from './contextManager';
 import { extractMessageParts } from '../utils/thinkTagParser';
 
@@ -226,9 +227,8 @@ ${JSON.stringify(definitions, null, 2)}
         return { thinking, content, toolCalls };
     }
 
-    // Call the AI model (using GeminiService as the backend for now, flexible to others)
     public async streamResponse(
-        modelConfig: { provider: ExternalProvider | ProviderType.Gemini, model: string, apiKey?: string, customBaseUrl?: string, apiType?: ApiType },
+        modelConfig: { provider: ExternalProvider, model: string, apiKey?: string, customBaseUrl?: string, apiType?: ApiType },
         includeTools: boolean,
         onChunk: (chunk: string, accumulated: string, usage?: any) => void,
         abortSignal?: AbortSignal,
@@ -249,25 +249,21 @@ ${JSON.stringify(definitions, null, 2)}
                     ];
 
                     let summaryText = '';
-                    const settings = SettingsService.getSettings();
-                    const customEndpoint = modelConfig.customBaseUrl || settings.customEndpointUrl;
+                    const isSummaryCustom = (modelConfig.provider as string) === ExternalProvider.Other;
+                    const summaryBaseUrl = isSummaryCustom
+                        ? (modelConfig.customBaseUrl || '')
+                        : (PROVIDERS[modelConfig.provider as string]?.url || '');
 
-                    // Use a simpler call for summarization
-                    await import('./externalApiService').then(m => m.callExternalApi({
+                    const result = await streamChatViaBackend({
                         provider: modelConfig.provider as ExternalProvider,
                         model: modelConfig.model,
                         apiKey: modelConfig.apiKey || SettingsService.getApiKey(modelConfig.provider),
-                        apiType: ApiType.Chat,
-                        customBaseUrl: customEndpoint,
-                        systemPrompt: summaryMessages[0].content,
-                        userPrompt: summaryMessages[1].content,
-                        messages: summaryMessages,
-                        stream: false,
-                        structuredOutput: false,
-                        generationParams: { maxTokens: 1000, temperature: 0.3 }
-                    })).then(response => {
-                        summaryText = response?.content || response?.text || String(response);
+                        baseUrl: summaryBaseUrl,
+                        messages: summaryMessages as Array<{ role: string; content: string | null }>,
+                        generationParams: { maxTokens: 1000, temperature: 0.3 },
+                        onChunk: () => {},
                     });
+                    summaryText = result?.content || '';
 
                     return summaryText;
                 },
@@ -313,18 +309,17 @@ ${JSON.stringify(definitions, null, 2)}
             provider: modelConfig.provider || ExternalProvider.OpenRouter,
             model: modelConfig.model,
             apiKey: modelConfig.apiKey || SettingsService.getApiKey(modelConfig.provider),
-            apiType: modelConfig.apiType || ApiType.Chat // Pass API type (defaults to 'chat')
+            apiType: modelConfig.apiType || ApiType.Chat
         };
 
-        if (config.provider === ProviderType.Gemini) {
-            // Legacy/Gemini path: use manual XML tools for now (or refactor GeminiService later)
-            // If includeTools is true, we need to append the manual prompt
-            const manualTools = includeTools ? this.buildManualToolPrompt() : '';
-            const content = `${systemPrompt}${manualTools}\n\n${conversationText}\nAssistant:`; // Use flattened conversationText
-            return GeminiService.generateContentStream(content, config.model, onChunk, abortSignal);
-        } else {
-            // External (OpenRouter etc) - NATIVE TOOL CALLING
-            // Map history to OpenAI message format
+        if (!config.apiKey && config.provider !== ExternalProvider.Ollama) {
+            const err = `No API key configured for ${config.provider}. Set it in Settings or the model selector.`;
+            toast.error(err);
+            throw new Error(err);
+        }
+
+        {
+            // All providers go through backend SSE — map history to OpenAI message format
             const messages = [
                 { role: 'system', content: systemPrompt },
                 ...this.history.map(msg => {
@@ -352,83 +347,59 @@ ${JSON.stringify(definitions, null, 2)}
             const tools = includeTools ? this.toolExecutor.getOpenAIToolDefinitions() : undefined;
 
             const settings = SettingsService.getSettings();
-            const customEndpoint = modelConfig.customBaseUrl || settings.customEndpointUrl;
             const defaultGenerationParams = settings.defaultGenerationParams;
             const generationParams = defaultGenerationParams;
 
-            // Try to use backend AI streaming if available
-            const useBackend = await isBackendAiAvailable();
-            if (useBackend && customEndpoint) {
-                try {
-                    const result = await streamChatViaBackend({
-                        provider: config.provider as ExternalProvider,
-                        model: config.model,
-                        apiKey: config.apiKey,
-                        baseUrl: customEndpoint,
-                        messages: messages as Array<{ role: string; content: string | null; tool_calls?: unknown[]; tool_call_id?: string }>,
-                        tools: tools,
-                        generationParams: generationParams,
-                        onChunk: (chunk, accumulated, thinking, content, toolCalls, usage) => {
-                            // For native tool calls, we need to inject them into the accumulated text
-                            // so that ChatService.parseResponse can find them
-                            let effectiveAccumulated = accumulated;
+            // Resolve base URL: known providers always use canonical URL, custom URLs only for 'other'
+            const isCustomProvider = config.provider === ExternalProvider.Other;
+            const resolvedBaseUrl = isCustomProvider
+                ? (modelConfig.customBaseUrl || settings.customEndpointUrl || '')
+                : (PROVIDERS[config.provider]?.url || '');
 
-                            // If we have native tool calls, format them as XML so the parser can handle them
-                            if (toolCalls && toolCalls.length > 0) {
-                                const toolCallsXml = toolCalls.map(tc => {
-                                    const args = typeof tc.arguments === 'string'
-                                        ? tc.arguments
-                                        : JSON.stringify(tc.arguments);
-                                    return `<tool_call>{"id":"${tc.id}","name":"${tc.name}","arguments":${args}}</tool_call>`;
-                                }).join('\n');
-                                effectiveAccumulated = (content || accumulated) + '\n' + toolCallsXml;
-                            }
+            // All chat streaming goes through backend SSE
+            try {
+                const result = await streamChatViaBackend({
+                    provider: config.provider as ExternalProvider,
+                    model: config.model,
+                    apiKey: config.apiKey,
+                    baseUrl: resolvedBaseUrl,
+                    messages: messages as Array<{ role: string; content: string | null; tool_calls?: unknown[]; tool_call_id?: string }>,
+                    tools: tools,
+                    generationParams: generationParams,
+                    onChunk: (chunk, accumulated, _thinking, content, toolCalls, usage) => {
+                        let effectiveAccumulated = accumulated;
 
-                            onChunk(chunk, effectiveAccumulated, usage);
-                        },
-                        signal: abortSignal,
-                    });
+                        if (toolCalls && toolCalls.length > 0) {
+                            const toolCallsXml = toolCalls.map(tc => {
+                                const args = typeof tc.arguments === 'string'
+                                    ? tc.arguments
+                                    : JSON.stringify(tc.arguments);
+                                return `<tool_call>{"id":"${tc.id}","name":"${tc.name}","arguments":${args}}</tool_call>`;
+                            }).join('\n');
+                            effectiveAccumulated = (content || accumulated) + '\n' + toolCallsXml;
+                        }
 
-                    // If result has tool calls but no content, format them for the final response
-                    if (result.toolCalls && result.toolCalls.length > 0 && !result.content) {
-                        const toolCallsXml = result.toolCalls.map(tc => {
-                            const args = typeof tc.arguments === 'string'
-                                ? tc.arguments
-                                : JSON.stringify(tc.arguments);
-                            return `<tool_call>{"id":"${tc.id}","name":"${tc.name}","arguments":${args}}</tool_call>`;
-                        }).join('\n');
-                        // Send a final chunk with the tool calls
-                        onChunk('', toolCallsXml, null);
-                    }
+                        onChunk(chunk, effectiveAccumulated, usage);
+                    },
+                    signal: abortSignal,
+                });
 
-                    return '';
-                } catch (backendError) {
-                    console.warn('[chatService] Backend AI failed, falling back to direct call:', backendError);
-                    // Fall through to direct call
+                if (result.toolCalls && result.toolCalls.length > 0 && !result.content) {
+                    const toolCallsXml = result.toolCalls.map(tc => {
+                        const args = typeof tc.arguments === 'string'
+                            ? tc.arguments
+                            : JSON.stringify(tc.arguments);
+                        return `<tool_call>{"id":"${tc.id}","name":"${tc.name}","arguments":${args}}</tool_call>`;
+                    }).join('\n');
+                    onChunk('', toolCallsXml, null);
                 }
-            }
 
-            // Fallback to direct API call
-            await import('./externalApiService').then(m => m.callExternalApi({
-                provider: config.provider as ExternalProvider,
-                model: config.model,
-                apiKey: config.apiKey,
-                apiType: config.apiType, // Pass API type
-                customBaseUrl: customEndpoint,
-                systemPrompt: systemPrompt,
-                userPrompt: '', // We pass full messages array now
-                messages: messages,
-                tools: tools,
-                stream: true,
-                onStreamChunk: (chunk: string, accumulated: string, _phase?: any, usage?: any) => {
-                    console.log('chatService onStreamChunk - usage:', usage);
-                    onChunk(chunk, accumulated, usage);
-                },
-                structuredOutput: false,
-                signal: abortSignal,
-                generationParams: generationParams
-            }));
-            return '';
+                return '';
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                toast.error(`[${config.provider}/${config.model}] ${msg}`);
+                throw err;
+            }
         }
     }
 }

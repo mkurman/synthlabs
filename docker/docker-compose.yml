@@ -26,6 +26,8 @@ services:
     working_dir: /app
     ports:
       - "8900:8900"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - ../.env
     environment:

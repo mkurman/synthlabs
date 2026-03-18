@@ -9,6 +9,7 @@ import { SettingsService } from './settingsService';
 import { PromptService } from './promptService';
 import type { SessionData } from '../interfaces';
 import type { RewriterConfig } from './verifierRewriterService';
+import { getBrowserTools } from './browserTools';
 
 export interface ToolDefinition {
     name: string;
@@ -1301,6 +1302,13 @@ export class ToolExecutor {
                 return { error: `Failed to get score distribution: ${err.message}` };
             }
         });
+
+        // ─── Browser-Use Tools ───────────────────────────────
+        // Allow the agent to interact with the SynthLabs UI directly.
+        // All browser tools auto-execute; risky clicks are guarded inside ui_click itself.
+        for (const tool of getBrowserTools()) {
+            this.registerTool(tool.definition, tool.execute);
+        }
     }
 
     public registerTool(definition: ToolDefinition, execute: ToolFunction, options?: ToolRegistrationOptions) {

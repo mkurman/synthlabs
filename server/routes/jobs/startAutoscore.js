@@ -3,7 +3,7 @@ import { callChatCompletion } from '../../services/aiClient.js';
 import { decryptKey } from '../../utils/keyEncryption.js';
 import { extractResumeState, canResumeJob } from '../../jobs/jobResume.js';
 
-const SCORING_SYSTEM_PROMPT = `You are an expert evaluator. Score the quality of both the reasoning and answer on a scale of 1-5, where 1 is poor and 5 is excellent. Respond with ONLY an unified single digit (1-5).`;
+const DEFAULT_SCORING_SYSTEM_PROMPT = `You are an expert evaluator. Score the quality of both the reasoning and answer on a scale of 1-5, where 1 is poor and 5 is excellent. Respond with ONLY an unified single digit (1-5).`;
 
 const buildScoringUserPrompt = (log) => {
     const query = log.query || log.QUERY || log.full_seed || '';
@@ -19,24 +19,32 @@ Based on the criteria above, provide a 1-5 score.`;
 };
 
 const parseScore = (text) => {
-    const match = String(text).match(/[1-5]/);
-    return match ? parseInt(match[0], 10) : 0;
+    let cleaned = String(text);
+    // Strip thinking tags — models like Qwen wrap responses in <think>...</think>
+    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    // Try to find a standalone digit 1-5 (not part of a larger number)
+    const match = cleaned.match(/\b([1-5])\b/);
+    return match ? parseInt(match[1], 10) : 0;
 };
 
 /**
  * Process a single log item: call AI, parse score, update via repo.
  */
-const scoreOneItem = async ({ log, repo, baseUrl, apiKey, model, provider, maxRetries, retryDelay }) => {
+const scoreOneItem = async ({ log, repo, baseUrl, apiKey, model, provider, maxRetries, retryDelay, systemPrompt, generationParams }) => {
     const userPrompt = buildScoringUserPrompt(log);
     const result = await callChatCompletion({
         baseUrl,
         apiKey,
         model,
         provider,
-        systemPrompt: SCORING_SYSTEM_PROMPT,
+        systemPrompt: systemPrompt || DEFAULT_SCORING_SYSTEM_PROMPT,
         userPrompt,
-        maxTokens: 64,
-        temperature: 0.3,
+        maxTokens: generationParams?.maxOutputTokens || generationParams?.maxTokens || 16000,
+        temperature: generationParams?.temperature ?? 0.3,
+        topP: generationParams?.topP,
+        topK: generationParams?.topK,
+        frequencyPenalty: generationParams?.frequencyPenalty,
+        presencePenalty: generationParams?.presencePenalty,
         maxRetries,
         retryDelay,
     });
@@ -65,6 +73,7 @@ export const registerStartAutoscoreRoute = (app, { repo, createJob, updateJob, g
             apiKey: encryptedApiKey, limit, offset, sleepMs,
             concurrency: reqConcurrency, maxRetries: reqMaxRetries, retryDelay: reqRetryDelay,
             force, itemIds, resumeJobId,
+            systemPrompt, generationParams,
         } = req.body || {};
 
         // If resuming, load the previous job
@@ -114,6 +123,7 @@ export const registerStartAutoscoreRoute = (app, { repo, createJob, updateJob, g
             limit, offset, sleepMs,
             concurrency: reqConcurrency, maxRetries: reqMaxRetries, retryDelay: reqRetryDelay,
             force: !!force, itemIds,
+            systemPrompt, generationParams,
         };
 
         // Store sessionId at top level for easy access by tools/UI
@@ -138,6 +148,7 @@ export const registerStartAutoscoreRoute = (app, { repo, createJob, updateJob, g
                     limit, offset, sleepMs,
                     concurrency: reqConcurrency, maxRetries: reqMaxRetries, retryDelay: reqRetryDelay,
                     force: !!force, itemIds,
+                    systemPrompt, generationParams,
                 };
 
                 // Resolve settings
@@ -220,7 +231,7 @@ export const registerStartAutoscoreRoute = (app, { repo, createJob, updateJob, g
 
                     // Run batch concurrently
                     const results = await Promise.allSettled(
-                        batch.map(log => scoreOneItem({ log, repo, baseUrl, apiKey, model, provider: params.provider, maxRetries, retryDelay }))
+                        batch.map(log => scoreOneItem({ log, repo, baseUrl, apiKey, model, provider: params.provider, maxRetries, retryDelay, systemPrompt: params.systemPrompt, generationParams: params.generationParams }))
                     );
 
                     // Collect results

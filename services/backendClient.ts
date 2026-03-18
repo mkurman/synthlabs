@@ -288,7 +288,39 @@ export const deleteSessionWithLogs = async (id: string) => {
     const result = await requestJson<{ deletedLogs: number }>(`/api/sessions/${id}?withLogs=1`, {
         method: 'DELETE'
     });
+    invalidateLogCache(id);
     return result;
+};
+
+// ─── Session Log Cache ──────────────────────────────────────────
+// Caches full session fetches to avoid repeated DB roundtrips.
+// Invalidated per-session on any mutation (update, delete, create).
+const LOG_CACHE_TTL_MS = 30_000; // 30 seconds
+const logCache = new Map<string, { data: unknown[]; timestamp: number }>();
+
+const getCacheKey = (sessionUid?: string) => sessionUid || '__all__';
+
+const getCachedLogs = (sessionUid?: string): unknown[] | null => {
+    const entry = logCache.get(getCacheKey(sessionUid));
+    if (entry && Date.now() - entry.timestamp < LOG_CACHE_TTL_MS) {
+        return entry.data;
+    }
+    if (entry) logCache.delete(getCacheKey(sessionUid));
+    return null;
+};
+
+const setCachedLogs = (sessionUid: string | undefined, data: unknown[]) => {
+    logCache.set(getCacheKey(sessionUid), { data, timestamp: Date.now() });
+};
+
+/** Invalidate cache for a specific session (or all if no sessionUid). */
+export const invalidateLogCache = (sessionUid?: string) => {
+    if (sessionUid) {
+        logCache.delete(getCacheKey(sessionUid));
+        logCache.delete(getCacheKey(undefined)); // also invalidate "all" cache
+    } else {
+        logCache.clear();
+    }
 };
 
 export const fetchLogs = async (
@@ -342,6 +374,12 @@ export const fetchLogsPage = async (
 };
 
 export const fetchAllLogs = async (sessionUid?: string, forceRefresh = false): Promise<unknown[]> => {
+    // Check cache first (unless forced refresh)
+    if (!forceRefresh) {
+        const cached = getCachedLogs(sessionUid);
+        if (cached) return cached;
+    }
+
     const pageSize = 500;
     const maxPages = 100; // Safety cap: up to 50k logs per request chain
     let cursorCreatedAt: string | number | null | undefined = undefined;
@@ -358,6 +396,7 @@ export const fetchAllLogs = async (sessionUid?: string, forceRefresh = false): P
         cursorCreatedAt = nextCursorCreatedAt;
     }
 
+    setCachedLogs(sessionUid, allLogs);
     return allLogs;
 };
 
@@ -371,6 +410,9 @@ export const updateLog = async (id: string, updates: Record<string, unknown>) =>
         method: 'PATCH',
         body: JSON.stringify(updates)
     });
+    // Invalidate cache for the session this log belongs to
+    const sessionUid = (updates.sessionUid as string) || (result.log as any)?.sessionUid;
+    invalidateLogCache(sessionUid);
     return result.log || null;
 };
 
@@ -378,6 +420,7 @@ export const deleteLog = async (id: string) => {
     await requestJson<{ ok: boolean }>(`/api/logs/${id}`, {
         method: 'DELETE'
     });
+    invalidateLogCache(); // Can't know session without fetching first, clear all
 };
 
 export const createLog = async (payload: Record<string, unknown>) => {
@@ -385,6 +428,7 @@ export const createLog = async (payload: Record<string, unknown>) => {
         method: 'POST',
         body: JSON.stringify(payload)
     });
+    invalidateLogCache(payload.sessionUid as string);
     return result.id;
 };
 
@@ -544,6 +588,8 @@ export const startAutoScore = async (params: {
     force?: boolean;
     itemIds?: string[];
     resumeJobId?: string;
+    systemPrompt?: string;
+    generationParams?: Record<string, unknown>;
 }) => {
     const { jobId } = await requestJson<{ jobId: string }>('/api/jobs/autoscore', {
         method: 'POST',

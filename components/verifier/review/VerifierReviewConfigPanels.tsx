@@ -353,6 +353,28 @@ export default function VerifierReviewConfigPanels({
                                 onChange={(newParams) => setAutoscoreConfig((prev) => ({ ...prev, generationParams: newParams }))}
                             />
                         </div>
+                        <div className="col-span-1 md:col-span-4 border-t border-slate-800/70 pt-4">
+                            <div className="flex items-center justify-between mb-1">
+                                <label className="text-[10px] text-slate-400 font-bold uppercase">System Prompt</label>
+                                <span className="text-[9px] text-slate-500">
+                                    {autoscoreConfig.systemPrompt ? '(custom)' : '(default)'}
+                                </span>
+                            </div>
+                            <textarea
+                                value={autoscoreConfig.systemPrompt || 'You are an expert evaluator. Score the quality of both the reasoning and answer on a scale of 1-5, where 1 is poor and 5 is excellent. Respond with ONLY an unified single digit (1-5).'}
+                                onChange={(e) => setAutoscoreConfig((prev) => ({ ...prev, systemPrompt: e.target.value }))}
+                                rows={3}
+                                className="w-full bg-slate-950/70 border border-slate-700/70 text-xs text-white rounded px-2 py-1.5 outline-none focus:border-emerald-500 resize-y"
+                            />
+                            {autoscoreConfig.systemPrompt && (
+                                <button
+                                    onClick={() => setAutoscoreConfig((prev) => ({ ...prev, systemPrompt: undefined }))}
+                                    className="text-[9px] text-slate-500 hover:text-red-400 mt-1 transition-colors"
+                                >
+                                    Reset to default
+                                </button>
+                            )}
+                        </div>
                     </div>
                 )}
             </div>

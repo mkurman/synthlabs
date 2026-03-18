@@ -41,7 +41,6 @@ import { DetailPanel } from '../DetailPanel';
 import VerifierTabNavigation from '../navigation/VerifierTabNavigation';
 import VerifierSessionStatusActions from '../status/VerifierSessionStatusActions';
 import VerifierDeleteItemsModal from '../modals/VerifierDeleteItemsModal';
-import VerifierAssistantPortal from '../review/VerifierAssistantPortal';
 import VerifierReviewConfigPanels from '../review/VerifierReviewConfigPanels';
 import VerifierReviewToolbar from '../review/VerifierReviewToolbar';
 import VerifierReviewContent from '../review/VerifierReviewContent';
@@ -59,8 +58,6 @@ interface VerifierPanelProps {
         apiKey: string;
         externalApiKey: string;
     };
-    chatOpen?: boolean;
-    onChatToggle?: (open: boolean) => void;
     onSessionSelect: (session: SessionData) => Promise<void>;
     onJobCreated?: (jobId: string, type: string) => void;
     refreshTrigger?: number;
@@ -69,7 +66,7 @@ interface VerifierPanelProps {
     initialSessionId?: string | null;
 }
 
-export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen, onChatToggle, onSessionSelect, onJobCreated, refreshTrigger, onActiveSessionChange, onRenameRef, initialSessionId }: VerifierPanelProps) {
+export default function VerifierPanel({ currentSessionUid, modelConfig, onSessionSelect, onJobCreated, refreshTrigger, onActiveSessionChange, onRenameRef, initialSessionId }: VerifierPanelProps) {
     const [data, _setData] = useState<VerifierItem[]>([]);
     
     // Wrapped setData that normalizes reasoning from think tags
@@ -95,9 +92,6 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
     const [hfRowsToFetch, setHfRowsToFetch] = useState<number>(100);
     const [hfSkipRows, setHfSkipRows] = useState<number>(0);
     const [hfImportError, setHfImportError] = useState<string | null>(null);
-
-    // Chat Panel State
-    const [showChat, setShowChat] = useState(true);
 
     const [availableSessions, setAvailableSessions] = useState<SessionData[]>([]);
     const [isSyncing, setIsSyncing] = useState(false);  // Sync orphaned logs state
@@ -646,8 +640,8 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
 
         setIsImporting(true);
         try {
-            const limitToUse = isLimitEnabled ? importLimit : undefined;
-            const items = await FirebaseService.fetchAllLogs(limitToUse, sessionId, true);
+            // Always fetch all rows when loading a session by ID (explicit open action)
+            const items = await FirebaseService.fetchAllLogs(undefined, sessionId, true);
             if (items.length === 0) {
                 toast.info('No items found in session.');
                 setHasMoreRows(false);
@@ -657,8 +651,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                 setData(normalizedItems);
                 setDataSource(VerifierDataSource.Database);
                 setActiveTab(VerifierPanelTab.Review);
-                const allLoaded = !isLimitEnabled || items.length < importLimit;
-                setHasMoreRows(!allLoaded);
+                setHasMoreRows(false); // Full session loaded
             }
 
             setActiveSessionName(session.name);
@@ -670,7 +663,7 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
         } finally {
             setIsImporting(false);
         }
-    }, [availableSessions, isLimitEnabled, importLimit]);
+    }, [availableSessions]);
 
     useEffect(() => {
         if (initialSessionId && hasLoadedInitialSessionRef.current !== initialSessionId) {
@@ -1132,15 +1125,6 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                         isRefreshing={isRefreshing}
                         pageSize={pageSize}
                         setPageSize={setPageSize}
-                        isChatOpen={chatOpen ?? showChat}
-                        onToggleChat={() => {
-                            const next = !(chatOpen ?? showChat);
-                            if (onChatToggle) {
-                                onChatToggle(next);
-                            } else {
-                                setShowChat(next);
-                            }
-                        }}
                         viewMode={viewMode}
                         setViewMode={setViewMode}
                     />
@@ -1218,14 +1202,6 @@ export default function VerifierPanel({ currentSessionUid, modelConfig, chatOpen
                     setHfFormat={setHfFormat}
                 />
             )}
-
-            <VerifierAssistantPortal
-                isOpen={chatOpen ?? showChat}
-                data={data}
-                setData={setData}
-                modelConfig={modelConfig}
-                toolExecutor={toolExecutorRef.current || undefined}
-            />
 
             <VerifierDeleteItemsModal
                 isOpen={deleteModalOpen}

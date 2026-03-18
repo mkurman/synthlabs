@@ -39,7 +39,7 @@ export default function LayoutContainer({
     // Desktop Layout
     if (!isMobile && !isTablet) {
         return (
-            <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
+            <div className="flex h-full w-full overflow-hidden bg-slate-950 text-slate-100">
                 {/* Left Sidebar - Collapsible */}
                 <aside
                     className={`
@@ -96,7 +96,7 @@ export default function LayoutContainer({
     // Tablet Layout (Right sidebar collapsed/hidden or moved)
     if (isTablet) {
         return (
-            <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
+            <div className="flex h-full w-full overflow-hidden bg-slate-950 text-slate-100">
                 {/* Left Sidebar slide-over panel */}
                 <aside
                     className={`
@@ -171,7 +171,7 @@ export default function LayoutContainer({
 
     // Mobile Layout
     return (
-        <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 relative">
+        <div className="flex h-full w-full overflow-hidden bg-slate-950 text-slate-100 relative">
             {/* Left Sidebar Drawer Overlay */}
             <div
                 className={`

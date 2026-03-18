@@ -56,8 +56,6 @@ interface VerifierReviewToolbarProps {
     isRefreshing: boolean;
     pageSize: number;
     setPageSize: (value: number) => void;
-    isChatOpen: boolean;
-    onToggleChat: () => void;
     viewMode: VerifierViewMode;
     setViewMode: (mode: VerifierViewMode) => void;
 }
@@ -92,8 +90,6 @@ export default function VerifierReviewToolbar({
     isRefreshing,
     pageSize,
     setPageSize,
-    isChatOpen,
-    onToggleChat,
     viewMode,
     setViewMode
 }: VerifierReviewToolbarProps) {

@@ -30,11 +30,11 @@ export function useChatSessions({
     currentSessionId
 }: UseChatSessionsOptions) {
     const normalizeMessages = useCallback((msgs: ChatMessage[]) => {
-        const normalized = msgs.map(msg => ({
+        return msgs.map(msg => ({
             ...msg,
             id: msg.id || createChatMessageId()
         }));
-        return normalized.sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+        // No sort — array order from storage IS chronological order
     }, []);
     const handleNewChat = useCallback(async () => {
         const session = await ChatStorageService.createSession();
