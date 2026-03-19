@@ -309,6 +309,7 @@ export default function SettingsPanel({ isOpen, onClose, onSettingsChanged }: Se
                                                     'kimi': import.meta.env.VITE_KIMI_API_KEY,
                                                     'z.ai': import.meta.env.VITE_ZAI_API_KEY,
                                                     'chutes': import.meta.env.VITE_CHUTES_API_KEY,
+                                                    'nvidia': import.meta.env.VITE_NVIDIA_API_KEY,
                                                     'huggingface': import.meta.env.VITE_HF_TOKEN,
                                                 };
                                                 const keyValue = settings.providerKeys[provider];

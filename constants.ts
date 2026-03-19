@@ -101,6 +101,13 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'MiniMax',
     description: 'MiniMax models via Anthropic-compatible API'
   },
+  'nvidia': {
+    url: import.meta.env.DEV
+      ? '/nvidia-api'
+      : 'https://integrate.api.nvidia.com/v1',
+    name: 'NVIDIA NIM',
+    description: 'NVIDIA NIM inference microservices'
+  },
   'other': {
     url: '',
     name: 'Custom Endpoint',
@@ -268,6 +275,22 @@ export const DEFAULT_FALLBACK_MODELS: Partial<Record<ModelListProvider, Provider
     { id: 'phi4', name: 'Phi-4', provider: ExternalProvider.Ollama },
     { id: 'deepseek-r1', name: 'DeepSeek R1', provider: ExternalProvider.Ollama },
   ],
+  [ExternalProvider.Nvidia]: [
+    { id: 'deepseek-ai/deepseek-v3.2', name: 'DeepSeek V3.2', provider: ExternalProvider.Nvidia, context_length: 131072 },
+    { id: 'deepseek-ai/deepseek-v3.1', name: 'DeepSeek V3.1', provider: ExternalProvider.Nvidia, context_length: 131072 },
+    { id: 'deepseek-ai/deepseek-r1-distill-qwen-32b', name: 'DeepSeek R1 Distill Qwen 32B', provider: ExternalProvider.Nvidia },
+    { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', provider: ExternalProvider.Nvidia, context_length: 128000 },
+    { id: 'meta/llama-3.1-405b-instruct', name: 'Llama 3.1 405B', provider: ExternalProvider.Nvidia, context_length: 128000 },
+    { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B', provider: ExternalProvider.Nvidia, context_length: 128000 },
+    { id: 'nvidia/llama-3.1-nemotron-ultra-253b-v1', name: 'Nemotron Ultra 253B', provider: ExternalProvider.Nvidia },
+    { id: 'nvidia/llama-3.3-nemotron-super-49b-v1.5', name: 'Nemotron Super 49B v1.5', provider: ExternalProvider.Nvidia },
+    { id: 'qwen/qwen3-5-122b-a10b', name: 'Qwen 3.5 122B', provider: ExternalProvider.Nvidia },
+    { id: 'mistralai/mistral-2-large-instruct', name: 'Mistral 2 Large', provider: ExternalProvider.Nvidia },
+    { id: 'mistralai/mistral-nemotron', name: 'Mistral Nemotron', provider: ExternalProvider.Nvidia },
+    { id: 'microsoft/phi-4-mini-instruct', name: 'Phi-4 Mini', provider: ExternalProvider.Nvidia },
+    { id: 'google/gemma-2-27b-it', name: 'Gemma 2 27B', provider: ExternalProvider.Nvidia },
+    { id: 'moonshotai/kimi-k2-instruct', name: 'Kimi K2', provider: ExternalProvider.Nvidia },
+  ],
   [ExternalProvider.Other]: [
     { id: 'custom-model', name: 'Custom Model', provider: ExternalProvider.Other },
   ],
@@ -345,6 +368,8 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'qwen-turbo': 131072,
 
   // DeepSeek models
+  'deepseek-v3.2': 131072,
+  'deepseek-v3.1': 131072,
   'deepseek-v3': 65536,
   'deepseek-r1': 65536,
   'deepseek-chat': 65536,
