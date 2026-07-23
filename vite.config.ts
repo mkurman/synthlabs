@@ -10,6 +10,14 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 5173,
         host: '0.0.0.0',
+        proxy: {
+          '/nvidia-api': {
+            target: 'https://integrate.api.nvidia.com',
+            changeOrigin: true,
+            rewrite: (path: string) => path.replace(/^\/nvidia-api(\/v1)?/, '/v1'),
+            secure: true,
+          },
+        },
       },
       plugins: [react(), backendVaultPlugin()],
       define: {

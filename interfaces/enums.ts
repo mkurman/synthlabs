@@ -54,6 +54,7 @@ export enum ExternalProvider {
   Gemini = 'gemini',
   HuggingFace = 'huggingface',
   MiniMax = 'minimax',
+  Nvidia = 'nvidia',
   Other = 'other'
 }
 
